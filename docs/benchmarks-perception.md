@@ -129,7 +129,14 @@ G1 gate, or worse (training is heavier than generation).
 | CSRT update, p50 / p95 | 13.8 / 14.7 ms | 15.4 / 19.1 ms |
 
 The CPU trackers are unaffected by GPU load. SAM detection slows down 2.5-3x when it shares the
-GPU with Glimmer training. During real flights the plan stops the twin, the renderer and the
+GPU with Glimmer training.
+
+**SAM 3.1 MLX tracker under load (00:47 ET):** it could not run at all. The 1008 tracker session
+failed with a Metal out-of-memory error (`kIOGPUCommandBufferCallbackErrorOutOfMemory`) next to
+the Glimmer training job and the VM; the training job was unaffected. The service's detector at
+672 (3.5-5.6 GB) ran fine all night next to the same job. Do not use `--sam-res 1008` or
+`--tracker sam_mlx` while Glimmer runs. The service catches detector exceptions, including a
+Metal OOM, and simply tries again on the next detector tick. During real flights the plan stops the twin, the renderer and the
 local LLM, so the idle numbers apply there.
 
 ## G1 accuracy proxy: look-alikes that differ only in color (00:07 ET, GPU shared with training)

@@ -202,6 +202,7 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
 - Spark-vision tie-breaking (numbered boxes to muse-spark-1.3) belongs to the agent: perception
   only emits `Candidates`.
 - `--tracker sam_mlx` in the live service runs frames on the detector thread at about 1 frame
-  per second. Do not use it for flying.
+  per second. Do not use it for flying. Next to Glimmer training it does not even fit in GPU
+  memory (Metal OOM at 1008).
 - KCF and CSRT have no native confidence. Their score is a color-histogram similarity, which is
   weaker evidence than VitTrack's.
