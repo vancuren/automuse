@@ -416,3 +416,25 @@ def test_speakable_never_says_a_hover_word():
     assert _speakable("Landing now.", "land") == "Landing now."
     assert not _has_hover_word("Holding position.") and not _has_hover_word("I lost the subject. Looking around.")
     assert _has_hover_word("Hold on, stop")
+
+
+def test_stop_during_push_to_talk_is_clean(backend, llm, audio_items):
+    """Ctrl-C while the button is held: the streaming session is cancelled and nothing hangs."""
+    asr = FakeRealtimeASR(port=ASR_PORT).start()
+    try:
+        async def go():
+            hub = MicHub(sample_rate=24000)
+            svc = AgentService(make_cfg(asr.url), hub=hub, start_mic=False, speaker=RecordingSpeaker())
+            await svc.start()
+            await svc.ptt_down()
+            x, sr = load_wav(item(audio_items, "commands", "c01", 24000)["abspath"])
+            await asyncio.get_running_loop().run_in_executor(None, play_file_into, hub, x[: sr], sr, False)
+            await asyncio.sleep(0.2)
+            t0 = time.monotonic()
+            await svc.stop()
+            return time.monotonic() - t0, svc
+
+        dt, svc = asyncio.run(go())
+    finally:
+        asr.stop()
+    assert dt < 3.0 and not [t for t in svc._tasks if not t.done()]

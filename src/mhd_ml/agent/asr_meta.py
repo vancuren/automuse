@@ -38,7 +38,7 @@ from typing import AsyncIterator, Callable, Iterable, Optional
 import numpy as np
 
 from .asr_local import Transcript
-from .audio import chunk_samples, float_to_pcm16, load_wav, wav_bytes
+from .audio import chunk_samples, float_to_pcm16, iter_chunks, load_wav, wav_bytes
 
 log = logging.getLogger("mhd.agent.asr_meta")
 
@@ -274,8 +274,7 @@ def _safe(msg: dict) -> str:
 
 
 def pcm_chunks_from_array(x: np.ndarray, sample_rate: int, chunk_ms: int = 80) -> list[bytes]:
-    n = chunk_samples(sample_rate, chunk_ms)
-    return [float_to_pcm16(x[i:i + n]) for i in range(0, len(x), n)]
+    return [float_to_pcm16(c) for c in iter_chunks(x, sample_rate, chunk_ms)]
 
 
 async def paced(chunks: Iterable[bytes], chunk_ms: int = 80) -> AsyncIterator[bytes]:

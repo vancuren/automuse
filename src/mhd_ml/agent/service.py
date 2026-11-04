@@ -348,7 +348,7 @@ class AgentService:
                       done=asyncio.Event())
         self._ptt = st
         if isinstance(self.asr, MetaRealtimeASR):
-            st.task = asyncio.create_task(self._stream_to_meta(st))
+            st.task = self._spawn(self._stream_to_meta(st))        # tracked: cancelled on stop()
         self._spawn(self._ptt_watchdog(st), background=True)
         log.info("push-to-talk down")
 
@@ -516,26 +516,30 @@ class AgentService:
             await asyncio.sleep(0.05)
 
     async def stop(self) -> None:
+        """Shut down without blocking the event loop (thread joins run in the default executor)."""
         self.stopped.set()
         self._safety_stop.set()
-        if self._safety_thread:
-            self._safety_thread.join(timeout=2)
-        if self.sender:
-            self.sender.close()
+        loop = asyncio.get_running_loop()
         try:
             self.hub.stop()
         except Exception:
             pass
+        for t in list(self._tasks):
+            t.cancel()
+        if self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
         if isinstance(self.asr, WarmRealtimeASR):
             await self.asr.close()
         if self.router:
             await self.router.aclose()
-        for t in list(self._tasks):
-            t.cancel()
+        if self._safety_thread:
+            await loop.run_in_executor(None, self._safety_thread.join, 2.0)
+        if self.sender:
+            await loop.run_in_executor(None, self.sender.close)
         if self.link:
             await self.link.close()
         if self.speaker:
-            self.speaker.close()
+            await loop.run_in_executor(None, self.speaker.close)
 
 
 def _has_hover_word(text: str) -> bool:
