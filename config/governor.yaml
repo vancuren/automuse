@@ -104,6 +104,7 @@ wrong_way:                  # PLAN 4.5 step 5, plus pitch and frozen-box checks 
   pitch_median_s: 0.3
   pitch_persist_s: 0.5      # must persist this long before it latches
   pitch_min_cap_frac: 0.7   # ... and only while the forward/back command is near its cap
+  pitch_check_backward: false  # backing up: bounded by the 1 m budget and standoff instead
   yaw_min_ratio: 0.8        # yaw: observed change at least this fraction of the predicted one
   frozen_box_s: 2.0         # the very same box (within frozen_box_px) for this long while we turned at
   frozen_box_px: 0.5        # least frozen_box_min_turn_rad: stuck tracker or repeating camera frame

@@ -946,6 +946,8 @@ class Governor:
         if covered <= 0.5 * (b - a) / 1000.0:
             return False
         mean = moved / covered
+        if mean < 0 and not ww.pitch_check_backward:
+            return False
         half = ww.pitch_median_s * 1000.0
         s1 = self._median_log_width(t1, half)
         s2 = self._median_log_width(t2, half)

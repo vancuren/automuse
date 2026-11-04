@@ -169,6 +169,10 @@ class WrongWayCfg:
     # the command to the cap as the box keeps shrinking; a correct drone that is merely falling
     # behind a walker stays below it (integration finding in the twin, 2026-11-04).
     pitch_min_cap_frac: float = 0.7
+    # Backward half (back commanded, box grew) is off by default: anyone walking toward the drone
+    # outpaces the deliberately slow back-off and would latch a hover. A reversed sign while backing
+    # is bounded by the 1 m backward-travel budget and the standoff rule instead.
+    pitch_check_backward: bool = False
     # Yaw: the observed bearing change must also be at least this fraction of the predicted one,
     # so a subject that briefly outpaces a correct turn does not look like a reversed yaw sign.
     yaw_min_ratio: float = 0.8

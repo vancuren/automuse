@@ -514,6 +514,23 @@ def test_pitch_check_quiet_when_a_walker_recedes_below_the_cap(rig):
     assert not any("wrong_way" in o.safety_flags for o in outs)
 
 
+def test_pitch_check_ignores_a_subject_walking_toward_a_backing_drone(rig):
+    # Integration finding (SAM run in the twin): a walker approaching faster than the deliberately
+    # slow back-off made the box grow while backing up, which latched a hover.
+    r = rig()
+    r.following(cx=640, w=260, h=500)         # too close: the autopilot backs up
+    state = {"w": 260.0}
+
+    def fn(t):
+        state["w"] = min(330.0, state["w"] * 1.002)   # ... but the subject keeps approaching
+        r._fid += 1
+        return make_obs(r._fid, t - r.obs_latency, cx=640 + (r._fid % 2), w=state["w"], h=500)
+    r.obs_fn = fn
+    outs = [r.tick() for _ in range(r.ticks_for(6.0))]
+    assert any(o.wire["pitch"] < 128 for o in outs)          # it does back up
+    assert not any("wrong_way" in o.safety_flags for o in outs)
+
+
 def test_frozen_box_while_turning_hovers(rig):
     # Review probe: a stuck tracker at cx=1000 used to spin the drone at ~14 counts forever.
     r = rig()
