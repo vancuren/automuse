@@ -355,12 +355,14 @@ class Governor:
                 self._frozen_box = self._frozen_since = None
                 spoken = self._spoken_at(mission, now)
                 released = spoken > self._hold_ms
-                if released:
-                    self._ap_paused = False
+                # Spoken before the last pause / land / E-stop / takeoff: it never moves the drone
+                # without a Resume given after it arrived (even if the operator resumed meanwhile).
+                self._ap_paused = not released
                 res = {"ok": True, "action": "follow", "find": True,
                        "paused": self._ap_paused or self._wrong_way_hold}
                 if self._ap_paused:
-                    res["reason"] = "paused_after_utterance" if not released else "paused"
+                    res["reason"] = "paused_after_utterance"
+
                     self.events.append({"kind": "safety", "ts_ms": now,
                                         "text": "follow mission received, but the autopilot stays paused: "
                                                 "a stop, land or takeoff came after it. Press Resume."})

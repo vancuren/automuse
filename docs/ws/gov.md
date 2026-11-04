@@ -22,7 +22,7 @@ Several behaviors changed for other workstreams; they are listed there under "Wh
 | `turbodrone/backend/plugins/follow/` | Deleted, and `ultralytics` removed from `requirements.txt`. `PLUGINS_ENABLED=true` is refused. |
 | `turbodrone/backend/models/` | Restored. The root `.gitignore` rule `models/` matched it at any depth, so the import commit left the package out and the backend could not start from a clean checkout. The rule is now `/models/`, and the 15 upstream files are added byte-identical. |
 | `scripts/run_backend.sh` | Starts the patched backend from the checkout it lives in. |
-| `tests/gov/` | 178 pytest tests (see below); `test_review_fixes.py` holds the regression tests for the review. |
+| `tests/gov/` | 179 pytest tests (see below); `test_review_fixes.py` holds the regression tests for the review. |
 
 ## Run it
 
@@ -41,7 +41,7 @@ Without `--mode` it refuses to start. In real mode it also refuses an RTSP URL t
 Tests and tools:
 
 ```bash
-$MHD_PY -m pytest tests/gov -q -p no:logging            # 178 tests, about 140 s (RTSP and live tests ~60 s)
+$MHD_PY -m pytest tests/gov -q -p no:logging            # 179 tests, about 135 s (RTSP and live tests ~60 s)
 (cd turbodrone/backend && $MHD_PY -m unittest tests.test_x69_lg_protocol tests.test_x69_lg_rtsp_video_protocol tests.test_x69_lg_video_mode)
 $MHD_PY -m mhd.autopilot.sim                             # step + S1 at total delays 0.6 / 1.0 / 1.5 s
 $MHD_PY -m mhd.autopilot.sim --ff --k-scale 0.7 1.0 1.3  # feed-forward robustness to K error
@@ -61,10 +61,10 @@ It refuses unless AIRBORNE and flies each amplitude + then −. It aborts the mo
 
 `-p no:logging` only hides pytest's captured-log dump on failures.
 
-## Test results (final run after the review fixes, 02:16 ET)
+## Test results (final run after the review fixes, 02:20 ET)
 
-- `tests/gov`: **178 passed, 0 failed** (about 140 s).
-  - 69 review regression tests (`test_review_fixes.py`), one section per finding.
+- `tests/gov`: **179 passed, 0 failed** (about 135 s).
+  - 70 review regression tests (`test_review_fixes.py`), one section per finding.
   - 42 governor rule tests (`test_governor_rules.py`), including the throttle-ramp landing fallback.
   - 14 autopilot lifecycle and geometry tests.
   - 7 turbodrone glue tests.
@@ -76,7 +76,7 @@ It refuses unless AIRBORNE and flies each amplitude + then −. It aborts the mo
   - 3 live tests (`run_backend.sh` with uvicorn, RTSP and a UDP drone stand-in): end to end, and Ctrl-C with /mjpeg held open, with and without a force quit.
   - 4 sysid tests: schedule limits, ArUco bearing and range on a synthetic frame, fit recovering K / deadband / lag, and a live run through the real backend with an ArUco HEVC stream.
 - Upstream x69_lg unit tests: **15 passed.**
-- Repo-level `tests/test_contracts.py` and `tests/test_intent_spec.py`: **6 passed.** All tests together: **199 passed.**
+- Repo-level `tests/test_contracts.py` and `tests/test_intent_spec.py`: **6 passed.** All tests together: **200 passed.**
   - An earlier full run (02:08) showed one pytest thread warning: sysid's frame-reader thread raised when the backend closed its socket at test teardown. Fixed (the thread now exits quietly); the final run had no warnings.
 
 - Tests changed by the review fixes, on purpose: takeoff and Landed go over `/ws` in the API, live and sysid tests; the E-stop test expects LANDING after reset; the timer test expects the landing to fire again; the wire test presses Resume after a mission sent 2 s after takeoff; the test rig's steady observations jitter ±1 px.
@@ -136,7 +136,8 @@ An adversarial review found 4 major and 10 minor problems. All 14 are fixed. Eac
    - Unchanged by design: the listening socket closes on the first Ctrl-C, so E-STOP over the network is unreachable during that last ≤ 1.5 s. The drone is already landing then.
    - Tests: `test_ctrl_c_lands_even_with_mjpeg_open[False/True]` (live), `test_begin_shutdown_lands_now_and_runs_callbacks`, `test_signal_hook_begins_shutdown_then_chains`, `test_signal_hooks_need_the_main_thread`.
 3. **(major) A late follow Mission overrode a voice "stop" and re-armed the autopilot after an E-stop.**
-   - `set_mission(follow)` never unpauses on its own authority and never clears a wrong-way hold. It releases a pause only if it was spoken after the last pause / land / E-stop / takeoff: spoken_at = arrival − `latency_ms` − 3 s (`mission.utterance_slack_s`, covering ASR time that `latency_ms` leaves out; a non-finite or out-of-range `latency_ms` counts as 30 s). Otherwise it is accepted but stays paused until Resume, the ack says `"paused": true`, and a status event explains it.
+   - `set_mission(follow)` never clears a wrong-way hold, and a Mission spoken before the last pause / land / E-stop / takeoff never moves the drone without a Resume given after it arrived (it re-pauses even if the operator resumed meanwhile). It releases a pause only if it was spoken after the last pause / land / E-stop / takeoff:
+ spoken_at = arrival − `latency_ms` − 3 s (`mission.utterance_slack_s`, covering ASR time that `latency_ms` leaves out; a non-finite or out-of-range `latency_ms` counts as 30 s). Otherwise it is accepted but stays paused until Resume, the ack says `"paused": true`, and a status event explains it.
    - The contract has no push-to-talk timestamp (contracts are frozen), so `latency_ms` plus the slack is the bound. A "stop" up to about 2.5 s before the end of the next "follow" utterance also keeps that follow paused: the safe side.
    - E-stop drops the mission; a follow Mission is refused while E-stopped. Takeoff pauses the autopilot, so a mission set before a takeoff waits for Resume.
    - Result (reviewer's p04): the late mission is acked `paused_after_utterance` and the drone stays neutral; after E-stop, reset, ARM and takeoff nothing follows by itself.

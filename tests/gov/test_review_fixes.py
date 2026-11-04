@@ -16,9 +16,10 @@ from fastapi import WebSocket
 
 from conftest import ROOT, TICK_MS, make_mission, make_obs
 
-from mhd.contracts import Box, FlightState, Mission, SubjectObs
+from mhd.contracts import FlightState, Mission, SubjectObs
 from mhd.governor import ConfigError, Governor, GovernorError
-from mhd.governor.config import governor_config_from_dict, load_autopilot_config, load_governor_config, replace
+from mhd.governor.config import load_autopilot_config, load_governor_config, replace
+
 
 NEUTRAL = {"throttle": 128, "yaw": 128, "pitch": 128, "roll": 128}
 
@@ -250,7 +251,23 @@ def test_late_mission_does_not_override_a_later_pause(rig):
     assert r.tick().source == "autopilot"
 
 
+def test_late_mission_after_a_resume_pauses_again(rig):
+    r = rig()
+    r.following(cx=900)
+    assert r.g.command("pause", source="agent").ok
+    r.run(1.0)
+    assert r.g.command("resume").ok                           # the operator resumes mission m1...
+    r.run(1.0)
+    assert r.tick().source == "autopilot"
+    res = r.g.set_mission(_mission("m2", 4000.0))             # ...then a Mission said before the stop
+    assert res["paused"] and res["reason"] == "paused_after_utterance"
+    r.steady_obs(cx=900, mission_id="m2")
+    outs = [r.tick() for _ in range(r.ticks_for(2.0))]
+    assert all(o.source != "autopilot" for o in outs)
+
+
 def test_mission_spoken_after_the_pause_releases_it(rig):
+
     r = rig()
     r.following(cx=900)
     assert r.g.command("pause", source="agent").ok
