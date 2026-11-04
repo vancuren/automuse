@@ -1,6 +1,6 @@
 # Status for the morning
 
-Last updated: 2026-11-04 05:30 ET. Deadline: 2026-11-04 21:00 ET (submit by 19:00).
+Last updated: 2026-11-04 05:35 ET. Deadline: 2026-11-04 21:00 ET (submit by 19:00).
 Everything is merged on `integration`, and `main` matches it.
 - Your step-by-step morning guide: **docs/RUNBOOK.md**.
 - The submission checklist: **docs/SUBMISSION.md**.
@@ -31,11 +31,18 @@ The final reviewer's verdict is "safe with conditions" for forward-only follow:
 | Blue and red shirts crossing (S2) | following 90% (brief DOUBT/CONFIRM at a track change); lock 96.8%; 2.5% of frames on the red walker |
 | Follow "green car" (S3) | following 100%; lock 96.0%; bearing RMS 0.127 rad; 0 switches |
 | Safety in the twin | S1-S3 ran with the real thresholds: 0 wrong-way hovers. Two demo takes (05:01, 05:06) false-tripped the strict pitch check: the 0.3 m/s walker pulled away while the drone accelerated. A third (05:10) tripped because the walker turned and its box narrowed while the drone closed in. The twin config now uses the earlier twin tuning for this check: 12 % and a near-cap requirement (real: 6 % and none, marked TWIN). |
-| Recorded demo takes | voice, then Glimmer, then SAM, then follow, then voice land. **New S1 take on the final code: `media/demo/demo-s1-final4-20261104-051519-ui.mp4` (and `-chase.mp4`)**: following 100% of the follow window, locked 99.6%, bearing RMS 0.095 rad, no wrong-way hover, silent landing, mission ended at touchdown. The earlier takes (S2 `demo-s2-20261104-032802`, S3 `demo-s3-20261104-034231`) predate the safety changes; cut those at touchdown (docs/video_script.md). |
+| Recorded demo takes | voice, then Glimmer, then SAM, then follow, then voice land. Recommended, in `media/demo/` (each has `-ui.mp4` and `-chase.mp4`): see the next table. All final-code takes have no wrong-way hover, a silent landing, and the mission ending at touchdown. |
 | Fine-tuned Muse Glimmer (LoRA) | 98.0% action accuracy on 300 held-out commands, 100% on 80 hand-written ones; base Glimmer 93.7%; Spark 1.3 95.3%; 3.6 s on this Mac |
 | Voice | Voice Transcribe about 0.23 s after you stop talking; local stop/land listener 18/18, 0 false triggers |
 | Morning tools | `scripts/preflight.py`, `scripts/session_a.py`, `scripts/apply_sysid.py`, `scripts/make_aruco.py`, `scripts/run_stack.sh` |
 | Docs | README, docs/results.md, docs/video_script.md, licenses and notices, secret scan |
+
+| Take | Code | Follow window | On another actor |
+|---|---|---|---|
+| S1 `demo-s1-final4-20261104-051519` | final | followed 100%, locked 99.6%, bearing RMS 0.095 rad | 0 |
+| S2 `demo-s2-20261104-032802` | earlier, before the safety changes; cut at touchdown | locked 100%, 0.092 rad | 2.0% at the crossings (the better crossing) |
+| S2 `demo-s2-final-20261104-052736` | final, an alternative | locked 95%, 0.110 rad | 7.2% at the crossings |
+| S3 `demo-s3-final-20261104-052959` | final | followed 100%, locked 100%, 0.088 rad | 0 |
 
 Tests on `integration`, all passing (730 in total, counting the opt-in UI and full-stack runs; governor, twin, UI, ops and docs re-run at 05:27 ET on the final code, the rest at 04:56):
 
@@ -87,4 +94,5 @@ Tests on `integration`, all passing (730 in total, counting the opt-in UI and fu
 ## Files written outside this folder
 - **Before the rule reached the research agents:** `brew` libsndfile, libvorbis, flac and libogg; `~/.cache/fairseq2`; two Hugging Face model folders. The cleanup commands are in PLAN.md section 13.
 - **At 04:27 ET:** five of my own scratch files went to the macOS temp folder. They were moved back into `.cache/tmp/integrator/` within minutes.
+- **Not from this project, at 05:28 ET:** a new environment in `~/.cache/uv` (Python 3.14 with Playwright). This project runs Python 3.13, and no project script calls `uv` except `sync_envs.sh` with the project cache. The likely source is another app; the Claude desktop app's extensions run `uv` from `~/.local/bin`.
 - **Checking:** a watchdog checked every 4 minutes all night and saw nothing else.
