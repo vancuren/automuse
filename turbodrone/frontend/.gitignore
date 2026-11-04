@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# turbodrone/.gitignore ignores Python "lib/" folders; the UI's src/lib/ is source code.
+!src/lib/
