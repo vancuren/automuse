@@ -61,6 +61,7 @@ Muse Image, Llama.
 |---|---|---|---|
 | silero VAD (`silero_vad.onnx`) | sherpa-onnx release assets | MIT (snakers4/silero-vad) | not checked locally: the download has no license file |
 | VitTrack (`object_tracking_vittrack_2023sep.onnx`) | [opencv_zoo](https://github.com/opencv/opencv_zoo/tree/main/models/object_tracking_vittrack) | Apache-2.0 (opencv_zoo) | not checked locally: the download has no license file |
+| CLIP tokenizer files (`openai/clip-vit-base-patch32`) | Hugging Face, loaded by mlx-vlm for SAM 3.1's text encoder | see the model card | not checked locally: the cached files (vocab, merges, tokenizer config) carry no license file |
 
 ## 4. Tools run as separate programs (not distributed)
 
@@ -102,9 +103,8 @@ the license classifiers). Packages with the most weight in the project:
 | sherpa-onnx | Apache-2.0 | Omnilingual ASR and the silero VAD |
 | transformers, torch | Apache-2.0; torch: `Apache-2.0 AND ... AND BSD-3-Clause AND ...` (see below) | MMS-TTS |
 | opencv-contrib-python | Apache-2.0 | RTSP decode, VitTrack, KCF, CSRT, ArUco |
-| fastapi, uvicorn, starlette, pydantic, websockets, httpx | MIT / BSD-3-Clause | backend, twin, clients |
+| fastapi, uvicorn, starlette, pydantic, websockets, httpx | MIT / BSD-3-Clause | backend, twin, and every client (the Meta Model API, Fireworks and `mlx_lm.server` are called with httpx) |
 | playwright | Apache-2.0 | drives Chrome for the twin renderer and the UI tests |
-| openai | Apache-2.0 | OpenAI-compatible clients for the Meta Model API, Fireworks and mlx_lm.server |
 | numpy, matplotlib, pyyaml, pillow, sounddevice, soundfile | BSD-3-Clause and others / matplotlib license / MIT / MIT-CMU / MIT / BSD-3-Clause | numerics, charts, config, images, audio |
 
 <details>
