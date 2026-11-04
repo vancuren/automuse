@@ -165,11 +165,12 @@ class AgentService:
         mode = self.cfg.get("intent", "auto")
         g, s, r = self.cfg.get("glimmer", {}), self.cfg.get("spark", {}), self.cfg.get("router", {})
         glimmer = None
+        local_glimmer = str(g.get("base_url", "")).startswith(("http://127.0.0.1", "http://localhost"))
         if g.get("model") and mode in ("auto", "glimmer"):
             glimmer = glimmer_client(g.get("base_url", "https://api.fireworks.ai/inference/v1"), g["model"],
                                      label=g.get("label", "glimmer-30b+lora"), api_key_env=g.get("api_key_env"),
-                                     response_format=g.get("response_format", "json_schema"),
-                                     timeout_s=float(g.get("timeout_s", 8.0)), max_tokens=int(g.get("max_tokens", 256)))
+                                     response_format=g.get("response_format", "none"),
+                                     timeout_s=float(g.get("timeout_s", 8.0)), max_tokens=int(g.get("max_tokens", 1200)))
         elif mode == "glimmer":
             log.warning("--intent glimmer but no Glimmer model configured; the keyword grammar will answer")
         spark = None
@@ -177,9 +178,13 @@ class AgentService:
             spark = spark_client(reasoning_effort=s.get("reasoning_effort", "minimal"),
                                  base_url=s.get("base_url", "https://api.meta.ai/v1"),
                                  model=s.get("model", "muse-spark-1.3"), timeout_s=float(s.get("timeout_s", 8.0)))
+        # Local Glimmer takes about 4-5 s per command on this Mac (train workstream), so edge mode gets
+        # a longer deadline before the keyword grammar answers.
+        deadline = float(r.get("edge_total_timeout_s", 9.0) if (glimmer and local_glimmer)
+                         else r.get("total_timeout_s", 5.0))
         return HedgedRouter(glimmer=glimmer, spark=spark, mode=mode,
                             prefer_window_s=float(r.get("glimmer_window_s", 2.5)),
-                            total_timeout_s=float(r.get("total_timeout_s", 5.0)),
+                            total_timeout_s=deadline,
                             safety_fast_path=bool(r.get("safety_fast_path", True)))
 
     async def start(self) -> None:

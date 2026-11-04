@@ -252,11 +252,10 @@ Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/l
 1. **Live microphone never exercised** (no permission overnight). Everything was tested by injecting
    audio into the same `MicHub` the mic feeds. Run `mic_check` in the morning; it prints ALL ZEROS if
    the terminal app lacks the Microphone permission (the service also emits an error event).
-2. **Glimmer not exercised for real.** No Fireworks deployment existed at 01:00 and Fireworks has no
-   serverless Glimmer (only `muse-spark-open`, which the plan rules out). The Glimmer client and the
-   hedged timing are tested against the mock. `response_format: json_schema` is sent; if the
-   Fireworks deployment or `mlx_lm.server` rejects it, set `glimmer.response_format` to `json_object`
-   or `none` in `config/agent.yaml` (parsing tolerates prose around the JSON).
+2. **Glimmer not exercised for real by this workstream.** No Fireworks deployment existed at 01:00,
+   Fireworks has no serverless Glimmer (only `muse-spark-open`, which the plan rules out), and only the
+   train workstream may load Glimmer locally. The client and the hedged timing are tested against the
+   mock, with the request shape and channel format the train workstream verified on both servers.
 3. **Propeller noise:** detection falls off below about 10 dB SNR (table above). Use a headset or a
    mic close to the mouth for flights; the UI LAND button and Esc E-STOP remain the primary controls.
 4. **Echo:** with laptop speakers the listener hears the agent's own voice. A land word heard while
@@ -283,8 +282,16 @@ Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/l
   - `reply` (text), `error` (text), `safety_word` (text = word, `data = {command, action, transcript, kind, decode_ms}`)
 - **Start order:** backend, then `$MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000`.
   The agent needs `MODEL_API_KEY` (and `FIREWORKS_API_KEY` for Glimmer on Fireworks) from `.env`.
-- **Glimmer:** put the deployment's model id in `config/agent.yaml` (`glimmer.model`) or pass
-  `--glimmer-model`. Mission.model then reads `glimmer-30b+lora` when Glimmer answers.
+- **Glimmer:** put the model string in `config/agent.yaml` (`glimmer.model`) or pass `--glimmer-model`.
+  Mission.model then reads `glimmer-30b+lora` when Glimmer answers. Formats (from docs/ws/train.md):
+  - Fireworks LoRA: `accounts/<acct>/models/glimmer-intent-v1#accounts/<acct>/deployments/glimmer-intent`
+  - Fireworks base: `accounts/fireworks/models/muse-glimmer-30b#accounts/<acct>/deployments/glimmer-intent`
+    (use `--glimmer-label glimmer-30b`)
+  - local (`scripts/serve_glimmer.sh`): `--glimmer-url http://127.0.0.1:8080/v1 --glimmer-model default_model`;
+    the router deadline becomes 9 s because local Glimmer takes about 4-5 s.
+  The request matches what the train workstream verified: GLIMMER_SYSTEM_PROMPT, temperature 0, no
+  `response_format`, `max_tokens` 1200; raw `<|message|>` channels from mlx_lm.server are handled. A
+  scaled-to-zero Fireworks deployment answers 503 at once, so the router falls through to Spark.
 - **Memory/GPU:** the agent uses CPU only (Omnilingual 2 threads, MMS-TTS 2 threads) and loads no
   MLX model. Peak RSS measured 1.9 GB (1.2 GB after Omnilingual + VAD, 1.8 GB after MMS-TTS + torch).
 - **Contracts:** no changes needed. No frozen file was edited.

@@ -141,9 +141,25 @@ def check_intent(i: Intent) -> Optional[str]:
     return None
 
 
+_SPECIAL_RE = re.compile(r"<\|[a-z_]+\|>")
+
+
+def final_channel(text: str) -> str:
+    """Glimmer's user-facing channel. mlx_lm.server (0.32.2) returns Glimmer's channels raw:
+    'to=self<|message|>REASONING<|eom|><|start|>assistant to=user<|message|>{JSON}' (found by the train
+    workstream); the answer is after the last '<|message|>'. Fireworks splits reasoning out already."""
+    if "<|message|>" in (text or ""):
+        text = text.rsplit("<|message|>", 1)[1]
+    return _SPECIAL_RE.sub("", text or "").strip()
+
+
 def parse_model_output(text: str) -> tuple[Optional[Intent], bool]:
-    """(intent, repaired). Strict parse first (mhd.intent_spec.parse_intent), then each balanced JSON
-    object, then a lenient repair. Reasoning blocks (<think>...</think>) are ignored."""
+    """(intent, repaired). The final channel first, then strict parse (mhd.intent_spec.parse_intent),
+    then each balanced JSON object, then a lenient repair. <think>...</think> blocks are ignored."""
+    if "<|message|>" in (text or ""):
+        i = parse_intent(final_channel(text))
+        if i is not None and check_intent(i) is None:
+            return i, False
     i = parse_intent(text)
     if i is not None and check_intent(i) is None:
         return i, False
@@ -579,11 +595,16 @@ def _ms(t0: float) -> float:
 
 
 def glimmer_client(base_url: str, model: str, label: str = "glimmer-30b+lora",
-                   api_key_env: Optional[str] = "FIREWORKS_API_KEY", response_format: str = "json_schema",
-                   timeout_s: float = 8.0, max_tokens: int = 256, **extra) -> ChatIntentClient:
-    """Muse Glimmer behind any OpenAI-compatible server. Fireworks: base_url
-    https://api.fireworks.ai/inference/v1 and model accounts/<acct>/models/<name> or a deployment.
-    Local: http://127.0.0.1:8080/v1 (mlx_lm.server or llama-server), api_key_env None."""
+                   api_key_env: Optional[str] = "FIREWORKS_API_KEY", response_format: str = "none",
+                   timeout_s: float = 8.0, max_tokens: int = 1200, **extra) -> ChatIntentClient:
+    """Muse Glimmer behind any OpenAI-compatible server, called the way the train workstream verified:
+    GLIMMER_SYSTEM_PROMPT, temperature 0, no constrained decoding (the LoRA was trained with a short
+    reasoning channel before the JSON), max_tokens 1200 (base Glimmer reasons for 80-170 tokens).
+    Fireworks: base_url https://api.fireworks.ai/inference/v1, model
+      accounts/<acct>/models/glimmer-intent-v1#accounts/<acct>/deployments/glimmer-intent   (LoRA)
+      accounts/fireworks/models/muse-glimmer-30b#accounts/<acct>/deployments/glimmer-intent (base)
+    Local: http://127.0.0.1:8080/v1 (scripts/serve_glimmer.sh, mlx_lm.server), model "default_model",
+    api_key_env None."""
     return ChatIntentClient(ChatConfig(
         base_url=base_url, model=model, label=label, api_key_env=api_key_env,
         system_prompt=GLIMMER_SYSTEM_PROMPT, response_format=response_format, max_tokens=max_tokens,

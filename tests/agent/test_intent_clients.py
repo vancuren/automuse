@@ -128,3 +128,30 @@ def test_spark_style_request_body(mock, monkeypatch):
     assert "max_completion_tokens" in body and "temperature" not in body
     assert body["messages"][0]["content"] == SYSTEM_PROMPT
     assert "tools" not in body and "tool_choice" not in body
+
+
+def test_parse_glimmer_raw_channels_from_mlx_lm_server():
+    """mlx_lm.server returns Glimmer's channels raw; the answer is after the last <|message|>."""
+    raw = ("to=self<|message|>Follow by appearance: {person} blue shirt.<|eom|><|start|>assistant "
+           "to=user<|message|>" + GOOD + "<|eot|>")
+    i, repaired = parse_model_output(raw)
+    assert i is not None and i.subject_phrase == "person in blue shirt" and not repaired
+
+
+def test_glimmer_request_has_no_constrained_decoding(mock):
+    c = glimmer_client(mock.base_url, "default_model", api_key_env=None)
+    a = asyncio.run(c.infer("follow the red car"))
+    body = mock.requests[-1]["body"]
+    assert a.valid and "response_format" not in body and body["max_tokens"] == 1200
+    assert body["temperature"] == 0.0 and body["model"] == "default_model"
+
+
+def test_edge_mode_gets_longer_deadline():
+    from mhd_ml.agent.service import AgentService
+
+    cfg = {"intent": "glimmer", "glimmer": {"base_url": "http://127.0.0.1:8080/v1", "model": "default_model",
+                                            "api_key_env": None}, "spark": {"enabled": False}}
+    r = AgentService(cfg, start_mic=False)._build_router()
+    assert r.total_timeout_s == 9.0
+    cfg["glimmer"]["base_url"] = "https://api.fireworks.ai/inference/v1"
+    assert AgentService(cfg, start_mic=False)._build_router().total_timeout_s == 5.0

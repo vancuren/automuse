@@ -23,14 +23,17 @@ voice_transcribe:
 
 glimmer:
   # Fireworks (OpenAI-compatible). Leave model empty until the train workstream has a deployment;
-  # with no model the router runs Spark + keyword only. Local edge mode: base_url
-  # http://127.0.0.1:8080/v1, api_key_env null, label glimmer-30b.
+  # with no model the router runs Spark + keyword only. Model strings (docs/ws/train.md):
+  #   LoRA: accounts/<acct>/models/glimmer-intent-v1#accounts/<acct>/deployments/glimmer-intent
+  #   base: accounts/fireworks/models/muse-glimmer-30b#accounts/<acct>/deployments/glimmer-intent
+  # Local edge mode (scripts/serve_glimmer.sh): base_url http://127.0.0.1:8080/v1, model default_model,
+  # api_key_env null (set automatically for a loopback URL), label glimmer-30b+lora.
   base_url: https://api.fireworks.ai/inference/v1
   model: ""
   label: glimmer-30b+lora
   api_key_env: FIREWORKS_API_KEY
-  response_format: json_schema   # json_schema | json_object | none
-  max_tokens: 256
+  response_format: none          # none (as trained and evaluated) | json_object | json_schema
+  max_tokens: 1200               # the LoRA stops after ~60 tokens; base Glimmer reasons 80-170 first
   timeout_s: 8.0
 
 spark:
@@ -44,6 +47,7 @@ router:
   glimmer_window_s: 2.5          # Glimmer's answer wins if it is valid within this window
   total_timeout_s: 5.0           # after this the keyword grammar answers (Spark had a 6.5 s outlier;
                                  # 5 s keeps release-to-reply under the 6 s p95 target)
+  edge_total_timeout_s: 9.0      # used instead when Glimmer is local (about 4-5 s per command)
   safety_fast_path: true         # "stop" / "land" in a push-to-talk command never waits for a model
 
 safety:
