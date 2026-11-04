@@ -347,6 +347,24 @@ def test_flight_timer_warns_then_lands_and_persists(rig, tmp_path):
     assert r.g.command("pack_swap", pack_id="2").ok and r.g.flight_timer.flight_s() == 0.0
 
 
+def test_a_long_landing_state_adds_no_phantom_flight_time(rig):
+    # 2026-11-04: the drone switched itself off while the governor sat in LANDING for minutes; that time
+    # was counted as flight, and the next TAKEOFF was landed at once by the flight timer (no 0x01 sent).
+    r = rig(gov_overrides={"flight_timer.warn_s": 300.0, "flight_timer.land_s": 390.0,
+                           "flight_timer.landing_count_s": 15.0})
+    r.airborne()
+    before = r.g.flight_timer.flight_s()
+    r.g.command("land")
+    r.run(600.0)                                    # ten minutes stuck in LANDING
+    assert r.g.state == FlightState.landing
+    assert r.g.flight_timer.flight_s() - before <= 15.5
+    r.g.command("confirm_touchdown")
+    assert r.g.state == FlightState.on_ground
+    assert r.g.command("takeoff").ok
+    r.run(1.0)
+    assert r.g.state in (FlightState.taking_off, FlightState.airborne)     # not landed by the timer
+
+
 def test_resume_postpones_timer_landing_it_does_not_cancel_it(rig):
     # Review fix: one resume used to cancel the timer landing for good (152 s flown with land_s 30).
     r = rig(gov_overrides={"flight_timer.warn_s": 3.0, "flight_timer.land_s": 5.0,

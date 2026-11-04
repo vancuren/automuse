@@ -147,6 +147,7 @@ class FlightTimerCfg:
     warn_s: float = 300.0
     land_s: float = 390.0
     refire_after_s: float = 20.0     # after a resume cancels the timer landing, it fires again this much later
+    landing_count_s: float = 15.0    # LANDING counts as flight time only for its first this-many seconds
 
 
 @dataclass(frozen=True)
@@ -266,6 +267,7 @@ class GovernorConfig:
         within("flight_timer.warn_s", self.flight_timer.warn_s, 0.0, 600.0, lo_open=True)
         within("flight_timer.land_s", self.flight_timer.land_s, 0.0, 600.0, lo_open=True)
         within("flight_timer.refire_after_s", self.flight_timer.refire_after_s, 1.0, 120.0)
+        within("flight_timer.landing_count_s", self.flight_timer.landing_count_s, 0.0, 120.0)
         within("wrong_way.window_thetas", self.wrong_way.window_thetas, 0.0, 10.0, lo_open=True)
         within("wrong_way.min_change_rad", self.wrong_way.min_change_rad, 0.0, 1.0, lo_open=True)
         within("wrong_way.pitch_min_cmd", self.wrong_way.pitch_min_cmd, 0.0, 1.0, lo_open=True)

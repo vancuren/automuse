@@ -669,7 +669,12 @@ class Governor:
             self._set_state(FlightState.airborne, now)
             st = self._state
         flying = st in (FlightState.taking_off, FlightState.airborne, FlightState.landing)
-        if flying:
+        # LANDING counts only for its first landing_count_s: after that the drone is down and the state waits
+        # for Landed. Counting longer added phantom minutes on 2026-11-04 (the drone switched itself off
+        # mid-LANDING) that tripped the timer landing on the next takeoff, before any takeoff packet went out.
+        long_landing = st == FlightState.landing and \
+            now - self._state_since > cfg.flight_timer.landing_count_s * 1000.0
+        if flying and not long_landing:
             self.flight_timer.add_flight_time(dt)
         flight_s = self.flight_timer.flight_s()
         if flight_s >= cfg.flight_timer.warn_s:

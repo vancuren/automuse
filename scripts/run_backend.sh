@@ -180,7 +180,12 @@ elif [[ -n "$BUSY" ]]; then
   echo "run_backend.sh: port $PORT is already in use:" >&2
   printf '%s\n' "$BUSY" | sed 's/^/    /' >&2
   echo "run_backend.sh: refusing to start a second backend (it would send RC packets to the drone before it found" \
-       "the port taken). Stop the other one first (Ctrl-C in its window), or use another --port." >&2
+       "the port taken). Stop the other one first (Ctrl-C in its window)." >&2
+  if [[ "$FLIGHT_MODE" == real ]]; then
+    echo "run_backend.sh: never run two backends against the real drone, even on different ports." >&2
+  else
+    echo "run_backend.sh: (twin mode only: another --port is fine.)" >&2
+  fi
   exit 2
 fi
 if [[ "$DRY_RUN" == 1 ]]; then echo "[run_backend] dry run: not starting" >&2; exit 0; fi
