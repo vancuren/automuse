@@ -248,14 +248,14 @@ that followed (recall near 0, discarded). On flight day, keep batch jobs off the
 `--detector sam_api` flies; a 429 costs 5 s of detections, and the autopilot then hovers.
 Spend for G2 via API: $0.31 (124 calls). Workstream total so far: $0.46.
 
-### Adaptive follow cadence (00:44 ET, Glimmer training on the GPU, twin Chrome not running)
+### Adaptive follow cadence (00:38 ET, Glimmer training on the GPU, twin Chrome not running)
 
 The first live run showed `confirm_age_ms` reaching 1.7 s under GPU load, above the
 autopilot's 1.5 s forward-motion gate. While following, the detector period is now
 `max_confirm_age_ms (1300) - detector p95`, between the 2 Hz find rate and 1 Hz. Same fake
 backend run, 38 s:
 
-| | fixed 1 Hz (00:10) | adaptive (00:44) |
+| | fixed 1 Hz (00:10) | adaptive (00:38) |
 |---|---|---|
 | confirm_age p50 / p95 / max | 1133 / about 1650 / 1735 ms | **999 / 1332 / 1467 ms** |
 | frames over 1.5 s | about 10% | **0%** |

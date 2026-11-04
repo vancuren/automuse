@@ -82,6 +82,9 @@ class PerceptionService:
         args = self.args
         if self.detector is None:
             self.detector = build_detector(args.detector, args)
+        if args.detector == "sam_api" and not os.environ.get("MODEL_API_KEY"):
+            log.error("--detector sam_api but MODEL_API_KEY is not set: nothing will be detected "
+                      "(source env.sh, which loads $MHD_HOME/.env)")
         self.tracker_name, factory = build_tracker_factory(args.tracker, self.detector)
         if self.tracker_name == "sam_mlx":
             # The SAM tracker uses the same MLX engine, so frames must run on the detector thread.
@@ -267,8 +270,15 @@ class PerceptionService:
                 continue
             m = self.core.mission
             tr = self.core.track
-            log.info("status: %.1f fps, sent %d, detector p50 %.0f ms, mission %s, track %s, stats %s",
-                     fps, self.sent, p50, m.mission_id if m else None,
+            mem = ""
+            if getattr(self.detector, "engine", None) is not None:
+                try:
+                    import mlx.core as mx
+                    mem = f", MLX {mx.get_active_memory() / 1e9:.1f} GB"
+                except Exception:
+                    pass
+            log.info("status: %.1f fps, sent %d, detector p50 %.0f ms%s, mission %s, track %s, stats %s",
+                     fps, self.sent, p50, mem, m.mission_id if m else None,
                      (f"{tr.track_id} confirms={tr.n_confirms} score={tr.last_score:.2f} lost={tr.lost}"
                       if tr else None), self.core.stats)
             if self.obs_log:
