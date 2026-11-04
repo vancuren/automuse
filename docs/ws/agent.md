@@ -92,8 +92,9 @@ $MHD_ML_PY scripts/agent/integration_smoke.py [--backend-tree ../gov]   # vs the
 
 ## Test results
 
-`$MHD_ML_PY -m pytest tests/agent -q`: **all pass** (see the final count in the report; 2 real-API tests
-are opt-in and also pass with `MHD_REAL_API=1`).
+`$MHD_ML_PY -m pytest tests/agent -q` at 01:45 ET: **195 passed, 2 skipped** (the 2 skipped are the
+real-API tests; with `MHD_REAL_API=1` they pass too). About 2 minutes, mostly audio decoding. The
+scaffold tests (`tests/test_contracts.py`, `tests/test_intent_spec.py`, core venv) still pass.
 
 - `test_keyword_grammar.py`: 62 grammar cases (follow with color, person + garment/object, distance,
   safety words, refusals, clarify, plurals) plus invariants.
@@ -120,9 +121,11 @@ are opt-in and also pass with `MHD_REAL_API=1`).
   no Mission; the listener alone lands the drone in real time within 1.5 s of speech end; Voice
   Transcribe down -> local ASR fallback; keyword mode; spoken acknowledgment; lost ptt_up watchdog;
   `--asr local`; relayed autopilot announcements are spoken.
-- `scripts/agent/integration_smoke.py` against the gov workstream's real patched backend (its
-  worktree, run read-only on my ports 8407-8409): **PASS**. Follow -> autopilot FIND with subject
-  "person in blue shirt"; spoken "land" -> governor LANDING (`{"ok": true, "flight_state": "LANDING"}`).
+- `scripts/agent/integration_smoke.py` against the gov workstream's real patched backend, run on my
+  ports 8407-8409 with RC datagrams to an unused loopback port: **PASS** at 01:10 (their worktree,
+  read-only) and again at 01:45 against their latest commit 03f0527 (exported with `git archive` into
+  my `logs/`, because their worktree had uncommitted edits mid-change). Follow -> autopilot FIND with
+  subject "person in blue shirt"; spoken "land" -> governor LANDING (`{"ok": true, "flight_state": "LANDING"}`).
 
 ## Measurements
 
