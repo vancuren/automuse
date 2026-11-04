@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
+import { URLS } from '../config';
 
-const OVERLAY_WS_URL = 'ws://localhost:8000/ws/overlays';
+const OVERLAY_WS_URL = URLS.overlays;
 
 export interface OverlayObject {
   type: 'rect';
@@ -13,6 +14,7 @@ export function useOverlays() {
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined; // MHD patch: cleared on unmount
     const connect = () => {
       ws.current = new WebSocket(OVERLAY_WS_URL);
       
@@ -30,7 +32,7 @@ export function useOverlays() {
 
       ws.current.onclose = () => {
         console.log('%c[Overlays] WebSocket Disconnected. Reconnecting...', 'color: orange');
-        setTimeout(connect, 3000); 
+        reconnectTimer = setTimeout(connect, 3000);
       };
 
       ws.current.onerror = (err) => {
@@ -42,6 +44,7 @@ export function useOverlays() {
     connect();
 
     return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       if (ws.current) {
         ws.current.onclose = null; 
         ws.current.close();

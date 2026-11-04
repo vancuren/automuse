@@ -1,5 +1,6 @@
 import StaticDrawingOverlay from "../components/StaticDrawingOverlay";
 import { VideoFeed } from "../components/VideoFeed";
+import { URLS } from "../config";
 
 export default function TestPage() {
   return (
@@ -11,7 +12,7 @@ export default function TestPage() {
         className="relative border-2 border-dashed border-gray-600"
         style={{ width: 640, height: 480 }}
       >
-        <VideoFeed src="http://localhost:8000/mjpeg" />
+        <VideoFeed src={URLS.mjpeg} />
         <StaticDrawingOverlay />
       </div>
     </div>
