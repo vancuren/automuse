@@ -1,10 +1,14 @@
 """scripts/run_backend.sh: real mode takes configs only from config/ or config/real/, never a twin_only
 file, and ignores GOVERNOR_CONFIG / AUTOPILOT_CONFIG exported in the shell (review, 2026-11-04).
-All runs use --dry-run, which checks the arguments and exits before anything starts."""
+All runs use --dry-run, which checks the arguments and exits before anything starts, except the busy-port
+test, which runs a copy of the script whose MHD_PY is a stub that only records its arguments."""
 from __future__ import annotations
 
 import os
+import shutil
+import socket
 import subprocess
+from contextlib import contextmanager
 
 from conftest import ROOT
 
@@ -123,3 +127,80 @@ def test_lewei_refusals():
     assert rc == 2 and "pass --board lewei" in err
     rc, err = dry("--mode", "real", "--board", "lewei", env_extra={"MHD_CAMERA_ONLY": "1"})
     assert rc == 2 and "MHD_CAMERA_ONLY" in err
+
+
+# ---------------------------------------------------------------- a busy --port (a second backend)
+# uvicorn runs the app's startup (the RC loop starts sending) before it binds the port, so a second backend
+# on a busy port would send RC packets until its bind failed: run_backend.sh refuses first (lsof).
+
+LIVE_STACK_PORTS = (8000, 5173, 8554, 8766)
+
+
+@contextmanager
+def listening_port():
+    """A TCP listener on a loopback port the kernel picks (ephemeral: never one of the live stack's ports)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+        assert port not in LIVE_STACK_PORTS
+        yield port
+    finally:
+        s.close()
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    assert port not in LIVE_STACK_PORTS
+    return port
+
+
+def test_dry_run_only_notes_a_busy_port():
+    with listening_port() as port:
+        for args in (("--mode", "twin"), ("--mode", "real", "--board", "lewei"), ("--camera",)):
+            rc, err = dry(*args, "--port", str(port))
+            assert rc == 0, (args, err)
+            assert f"note: port {port} is already in use, so a real start would refuse" in err, err
+            assert f"{os.getpid()}" in err and f"127.0.0.1:{port} (LISTEN)" in err      # lsof names the listener
+            assert "dry run: not starting" in err
+    rc, err = dry("--mode", "twin", "--port", str(free_port()))
+    assert rc == 0 and "already in use" not in err and "dry run: not starting" in err
+
+
+def hermetic_copy(tmp_path):
+    """run_backend.sh in a scratch tree whose env.sh points MHD_PY at a stub that records its arguments, so
+    a real (not dry-run) start can be checked without starting anything."""
+    tree = tmp_path / "tree"
+    (tree / "scripts").mkdir(parents=True)
+    (tree / "turbodrone" / "backend").mkdir(parents=True)
+    shutil.copy2(SCRIPT, tree / "scripts" / "run_backend.sh")
+    marker = tmp_path / "started.txt"
+    stub = tmp_path / "python-stub"
+    stub.write_text(f'#!/bin/bash\necho "$@" > "{marker}"\n')
+    stub.chmod(0o755)
+    (tree / "env.sh").write_text(f'export MHD_PY="{stub}" MHD_LOGS="{tmp_path / "logs"}"\n')
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GOVERNOR_CONFIG", "AUTOPILOT_CONFIG", "MHD_BOARD", "MHD_CAMERA_ONLY", "LOG_LEVEL")}
+    env["MHD_PY"] = str(stub)
+    return tree / "scripts" / "run_backend.sh", marker, env
+
+
+def test_a_real_start_refuses_a_busy_port_before_anything_runs(tmp_path):
+    script, marker, env = hermetic_copy(tmp_path)
+    args = ["--mode", "twin", "--control-port", "23999", "--rtsp-url", "rtsp://127.0.0.1:9/live/ch00_1"]
+    with listening_port() as port:
+        p = subprocess.run(["bash", str(script), *args, "--port", str(port)], capture_output=True, text=True,
+                           env=env, timeout=30)
+    assert p.returncode == 2, p.stderr
+    assert f"port {port} is already in use" in p.stderr and f"127.0.0.1:{port} (LISTEN)" in p.stderr
+    assert "refusing to start a second backend" in p.stderr
+    assert not marker.exists()                         # uvicorn (here the stub) never ran
+    port = free_port()                                 # the same start on a free port gets to uvicorn
+    p = subprocess.run(["bash", str(script), *args, "--port", str(port)], capture_output=True, text=True,
+                       env=env, timeout=30)
+    assert p.returncode == 0, p.stderr
+    assert marker.read_text().startswith(f"-m uvicorn web_server:app --host 127.0.0.1 --port {port} ")
+    assert "already in use" not in p.stderr

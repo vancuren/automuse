@@ -15,18 +15,30 @@
 #   [--governor-config FILE] [--autopilot-config FILE]   twin: any file (default config/*.yaml);
 #       real: only config/{governor,autopilot}.yaml or config/real/ (Session B values), never a
 #       twin_only file, and GOVERNOR_CONFIG / AUTOPILOT_CONFIG from the shell are ignored.
-#   --dry-run: check the arguments, print what would run, and exit (contacts nothing).
+#   --dry-run: check the arguments, print what would run, and exit (contacts nothing; a busy --port is only noted).
 #
 # --mode (or --camera) is required (FLIGHT_MODE has no default). Twin mode talks only to loopback. --headless sets
 # GOVERNOR_TWIN_HEADLESS=1 (skip UI-heartbeat checks); the governor refuses it in real mode.
 # Binds 127.0.0.1 by default so nothing else on the network can command the drone. No --reload, ever.
+# Refuses to start while anything listens on --port: uvicorn runs the app's startup (the RC loop starts
+# sending) before it binds the port, so a second backend would send RC packets before it failed.
 # Control logs: $MHD_LOGS/control-*.jsonl; flight timer: $MHD_LOGS/flight_timer.json.
 set -euo pipefail
 TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$TREE/env.sh"
 
-usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# port_listeners PORT: one "COMMAND PID USER ... NAME" line per TCP listener on PORT (any address), or
+# status 3 without lsof. lsof only reads the kernel's socket table: it connects to nothing.
+port_listeners() {
+  local lsof_bin
+  lsof_bin="$(command -v lsof 2>/dev/null || true)"
+  if [[ -z "$lsof_bin" && -x /usr/sbin/lsof ]]; then lsof_bin=/usr/sbin/lsof; fi
+  [[ -n "$lsof_bin" ]] || return 3
+  { "$lsof_bin" -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null || true; } | sed 1d
+}
 
 MODE="" PORT="" CONTROL_PORT="" LOCAL_CONTROL_PORT="" RTSP_URL="" HEADLESS=0 HOST="127.0.0.1" LOGS=""
 GOV_CFG_ARG="" AP_CFG_ARG="" DRY_RUN=0 CAMERA=0 BOARD=x69_lg
@@ -154,6 +166,23 @@ if [[ -n "$LOGS" ]]; then mkdir -p "$LOGS"; export MHD_LOGS="$(cd "$LOGS" && pwd
 echo "[run_backend] tree=$TREE logs=$MHD_LOGS mode=$FLIGHT_MODE board=${MHD_BOARD:-x69_lg} drone=$DRONE_IP:$CONTROL_PORT rtsp=${X69_LG_RTSP_URL:-<drone default>} http=$HOST:$PORT headless=$HEADLESS camera_only=${MHD_CAMERA_ONLY:-0}" >&2
 [[ "$CAMERA" == 1 ]] && echo "[run_backend] CAMERA ONLY (real camera, NO FLIGHT): MHD_CAMERA_ONLY=1, the RC adapter has no socket and sends nothing" >&2
 echo "[run_backend] governor config=${GOVERNOR_CONFIG:-config/governor.yaml} autopilot config=${AUTOPILOT_CONFIG:-config/autopilot.yaml}" >&2
+# A second backend must never send a single RC packet. uvicorn runs the app's startup (the RC loop starts
+# sending to the drone) BEFORE it binds the HTTP port, so on a busy port a second backend would send packets
+# alongside the first one until its bind failed. So: refuse here, before anything starts.
+BUSY="" PORT_CHECKED=1
+BUSY="$(port_listeners "$PORT")" || PORT_CHECKED=0
+if [[ "$PORT_CHECKED" == 0 ]]; then
+  echo "[run_backend] WARNING: lsof not found: cannot check that port $PORT is free" >&2
+elif [[ -n "$BUSY" && "$DRY_RUN" == 1 ]]; then
+  echo "[run_backend] note: port $PORT is already in use, so a real start would refuse:" >&2
+  printf '%s\n' "$BUSY" | sed 's/^/[run_backend]     /' >&2
+elif [[ -n "$BUSY" ]]; then
+  echo "run_backend.sh: port $PORT is already in use:" >&2
+  printf '%s\n' "$BUSY" | sed 's/^/    /' >&2
+  echo "run_backend.sh: refusing to start a second backend (it would send RC packets to the drone before it found" \
+       "the port taken). Stop the other one first (Ctrl-C in its window), or use another --port." >&2
+  exit 2
+fi
 if [[ "$DRY_RUN" == 1 ]]; then echo "[run_backend] dry run: not starting" >&2; exit 0; fi
 cd "$TREE/turbodrone/backend"
 # --timeout-graceful-shutdown 1: on Ctrl-C the governor starts landing at once (signal hook in
