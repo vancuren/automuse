@@ -1,7 +1,7 @@
 # Third-party notices
 
 This repository's own code is Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)). It includes one
-third-party code base (turbodrone) and uses models, libraries and tools that keep their own
+third-party code base (turbodrone), three lookup tables from pylwdrone, and uses models, libraries and tools that keep their own
 licenses. **No model weights, no node_modules, no virtualenvs and no downloaded tools are stored in
 git**: `scripts/sync_envs.sh`, `scripts/fetch_models.sh` and `npm` fetch them into the project
 folder, and each comes with its own license.
@@ -38,6 +38,16 @@ upstream files in November 2026. List as of commit `6bb13fb`; regenerate it with
 
 Every other file under `turbodrone/` is either upstream's, unchanged, or new (added by us).
 Details: [docs/ws/gov.md](docs/ws/gov.md) and [docs/ws/ui.md](docs/ws/ui.md).
+
+## 1b. Included data: pylwdrone lookup tables (Apache-2.0)
+
+Our unit's camera turned out to be a Lewei Wi-Fi camera board (192.168.0.1, video on TCP 7060), not the
+board turbodrone's `x69_lg` driver expects. `src/mhd/lewei/tables.py` holds three 256-entry lookup tables
+copied as data from pylwdrone 0.5.0 (`pylwdrone/responses.py`), Copyright 2020 meekworth, Apache License 2.0
+(https://github.com/meekworth/pylwdrone; full text in [licenses/pylwdrone-LICENSE](licenses/pylwdrone-LICENSE)).
+The camera scrambles three bytes in the middle of each video frame, and these tables undo it. The client
+code in `src/mhd/lewei/protocol.py` and `scripts/lewei_bridge.py` is our own, written from pylwdrone's
+description of the protocol; pylwdrone itself is not installed or run.
 
 ## 2. Meta models
 

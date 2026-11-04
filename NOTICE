@@ -31,6 +31,10 @@ was written during the Meta Global AI Developer Hackathon, November 3-4, 2026, a
 is licensed under the Apache License, Version 2.0 (see LICENSE). The code was
 written with AI assistance (Claude Code).
 
+Exception: src/mhd/lewei/tables.py holds three lookup tables copied as data from
+pylwdrone 0.5.0 (https://github.com/meekworth/pylwdrone), Copyright 2020 meekworth,
+licensed under the Apache License, Version 2.0 (licenses/pylwdrone-LICENSE).
+
 This product uses third-party models and libraries under their own licenses; see
 THIRD_PARTY_NOTICES.md. The SAM 3.1 weights and meta-sam-parser are under the SAM
 License (licenses/SAM_LICENSE.txt). MMS-TTS (facebook/mms-tts-eng) is licensed
