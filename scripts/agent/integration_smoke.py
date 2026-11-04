@@ -75,7 +75,7 @@ async def run_agent() -> list[str]:
     failures = []
     await svc.start()
     try:
-        svc.speaker.wait_ready(30)
+        await asyncio.get_running_loop().run_in_executor(None, svc.speaker.wait_ready, 30)
         audio = TREE / "media" / "test_audio" / "commands"
         await svc.simulate_file(audio / "c01_24k.wav")
         await svc.wait_idle()

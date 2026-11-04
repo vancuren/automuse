@@ -243,7 +243,7 @@ async def bench_e2e(intent_mode: str = "spark") -> dict:
     svc = AgentService(cfg, hub=hub, start_mic=False, speaker=speaker,
                        metrics_path=out_path("e2e_utterances").with_suffix(".jsonl"))
     await svc.start()
-    speaker.wait_ready(60)
+    await asyncio.get_running_loop().run_in_executor(None, speaker.wait_ready, 60)
     await asyncio.sleep(2.0)                # warm Voice Transcribe session ready
     rows, audio_s = [], 0.0
     try:

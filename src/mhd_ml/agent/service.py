@@ -81,7 +81,7 @@ def apply_cli(cfg: dict, args: argparse.Namespace) -> dict:
         g["model"] = args.glimmer_model
     if args.glimmer_label:
         g["label"] = args.glimmer_label
-    if args.glimmer_url and args.glimmer_url.startswith("http://127.0.0.1"):
+    if args.glimmer_url and args.glimmer_url.startswith(("http://127.0.0.1", "http://localhost")):
         g.setdefault("api_key_env", None)
         if g.get("api_key_env") == "FIREWORKS_API_KEY":
             g["api_key_env"] = None          # local servers take no key
@@ -601,11 +601,12 @@ async def amain(args: argparse.Namespace) -> int:
     await svc.start()
     try:
         if args.simulate:
-            svc.speaker.wait_ready(30)
+            # Blocking waits run in the executor so the event loop (backend link, warm session) keeps going.
+            await loop.run_in_executor(None, svc.speaker.wait_ready, 30)
             for f in args.simulate:
                 await svc.simulate_file(f)
                 await svc.wait_idle()
-                svc.speaker.wait_idle(15)
+                await loop.run_in_executor(None, svc.speaker.wait_idle, 15)
             for e in svc.events:
                 print(json.dumps(e, default=str))
         else:
