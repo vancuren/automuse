@@ -135,8 +135,9 @@ Omnilingual ASR, vs. Spark's 90.0%.
 
 **Voice.** Muse Voice Transcribe: final transcript 226 ms p50 / 267 ms p95 after you stop talking.
 Muse Spark 1.3 at minimal effort: 1.64 s p50 / 2.47 s p95 to a valid mission. 20 of 20 scripted
-push-to-talk commands gave the right mission; button release to the start of the spoken reply was
-2.40 s p50 / 3.97 s p95. The local listener caught 18 of 18 spoken safety words with 0 false
+push-to-talk commands, with Spark answering, gave the right mission; button release to the start of
+the spoken reply was 2.40 s p50 / 3.97 s p95. With the local Glimmer LoRA answering instead, release
+to mission took 4.3 s in the demo takes. The local listener caught 18 of 18 spoken safety words with 0 false
 triggers on 20 ordinary sentences.
 
 **Safety.** 185 governor and autopilot tests. An adversarial review found 4 major and 10 minor
