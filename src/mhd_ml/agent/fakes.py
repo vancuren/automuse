@@ -40,13 +40,14 @@ class FakeRealtimeASR:
 
     def __init__(self, port: int = 8485, transcript: str = "follow the person in the blue shirt",
                  ack_delay_s: float = 0.0, final_delay_s: float = 0.05, partial_every: int = 5,
-                 expected_key: Optional[str] = None):
+                 expected_key: Optional[str] = None, early_final: Optional[str] = None):
         self.port = port
         self.transcript = transcript
         self.ack_delay_s = ack_delay_s
         self.final_delay_s = final_delay_s
         self.partial_every = partial_every
         self.expected_key = expected_key
+        self.early_final = early_final          # if set: a final:true with this text after 3 chunks
         self.sessions: list[dict] = []
         self._lt: Optional[_LoopThread] = None
         self._server = None
@@ -92,7 +93,10 @@ class FakeRealtimeASR:
                 sess["chunk_sizes"].add(len(msg))
                 sess["first_audio"] = sess["first_audio"] or now
                 sess["last_audio"] = now
-                if self.partial_every and sess["chunks"] % self.partial_every == 0:
+                if self.early_final and sess["chunks"] == 3:
+                    await ws.send(json.dumps({"type": "transcript", "transcript": self.early_final,
+                                              "final": True, "audioProcessedMs": 240}))
+                elif self.partial_every and sess["chunks"] % self.partial_every == 0:
                     k = min(len(words), sess["chunks"] // self.partial_every)
                     await ws.send(json.dumps({"type": "transcript", "transcript": " ".join(words[:k]),
                                               "final": False, "audioProcessedMs": sess["chunks"] * 80}))

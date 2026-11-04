@@ -48,9 +48,12 @@ def resample(x: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
         return x
     if sr_out < sr_in:
         k = int(round(sr_in / sr_out))
-        if k >= 2:
+        if k >= 2 and len(x) >= k:
+            # Edge padding, not zeros: the live path resamples 80 ms chunks one at a time, and zero
+            # padding would put a small dip at every chunk boundary.
             kernel = np.ones(k, dtype=np.float32) / k
-            x = np.convolve(x, kernel, mode="same").astype(np.float32)
+            padded = np.pad(x, (k // 2, k - 1 - k // 2), mode="edge")
+            x = np.convolve(padded, kernel, mode="valid").astype(np.float32)
     n_out = int(round(len(x) * sr_out / sr_in))
     t_in = np.arange(len(x), dtype=np.float64) / sr_in
     t_out = np.arange(n_out, dtype=np.float64) / sr_out

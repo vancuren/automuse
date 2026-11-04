@@ -215,13 +215,22 @@ class RealtimeSession:
         if self.ws is None:
             raise AsrError("session not open")
         self.t_end_sent = time.monotonic()
+        # Wait for a final that arrives AFTER endStream (PUSH_TO_TALK sends one per turn; if the server
+        # ever sent one mid-stream, it must not end the wait early).
+        n_before = len(self.finals)
+        self._final_evt.clear()
+        if self._closed_evt.is_set():
+            self._final_evt.set()
         await self.ws.send(json.dumps({"type": "endStream"}))
         try:
-            await asyncio.wait_for(self._final_evt.wait(), timeout=self.cfg.final_timeout_s)
-            # Several finals may arrive; give the server a moment to close normally after the first.
+            while len(self.finals) == n_before and not self._closed_evt.is_set() and not self.error:
+                self._final_evt.clear()
+                await asyncio.wait_for(self._final_evt.wait(),
+                                       timeout=max(0.05, self.cfg.final_timeout_s - (time.monotonic() - self.t_end_sent)))
+            # More finals may follow; the server closes with 1000 once it has flushed everything.
             if not self._closed_evt.is_set():
                 try:
-                    await asyncio.wait_for(self._closed_evt.wait(), timeout=0.3)
+                    await asyncio.wait_for(self._closed_evt.wait(), timeout=0.5)
                 except asyncio.TimeoutError:
                     pass
         except asyncio.TimeoutError:
@@ -229,7 +238,12 @@ class RealtimeSession:
         await self._close_quietly()
         if self.error and not self.finals:
             raise AsrError(self.error)
-        text = " ".join(t for t in self.finals if t).strip()
+        finals = [t for t in self.finals if t]
+        if finals and all(finals[-1].startswith(f) for f in finals[:-1]):
+            text = finals[-1]                 # cumulative finals: the last one holds everything
+        else:
+            text = " ".join(finals)
+        text = text.strip()
         t_ref = self.t_end_sent
         return Transcript(
             text=text, latency_ms=((self.t_final or time.monotonic()) - t_ref) * 1000.0, model=self.cfg.model,

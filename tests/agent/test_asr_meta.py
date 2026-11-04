@@ -192,3 +192,24 @@ def test_real_file_call(audio_items, monkeypatch):
     it = next(i for i in audio_items["commands"] if i["id"] == "c03" and i["sample_rate"] == 16000)
     t = asyncio.run(MetaFileASR().transcribe_file(it["abspath"]))
     assert "brown dog" in t.text.lower()
+
+
+def test_final_before_endstream_does_not_end_the_wait():
+    """If the server ever sends final:true mid-stream, finish() still waits for the post-endStream final."""
+    f = FakeRealtimeASR(port=PORT + 3, transcript="follow the red car", early_final="follow the",
+                        final_delay_s=0.3, expected_key="unit-test-key").start()
+    try:
+        t = asyncio.run(MetaRealtimeASR(cfg_for(f)).transcribe_array(np.zeros(24000, np.float32), 24000,
+                                                                       realtime=False))
+    finally:
+        f.stop()
+    assert t.text == "follow the red car"                 # cumulative: the last final holds everything
+    assert t.details["finals"] == ["follow the", "follow the red car"]
+
+
+def test_chunked_resample_has_no_boundary_dips():
+    from mhd_ml.agent.audio import resample
+
+    x = np.full(1920, 0.5, dtype=np.float32)              # one 80 ms chunk at 24 kHz
+    y = resample(x, 24000, 16000)
+    assert len(y) == 1280 and np.allclose(y, 0.5, atol=1e-6)
