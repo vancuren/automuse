@@ -123,7 +123,9 @@ class TimedX69RtspAdapter(_Base):
     def __init__(self, *args, flight_mode: str = "twin", **kwargs):
         super().__init__(*args, **kwargs)
         self.flight_mode = flight_mode
-        self.capture_clock = CaptureClock(offset_ms=float(os.getenv("MHD_CAPTURE_OFFSET_MS", "0") or 0))
+        self.capture_clock = CaptureClock(
+            window_ms=1000.0 * float(os.getenv("MHD_CAPTURE_WINDOW_S", "10") or 10),
+            offset_ms=float(os.getenv("MHD_CAPTURE_OFFSET_MS", "0") or 0))
         self._pending: Optional[tuple] = None
         self.capture_source_counts: dict[str, int] = {}
 

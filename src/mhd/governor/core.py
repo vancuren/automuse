@@ -28,6 +28,7 @@ from typing import Callable, Optional
 from mhd.autopilot import AutopilotRun, autopilot_start, autopilot_step, autopilot_stop, bearing_rad
 from mhd.contracts import AutopilotState, FlightState, Mission, SubjectObs, now_ms
 
+from . import logq
 from .config import AXES, AutopilotConfig, GovernorConfig, logs_dir
 from .flight_timer import FlightTimer
 from .stats import PeriodEstimator, SlidingMin
@@ -106,6 +107,7 @@ class Governor:
             raise GovernorError(f"flight_mode must be 'twin' or 'real', got {flight_mode!r}")
         if flight_mode == "real" and cfg.twin_headless_bypass:
             raise GovernorError("twin_headless_bypass is set: refusing to run in real mode")
+        logq.install()                          # governor log calls never do I/O on the RC thread
         self.cfg = cfg
         self.ap_params = ap_params
         self.flight_mode = flight_mode
