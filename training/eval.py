@@ -458,7 +458,12 @@ def _n(x) -> str:
 
 
 def chart(results: dict, path: Path) -> None:
-    """Grouped bars per set (quality metrics) plus a latency panel."""
+    """One panel per evaluation set (quality metrics, grouped bars) plus a separate latency panel.
+
+    Colors: the dataviz reference categorical palette in fixed order (validated: CVD and normal-vision
+    separation pass; three slots are under 3:1 contrast, so the headline metric is direct-labeled and
+    docs/eval/summary.md is the table view). Text stays in neutral ink; bars have a 2px surface gap.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -466,43 +471,69 @@ def chart(results: dict, path: Path) -> None:
     models = _ordered(results["models"])
     if not models:
         return
-    metrics_shown = [("valid_json_rate", "valid JSON"), ("action_accuracy", "action"),
-                     ("subject_normalized", "subject (norm.)"), ("clarify", "clarify F1"), ("refuse", "refuse F1")]
-    # Categorical palette, colorblind-safe (Okabe-Ito), one hue per model.
-    palette = ["#E69F00", "#56B4E9", "#009E73", "#0072B2", "#D55E00", "#CC79A7", "#999999"]
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5.2), gridspec_kw={"width_ratios": [3, 3, 2]})
-    width = 0.8 / len(models)
-    for ax, s in zip(axes[:2], ("test", "gold")):
+    surface, ink, ink2, grid = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
+    palette = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
+    color = {m: palette[k % len(palette)] for k, m in enumerate(models)}     # follows the model, not its rank
+    shown = [("valid_json_rate", "valid JSON"), ("action_accuracy", "action"), ("subject_normalized", "subject"),
+             ("clarify", "clarify F1"), ("refuse", "refuse F1")]
+    sets = [s for s in ("test", "gold", "gold_asr") if any(s in results["models"][m]["sets"] for m in models)]
+    titles = {"test": "Held-out test (300, unseen phrasings)", "gold": "Gold (80 hand-written)",
+              "gold_asr": "Gold spoken + Omnilingual ASR (80)"}
+    plt.rcParams.update({"font.size": 10, "text.color": ink, "axes.labelcolor": ink2, "xtick.color": ink2,
+                         "ytick.color": ink2, "axes.edgecolor": grid, "figure.facecolor": surface,
+                         "axes.facecolor": surface, "savefig.facecolor": surface})
+    n_panels = len(sets) + 1
+    fig, axes = plt.subplots(1, n_panels, figsize=(4.6 * n_panels, 5.0),
+                             gridspec_kw={"width_ratios": [3] * len(sets) + [2]})
+    width = min(0.8 / len(models), 0.18)
+    for ax, s in zip(axes[:-1], sets):
         for k, m in enumerate(models):
             r = results["models"][m]["sets"].get(s)
             if not r:
                 continue
-            vals = [(r[key]["f1"] if isinstance(r[key], dict) else r[key]) for key, _ in metrics_shown]
-            xs = [i + (k - (len(models) - 1) / 2) * width for i in range(len(metrics_shown))]
-            ax.bar(xs, vals, width * 0.92, color=palette[k % len(palette)], label=results["models"][m]["name"])
-        ax.set_xticks(range(len(metrics_shown)), [lbl for _, lbl in metrics_shown])
-        ax.set_ylim(0, 1.05)
-        ax.set_title(f"{s} set" + (" (300 held-out)" if s == "test" else " (80 hand-written)"))
-        ax.grid(axis="y", alpha=0.3)
-        ax.spines[["top", "right"]].set_visible(False)
-    ax = axes[2]
+            vals = [(r[key]["f1"] if isinstance(r[key], dict) else r[key]) for key, _ in shown]
+            xs = [i + (k - (len(models) - 1) / 2) * width for i in range(len(shown))]
+            ax.bar(xs, vals, width, color=color[m], edgecolor=surface, linewidth=2,
+                   label=results["models"][m]["name"])
+            # direct label on the headline metric only (action accuracy)
+            ax.text(xs[1], vals[1] + 0.012, f"{vals[1] * 100:.0f}", ha="center", va="bottom", fontsize=7.5,
+                    color=ink2, rotation=90)
+        ax.set_xticks(range(len(shown)), [lbl for _, lbl in shown])
+        ax.set_ylim(0, 1.12)
+        ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0], ["0", "25", "50", "75", "100"])
+        ax.set_title(titles.get(s, s), fontsize=11, color=ink, loc="left")
+        ax.grid(axis="y", color=grid, linewidth=0.8)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right", "left"]].set_visible(False)
+        ax.tick_params(length=0)
+    axes[0].set_ylabel("score (%)")
+    ax = axes[-1]
+    names = []
     for k, m in enumerate(models):
-        lat, _how = _latency(results, m)
+        lat, how = _latency(results, m)
         if not lat or lat["p50"] is None:
             continue
-        ax.bar(k - 0.2, lat["p50"] / 1000, 0.38, color=palette[k % len(palette)])
-        ax.bar(k + 0.2, lat["p95"] / 1000, 0.38, color=palette[k % len(palette)], alpha=0.5)
-    ax.set_xticks(range(len(models)), [str(i + 1) for i in range(len(models))])
-    ax.set_xlabel("model (legend order); solid p50, light p95")
-    ax.set_ylabel("seconds per command")
-    ax.set_title("latency")
-    ax.grid(axis="y", alpha=0.3)
-    ax.spines[["top", "right"]].set_visible(False)
+        ax.barh(len(names), lat["p50"] / 1000, 0.6, color=color[m], edgecolor=surface, linewidth=2)
+        ax.plot([lat["p50"] / 1000, lat["p95"] / 1000], [len(names)] * 2, color=ink2, linewidth=1.5)
+        ax.plot(lat["p95"] / 1000, len(names), marker="|", markersize=10, color=ink2)
+        ax.text(lat["p95"] / 1000 + 0.15, len(names), f"{lat['p50'] / 1000:.1f} s / {lat['p95'] / 1000:.1f} s",
+                va="center", fontsize=8, color=ink2)
+        names.append(f"{results['models'][m]['name'].split(' (')[0]}\n({how})")
+    ax.set_yticks(range(len(names)), names, fontsize=7.5)
+    ax.invert_yaxis()
+    ax.set_xlabel("s per command (bar p50, whisker p95)")
+    ax.set_title("Latency", fontsize=11, color=ink, loc="left")
+    ax.grid(axis="x", color=grid, linewidth=0.8)
+    ax.set_axisbelow(True)
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    ax.tick_params(length=0)
+    xmax = max([1.0] + [(_latency(results, m)[0] or {}).get("p95") or 0 for m in models]) / 1000
+    ax.set_xlim(0, xmax * 1.6)
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, [f"{i + 1}. {lbl}" for i, lbl in enumerate(labels)], loc="lower center",
-               ncol=min(3, len(labels)), frameon=False)
-    fig.suptitle("Voice command to mission intent: Muse Glimmer LoRA vs base vs Muse Spark", fontsize=13)
-    fig.tight_layout(rect=(0, 0.1, 1, 0.95))
+    fig.legend(handles, labels, loc="lower center", ncol=min(3, len(labels)), frameon=False, fontsize=9)
+    fig.suptitle("Spoken command to drone mission: Muse Glimmer + LoRA vs base Glimmer vs Muse Spark 1.3",
+                 fontsize=13, color=ink, x=0.01, ha="left")
+    fig.tight_layout(rect=(0, 0.12, 1, 0.95))
     fig.savefig(path, dpi=130)
     plt.close(fig)
 

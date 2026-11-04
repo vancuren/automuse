@@ -94,3 +94,13 @@ def test_no_key_in_errors(fw):
     with pytest.raises(RuntimeError) as e:
         fw.get_deployment("d1")
     assert "test-key" not in str(e.value) and "403" in str(e.value)
+
+
+def test_live_merge_deployment_body(fw):
+    fw.create_deployment("d1", hot_reload=False, keep_warm=True, base_model=fw.model_name("glimmer-intent-v1"),
+                         shape="default")
+    body = fw.calls[-1][3]
+    assert body["baseModel"] == "accounts/acct/models/glimmer-intent-v1"
+    assert body["deploymentShape"] == "default"
+    assert body["minReplicaCount"] == body["maxReplicaCount"] == 1
+    assert "enableHotReloadLatestAddon" not in body

@@ -153,17 +153,21 @@ class Fireworks:
 
     # ---------------- deployments ----------------
     def create_deployment(self, deployment_id: str, *, replicas: int = 1, hot_reload: bool = True,
-                          base_model: str = BASE_MODEL, shape: Optional[str] = H200_SHAPE) -> dict:
+                          base_model: str = BASE_MODEL, shape: Optional[str] = H200_SHAPE,
+                          keep_warm: bool = False) -> dict:
         """hot_reload=True: min=max=replicas (required by Fireworks), a LoRA can be merged in later.
-        hot_reload=False: a plain base deployment with min 0 / max 1 that scales to zero after 10 idle
-        minutes, so a crashed client can never leave a GPU billing for long."""
+        hot_reload=False: min 0 / max 1 and scale to zero after 10 idle minutes, so a crashed client can
+        never leave a GPU billing for long; keep_warm=True pins min=max=1 (demo window, delete after).
+        base_model may be a fine-tuned LoRA model ("live merge", Fireworks' recommended way to serve one
+        adapter); then pass shape="default" so Fireworks picks a validated shape for it."""
+        warm = hot_reload or keep_warm
         body: dict[str, Any] = {
             "baseModel": base_model,
             "displayName": deployment_id,
             "description": "Muse Glimmer intent LoRA (MetaHackathonDrone, train workstream)",
-            "minReplicaCount": replicas if hot_reload else 0,
-            "maxReplicaCount": replicas if hot_reload else 1,
-            "autoscalingPolicy": {"scaleToZeroWindow": "900s" if hot_reload else "600s"},
+            "minReplicaCount": replicas if warm else 0,
+            "maxReplicaCount": replicas if warm else 1,
+            "autoscalingPolicy": {"scaleToZeroWindow": "900s" if warm else "600s"},
         }
         if shape:
             body["deploymentShape"] = shape
@@ -325,6 +329,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         s.add_argument("--lora", help="LoRA model id (accounts/.../models/<id> or just <id>)")
         s.add_argument("--plain", action="store_true",
                        help="deploy: base model only, min 0 / max 1, scale to zero after 10 idle minutes")
+        s.add_argument("--merged", action="store_true",
+                       help="morning: deploy the fine-tuned model itself (live merge) instead of hot reload")
     sub.add_parser("list")
     s = sub.add_parser("train")
     s.add_argument("--smoke", action="store_true", help="30-row smoke job only")
@@ -362,6 +368,16 @@ def main(argv: Optional[list[str]] = None) -> None:
         fw.wait_lora(a.deployment_id, a.lora)
     elif a.cmd == "warmup":
         warmup(fw, a.deployment_id, a.lora)
+    elif a.cmd == "morning" and a.merged:
+        # Live merge: deploy the fine-tuned model itself (one adapter, base-model speed). Fallback if the
+        # hot-reload path misbehaves; it was not testable tonight because uploads were disabled.
+        if not a.lora:
+            sys.exit("--lora is required")
+        fw.create_deployment(a.deployment_id, hot_reload=False, keep_warm=True,
+                             base_model=fw.model_name(a.lora), shape="default")
+        fw.wait_deployment(a.deployment_id)
+        warmup(fw, a.deployment_id, a.lora)
+        print("agent model string:", fw.route(a.deployment_id, a.lora).replace(fw.account, "$FIREWORKS_ACCOUNT_ID"))
     elif a.cmd == "morning":
         if not a.lora:
             sys.exit("--lora is required")
