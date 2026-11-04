@@ -1,6 +1,6 @@
 # Workstream demo: the end-to-end demo in the twin, with the fine-tuned Glimmer answering live
 
-Branch `ws2/demo` (from `integration` at 6bb13fb), 2026-11-04 03:05-04:30 ET. Everything ran on this
+Branch `ws2/demo` (from `integration` at 6bb13fb), 2026-11-04 03:05-04:05 ET. Everything ran on this
 Mac in the wire-level twin, loopback only (`FLIGHT_MODE=twin`). Nothing was sent to the drone.
 
 ## TL;DR
@@ -204,8 +204,8 @@ release, listener decodes 277 and 281 ms.
    `fallbacks` in `demo_result.json`. RTSP is internal between the twin and the backend.
 9. **Metrics:** `report.json` exactly as `e2e_twin.py`, plus a follow-only window (see Results).
 10. **README stills:** 1280 px PNG, quantized to 256 colors when needed to stay under 400 KB.
-11. **The S2 03:28 take is the recommended S2 video** (lock stayed on the blue shirt; the brief loss is
-    recovered on camera, with voice). The 03:39 take shows a 1.6 s flip onto the red walker.
+11. **The S2 03:28 take is the recommended S2 video** (only 18 frames, 2.0%, briefly on the red walker; the
+    one loss is recovered on camera, with voice). The 03:39 take shows a 1.6 s flip onto the red walker.
 
 ## Findings and gaps (for the integrator)
 
