@@ -47,8 +47,9 @@ to 20 per value, so a history rewrite knows what to touch). It also flags creden
   may prefer to trim those paths. The first run reported a false failure: the Baseten line in `.env`
   is empty with an inline comment, and the scanner took the comment for the value; fixed and covered
   by a test.
-- Every relative link in the new documents resolves, except `docs/RUNBOOK.md` (the ops workstream's,
-  not merged yet) and the demo stills (see Gaps).
+- Every relative link in the new documents resolves, here or on ws2/demo and ws2/ops (the demo
+  stills, docs/ws2/demo.md, docs/RUNBOOK.md; see Gaps). All 47 tables parse (CommonMark plus tables,
+  markdown-it).
 - Every number in README.md and docs/results.md was taken from, or recomputed from, the sources the
   brief allows: docs/ws/*.md, docs/eval/*, docs/benchmarks-perception.md, PLAN.md, docs/STATUS.md,
   `logs/e2e-*/` (e2e_result.json, report.json, rows.csv, telemetry.jsonl, obs.jsonl), `logs/ffcfg/`,
@@ -75,10 +76,11 @@ to 20 per value, so a history rewrite knows what to touch). It also flags creden
    Follow Drone · Operator"). Renaming touches README.md, NOTICE, docs/SUBMISSION.md and the UI title.
 2. **The README says exactly what each run covers.** `scripts/e2e_twin.py` posts the follow Mission
    over HTTP; it does not speak, so the Results table says "a follow mission posted to the backend".
-   The claim that the whole chain runs with voice rests on the demo workstream's S1 takes at 03:24
-   and 03:36 (`logs/demo-<stamp>-s1/demo_result.json` in its worktree: Voice Transcribe, the Glimmer
-   LoRA in about 4.0 s, FOLLOW, a spoken "land"), shown as the README's hero still (03:36 take) and
-   in results.md 1d. The caption says the command was voiced by `say`.
+   The claim that the whole chain runs with voice rests on the demo workstream's takes (docs/ws2/demo.md
+   and each `logs/demo-<stamp>-<take>/demo_result.json`: Voice Transcribe, the Glimmer LoRA in about
+   4 s, FOLLOW, a spoken "land" through the open-mic listener), shown in the README stills and in
+   results.md 1d (its recommended S1, S2 and S3 takes). The caption says the command was voiced by
+   `say`.
 3. **Newest numbers win.** Test counts come from docs/STATUS.md at 03:10 (governor 185, agent 200,
    perception 60), not the workstream docs (179, 199, 61).
 4. **Results shown in the README:** the last three SAM runs (02:58-03:02), not the earlier S1 run
