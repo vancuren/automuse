@@ -14,6 +14,32 @@ real drone yet, so Session A is the first time this code talks to it.
 - **People stand beside the flight line, never behind the drone.** Everyone filmed has agreed on camera.
 - **Battery out whenever you are not flying.** Charge only while someone is watching.
 
+## Our unit: the Lewei camera board (read this first, 2026-11-04 afternoon)
+
+Our X69 is a different hardware revision from the one turbodrone documents. Found and checked at 11:30-13:30:
+
+| | X69 this runbook was written for | **Our unit** |
+|---|---|---|
+| Wi-Fi and address | 172.16.11.x, drone 172.16.11.1 | **X69DRONE_4EC4EF, 192.168.0.x, drone 192.168.0.1** (open network) |
+| Video | RTSP on the drone | **Lewei camera board, TCP 7060**: `scripts/lewei_bridge.py` relays it to RTSP on this Mac (H.264 1920x1080, ~20 fps) |
+| Flight control | UDP 23458, wrapped packets | **UDP 50000, the same 20-byte stick packet, sent raw** |
+| Replies from the drone | none | **status ~20/s: battery volts, motors-running flag** |
+
+- **Checked props-off at 13:22:** TAKEOFF spins the motors, LAND stops them. E-STOP and link loss are not checked yet: that is Session A.
+- **The drone switches itself off** about 15 minutes after power-on when idle, and a few minutes after video stops. Start the stack right after power-on: its video relay and stick stream keep the drone awake. Charge between sessions.
+- **The Mac must stay on the drone's Wi-Fi:** turn off Auto-Join for every other saved network nearby, or macOS leaves the drone's network (it has no internet).
+- **Use `--board lewei` everywhere below.** The plain commands target the other board's address and do nothing useful here.
+
+| Step | Command |
+|---|---|
+| Preflight | `$MHD_PY scripts/preflight.py --board lewei` |
+| Session A (props off) | `$MHD_PY scripts/session_a.py --board lewei`, with `scripts/run_stack.sh --mode real --board lewei --no-perception --no-agent` running in a second window from the start |
+| Session B | `scripts/run_stack.sh --mode real --board lewei --config-dir config/real --no-perception --no-agent` |
+| Session C | `scripts/run_stack.sh --mode real --board lewei --config-dir config/real` (add `--glimmer local --agent glimmer` for the recorded loop) |
+| Camera only, no flight | `scripts/run_stack.sh --mode camera` (banner: REAL CAMERA - NO FLIGHT; no flight command can be sent) |
+
+Everything else in this runbook (the gates, the safety rules, Session B's sign checks and sysid, Session C's walking rules) applies unchanged.
+
 ## 0. At a glance
 
 | When (ET) | What | Done when |
