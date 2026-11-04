@@ -136,6 +136,7 @@ OPS_STACK=1 $MHD_PY -m pytest tests/ops -q -s -p no:logging   # + 3 end-to-end t
 | `session_a.py` interactive prompts (scripted answerer, twin and headless twin-mode backend; kill -9 skipped) | 16 of 16 steps done, 59 prompts, no exception; HFOV 77.3 degrees from 1.6 m at 1.0 m; manual-latency fallback carried forward; verdict INCOMPLETE (correct: link-loss 1 skipped) |
 | `run_stack.sh --mode twin`, full stack on the ops ports | renderer 25.0 fps (Chrome, profile `chrome-ops/renderer`); UI preview up after `npm ci` (3 s) and a build (3 s); the UI's worker heartbeat 80-113 ms; takeoff, follow, FOLLOW (oracle); screenshot in `$MHD_HOME/media/shared/ops/run_stack_twin_ui_follow.png`. **Ctrl-C: the twin received LAND 0.31 s later; the launcher exited in 1.7-1.8 s with code 0; no ports or processes left.** |
 | `run_stack.sh` under a real pseudo-terminal | `kill -9` of the backend gives the EXITED banner; Enter restarts it with the same settings (a new pid, ON_GROUND); Ctrl-C (byte 0x03) exits with code 0 in 3.2 s, ports free |
+| `run_stack.sh --mode real --dry-run` | prints the real-mode command lines and starts nothing: the backend with `--mode real`, the chosen configs and no `--logs`; perception `sam_mlx` with `--hfov-deg 75.0` from the config; the agent `--asr meta --intent auto` (or `--intent glimmer` plus the local Glimmer URL); the UI build for localhost:8000 |
 | `run_stack.sh` real-mode refusals | `--headless`, `--config-dir config/twin`, a copied twin config (by its YAML header), `--perception oracle`, `--scenario`, `--twin-ports`, a missing config, and `--agent glimmer` without `--glimmer local`: all refused before anything starts |
 | `apply_sysid.py` on synthetic sysid results (K 0.010 rad/s per count, deadband 5, lag 0.25 s; pitch 0.012 m/s per count, deadband 6, sign reversed) | K 0.0098-0.0103 and deadband 4.7-4.8; **the pitch sign flip is detected and flagged**; HFOV re-fit 75 to 78.4 degrees scales K by about 1.064 as expected; theta = latency + perception + half frame + half RC + lag; stage switches are incremental (yaw-only 0 counts, gain 0.24, back to 32 and 0.4); out-of-range K and HFOV refused with nothing written; `config/` and `config/twin` refused as targets or bases; an aborted run needs `--allow-aborted` |
 
@@ -185,7 +186,7 @@ Shared artifacts are in `$MHD_HOME/media/shared/ops/`:
 - **Link-loss test 3 in real mode observes idle motors only** (decision 1).
 - **`run_stack.sh --mode real` has never started**, because it would reach the drone.
   - Its real-mode differences from the tested twin path: no twin, the backend's `--mode real` without `--logs`, perception and the agent on the same backend.
-  - Only its refusals were tested.
+  - Only its refusals and its `--dry-run` command lines were tested.
 - **`--glimmer local` and `--agent glimmer`**: only the flag plumbing was checked. Only the demo workstream may load Glimmer tonight.
 - **`apply_sysid` was tested on synthetic sysid results only.** It reads the format that `mhd.governor.sysid.run` writes, and reuses sysid's own fit.
 - **The macOS Wi-Fi name is hidden without Location Services.** preflight reports it as hidden and relies on the address.

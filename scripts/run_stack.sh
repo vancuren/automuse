@@ -24,6 +24,7 @@
 #   --agent-extra "ARGS"       extra agent flags, e.g. "--no-mic --mute --tts none"
 #   --glimmer local|none       local: start scripts/serve_glimmer.sh (Glimmer + LoRA on :8080, ~17 GB) [none]
 #   --no-build                 serve the existing UI build (dist/) instead of rebuilding
+#   --dry-run                  validate, print every command it would run, start nothing
 #   --logs DIR                 [logs/stack-<time>]
 #   twin only:
 #   --twin-ports HTTP,RC,RTSP  [8766,23458,8554]    --scenario s1..s6 [s1]    --latency-ms N [500]
@@ -41,7 +42,7 @@ usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' 
 die() { echo "run_stack: $*" >&2; exit 2; }
 
 MODE="" CONFIG_DIR="" PORT=8000 UI_PORT=5173 UI=1 PERCEPTION=sam_mlx AGENT=auto AGENT_EXTRA="" GLIMMER=none
-BUILD=1 LOGS="" TWIN_PORTS="" SCENARIO=s1 LATENCY=500 HEADLESS=0 RENDERER=1 CHROME_PROFILE="" TWIN_OPT=0
+BUILD=1 LOGS="" TWIN_PORTS="" SCENARIO=s1 LATENCY=500 HEADLESS=0 RENDERER=1 CHROME_PROFILE="" TWIN_OPT=0 DRY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="$2"; shift 2 ;;
@@ -56,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --agent-extra) AGENT_EXTRA="$2"; shift 2 ;;
     --glimmer) GLIMMER="$2"; shift 2 ;;
     --no-build) BUILD=0; shift ;;
+    --dry-run) DRY=1; shift ;;
     --logs) LOGS="$2"; shift 2 ;;
     --twin-ports) TWIN_PORTS="$2"; TWIN_OPT=1; shift 2 ;;
     --scenario) SCENARIO="$2"; TWIN_OPT=1; shift 2 ;;
@@ -119,6 +121,7 @@ spawn_pg() {                # spawn_pg LOGFILE CMD...  -> LAST_PID (= its proces
 }
 start() {                   # start NAME LOGFILE CMD...  (cwd $TREE)
   local name="$1" logf="$2"; shift 2
+  if [[ "$DRY" == 1 ]]; then log "DRY RUN: would start $name: $*"; return 0; fi
   : >"$logf"
   spawn_pg "$logf" "$@"
   local pid=$LAST_PID
@@ -182,8 +185,8 @@ check_stop() { [[ "$STOP_REQ" == 1 ]] && cleanup; return 0; }
 trap on_signal INT TERM
 trap '[[ "$STOPPING" == 1 ]] || cleanup' EXIT
 
-caffeinate -dimsu -w $$ >/dev/null 2>&1 &
-CAFF=$!
+CAFF=""
+if [[ "$DRY" != 1 ]]; then caffeinate -dimsu -w $$ >/dev/null 2>&1 & CAFF=$!; fi
 
 {
   echo "mode=$MODE config=$CONFIG_DIR hfov=$HFOV port=$PORT ui=$UI:$UI_PORT perception=$PERCEPTION agent=$AGENT glimmer=$GLIMMER"
@@ -195,6 +198,7 @@ log "mode $MODE, configs $CONFIG_DIR (HFOV $HFOV), logs $RUN"
 
 wait_http() {               # wait_http URL SECONDS NAME
   local i
+  [[ "$DRY" == 1 ]] && return 0
   for ((i = 0; i < $2 * 4; i++)); do
     check_stop
     curl -sf -o /dev/null "$1" && return 0
@@ -272,6 +276,10 @@ fi
 
 check_stop
 # ------------------------------------------------------------------------------- UI (production build)
+if [[ "$UI" == 1 && "$DRY" == 1 ]]; then
+  log "DRY RUN: would build the UI (VITE_BACKEND_URL=http://localhost:$PORT VITE_AXES_RELEASE_MESSAGE=1) and serve it on 127.0.0.1:$UI_PORT"
+  UI=0
+fi
 if [[ "$UI" == 1 ]]; then
   FE="$TREE/turbodrone/frontend"
   if [[ ! -d "$FE/node_modules" ]]; then
@@ -291,6 +299,10 @@ fi
 
 check_stop
 # ------------------------------------------------------------------------------- status and watch
+if [[ "$DRY" == 1 ]]; then
+  log "DRY RUN done: nothing was started"
+  STOPPING=1; exit 0
+fi
 echo
 log "UP: backend http://127.0.0.1:$PORT  $([[ "$UI" == 1 ]] && echo "UI http://127.0.0.1:$UI_PORT (open it in its own Chrome window)")"
 [[ "$MODE" == twin ]] && log "twin http://127.0.0.1:$T_HTTP (chase: /chase)  RTSP $RTSP_URL"

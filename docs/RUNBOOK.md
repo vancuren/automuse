@@ -262,6 +262,8 @@ $MHD_PY scripts/apply_sysid.py --hfov-deg <HFOV> --latency-ms <p50> --write
 - At least 5 by 5 m, a ceiling of 2.5 m or more, a patterned mat (the drone holds position by optical flow), and bright light.
 - E-STOP is armed the whole session. Nobody stands behind the drone.
 
+**Before any start:** `scripts/run_stack.sh <same options> --dry-run` validates the options and prints every command it would run, without starting anything.
+
 **3.1 Props on, then start the stack.**
 1. Fit each prop on its marked arm (A on A, B on B, as in the photos).
 2. In the backend window:
