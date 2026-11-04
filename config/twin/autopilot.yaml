@@ -22,8 +22,8 @@ delay:
 yaw:
   loop_gain: 0.4            # Kp*K*theta. P-only. Never above 0.7 without feed-forward (enforced).
   bearing_deadband_rad: 0.03   # |bearing| below this gives zero yaw (no hunting around center)
-  feedforward:              # off until a twin run with +/-30% error in K shows no ringing
-    enabled: false
+  feedforward:              # TWIN: on. Passed the +/-30% K test in the wire twin (2026-11-04):
+    enabled: true           # bearing RMS 0.062-0.089 rad, no ringing (P-only: 0.130)
     gain: 0.6               # <= 0.6 (enforced)
     lowpass_s: 0.6          # low-pass time constant on the subject's own angular rate
 
