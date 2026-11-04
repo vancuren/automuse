@@ -1,0 +1,3 @@
+# Derived chat files: rebuild with `$MHD_PY training/generate.py --rebuild`
+mlx/
+fireworks/

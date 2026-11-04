@@ -1,0 +1,6 @@
+# mlx_lm LoRA settings for the Glimmer intent adapter (CLI flags in training/train_mlx.sh set the rest).
+# rank 16 with scale 2.0 is PEFT alpha 32 / r 16, Meta's "alpha = 2x rank" guidance for Glimmer.
+lora_parameters:
+  rank: 16
+  scale: 2.0
+  dropout: 0.05

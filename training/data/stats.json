@@ -1,0 +1,172 @@
+{
+  "prompt_version": "intent-v1",
+  "sizes": {
+    "test": 300,
+    "valid": 150,
+    "train": 2200
+  },
+  "gold": 80,
+  "by_group": {
+    "test": {
+      "hover": 27,
+      "land": 24,
+      "car": 44,
+      "person": 90,
+      "object": 12,
+      "refuse_identity": 21,
+      "clarify": 40,
+      "refuse_unsafe": 15,
+      "person_named": 2,
+      "animal": 21,
+      "refuse_unsupported": 4
+    },
+    "valid": {
+      "person": 36,
+      "clarify": 23,
+      "car": 18,
+      "refuse_unsupported": 3,
+      "animal": 19,
+      "refuse_identity": 15,
+      "hover": 11,
+      "refuse_unsafe": 3,
+      "person_named": 3,
+      "land": 12,
+      "object": 7
+    },
+    "train": {
+      "person": 622,
+      "refuse_identity": 113,
+      "clarify": 308,
+      "car": 280,
+      "hover": 201,
+      "object": 107,
+      "refuse_unsupported": 36,
+      "person_named": 53,
+      "land": 204,
+      "refuse_unsafe": 88,
+      "animal": 188
+    }
+  },
+  "by_action": {
+    "test": {
+      "hover": 27,
+      "land": 24,
+      "follow": 169,
+      "refuse": 40,
+      "clarify": 40
+    },
+    "valid": {
+      "follow": 83,
+      "clarify": 23,
+      "refuse": 21,
+      "hover": 11,
+      "land": 12
+    },
+    "train": {
+      "follow": 1250,
+      "refuse": 237,
+      "clarify": 308,
+      "hover": 201,
+      "land": 204
+    }
+  },
+  "by_source": {
+    "test": {
+      "template": 247,
+      "paraphrase": 53
+    },
+    "valid": {
+      "template": 124,
+      "paraphrase": 26
+    },
+    "train": {
+      "paraphrase": 379,
+      "template": 1821
+    }
+  },
+  "families": {
+    "train": [
+      "animal_deictic",
+      "animal_follow",
+      "animal_keepup",
+      "animal_no_color",
+      "animal_possessive",
+      "animal_track",
+      "car_color_after",
+      "car_deictic",
+      "car_distance_first",
+      "car_follow",
+      "car_keepup",
+      "car_no_color",
+      "car_question",
+      "car_track",
+      "clarify_deictic",
+      "clarify_me",
+      "clarify_missing",
+      "clarify_multi",
+      "clarify_pronoun",
+      "clarify_vague",
+      "hover_cancel",
+      "hover_hold",
+      "hover_hover",
+      "hover_stay",
+      "hover_stop",
+      "land_abort",
+      "land_done",
+      "land_down",
+      "land_land",
+      "land_touch",
+      "named_appearance",
+      "named_appearance_train2",
+      "object_follow",
+      "object_misc",
+      "person_bare",
+      "person_color_only",
+      "person_deictic",
+      "person_distance_first",
+      "person_follow",
+      "person_garment_only",
+      "person_question",
+      "person_track",
+      "person_verbose",
+      "refuse_everyone",
+      "refuse_famous",
+      "refuse_go",
+      "refuse_harm",
+      "refuse_house",
+      "refuse_identify",
+      "refuse_misc",
+      "refuse_name",
+      "refuse_relation",
+      "refuse_stalk",
+      "refuse_takeoff",
+      "refuse_tricks"
+    ],
+    "valid": [
+      "animal_valid",
+      "car_valid",
+      "clarify_valid",
+      "hover_valid",
+      "land_valid",
+      "named_appearance_valid",
+      "object_valid",
+      "person_valid",
+      "refuse_identity_valid",
+      "refuse_unsafe_valid",
+      "refuse_unsupported_valid"
+    ],
+    "test": [
+      "animal_test",
+      "car_test",
+      "clarify_test",
+      "hover_test",
+      "land_test",
+      "named_appearance_test",
+      "object_test",
+      "person_test",
+      "refuse_identity_test",
+      "refuse_unsafe_test",
+      "refuse_unsupported_test"
+    ]
+  }
+}
