@@ -1,6 +1,6 @@
 # Workstream ui: the operator UI
 
-Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 77 tests (plus 6 opt-in tests that run against the real patched backend).
+Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 83 tests (plus 6 opt-in tests that run against the real patched backend).
 
 Screenshots are in `media/ui_screens/` (copied to `$MHD_HOME/media/shared/ui/`):
 - `ui_twin_follow.png`
@@ -78,7 +78,7 @@ UI_GOV_TREE=$MHD_TREE $MHD_PY -m pytest tests/ui/test_ui_gov_backend.py -v   # o
 |---|---|---|
 | **Esc** / red **E-STOP** (far right) | `estop` | Works always, even while typing in the ARM box. Acts on key down or pointer down. Falls back to HTTP. |
 | **L** / orange **LAND** (far left) | `land` | Falls back to HTTP. Ignored while typing in the ARM box. |
-| **Space** (hold) / **HOLD TO TALK** | `ptt_down` / `ptt_up` | Missions only, never takeoff. Released automatically if the window loses focus. |
+| **Space** (hold) / **HOLD TO TALK** | `ptt_down` / `ptt_up` | Missions only, never takeoff. Released automatically if the window loses focus. In the ARM box Space types instead; that box only exists before arming. |
 | **TAKEOFF** | `takeoff` | Button only, never voice or a hotkey. Disabled with a reason shown under it (see below). |
 | type **ARM** + Enter | `arm` with `arm_phrase:"ARM"` | REAL mode only, once per session. Unlocks TAKEOFF. |
 | **Reset E-STOP…** | `estop_reset` | Appears only when E-STOPPED. Needs two clicks within 3 s. |
@@ -99,6 +99,7 @@ If a takeoff still leaves the drone on the ground, the command line says "NOT AC
 Banners:
 - **TWIN** (blue) or **REAL DRONE** (red stripes) comes from `telemetry.flight_mode`. It reads MODE UNKNOWN until telemetry arrives.
 - **DISCONNECTED** (red, full width) means the control socket is down. It reconnects by itself, and LAND and E-STOP use HTTP meanwhile.
+- **NO HEARTBEAT** (red, full width) means the heartbeat worker failed, its socket is down, or the governor reports no UI heartbeat. The governor holds after 1.5 s and lands after 5 s, so reload the page.
 - **NO TELEMETRY** (amber) means the flight state is unknown and takeoff is locked. LAND and E-STOP still work.
 
 ## What I built
@@ -111,9 +112,9 @@ Banners:
 | axes only while nonzero; zeroed on blur and visibilitychange | `hooks/useControls.ts` | 30 Hz TX loop sends `{"type":"axes",...}` only if a rounded axis is nonzero and the page is visible and focused. Sticks are zeroed on `blur`, on `visibilitychange`, and on any Meta (Cmd) chord, because macOS drops keyups while Cmd is held. Keys use `e.code`: upstream used `e.key`, so Shift or Caps Lock could strand a key at full deflection. |
 | Auto-reconnect plus DISCONNECTED banner | `lib/reconnectingSocket.ts`, `components/ModeBanner.tsx` | 250 ms backoff doubling to a 2 s cap, a 3 s connect timeout, and an optional idle timeout (telemetry: 3 s). Used by every socket, the worker's too. The MJPEG stream reopens when the link comes back. |
 | LAND/E-STOP HTTP fallback | `lib/commands.ts`, `useControls.sendCommand` | Socket down: `POST /command`, retried 8 times about 250 ms apart. Socket open but telemetry does not show the command took effect within 600 ms (a wedged handler): also sent over HTTP. A command confirmed at any moment after sending is never re-sent, so a quick E-STOP reset is not undone. The result line under the buttons says which channel was used. |
-| 5 Hz heartbeat from a dedicated Web Worker | `workers/heartbeat.worker.ts`, `hooks/useHeartbeat.ts` | The worker owns its own WebSocket to `/ws` and sends exactly `{"type":"hb","client":"ui"}` every 200 ms. A test blocks the page's main thread for 2.5 s and heartbeats keep arriving. StrictMode's double mount terminates the first worker, so there is one heartbeat socket. |
+| 5 Hz heartbeat from a dedicated Web Worker | `workers/heartbeat.worker.ts`, `hooks/useHeartbeat.ts` | The worker owns its own WebSocket to `/ws` and sends exactly `{"type":"hb","client":"ui"}` every 200 ms, so page timers and throttling cannot stop it (a test stalls the page for 2 s and heartbeats keep arriving). It also pings the page every 500 ms with `postMessage`, which is not timer-throttled, and stops heartbeating if the page has not answered for 3 s. A hung dashboard cannot E-STOP, so the governor's timeout takes over (tested with a 5.5 s hang: stop at about 3 s, resume after). StrictMode's double mount terminates the first worker. A worker that cannot even start shows NO HEARTBEAT and never blanks the page. |
 | Buttons never take focus | `components/UiButton.tsx`, `useNoButtonFocus` | Every button is a `UiButton` (`tabIndex=-1`, `preventDefault` on mousedown; a test forbids raw `<button>`). A capture-phase `focusin` guard blurs any button that still gets focus. |
-| Hotkeys | `hooks/useHotkeys.ts` | Capture-phase listeners on `window`. Esc is E-STOP and always works. L is LAND, but not while typing in a text field and not with Cmd, Ctrl or Alt held. Space is push-to-talk with `preventDefault` on keydown and keyup, so it never activates a focused button or scrolls the page. |
+| Hotkeys | `hooks/useHotkeys.ts` | Capture-phase listeners on `window`. Esc is E-STOP and always works. L is LAND, but not while typing in a text field and not with Cmd, Ctrl or Alt held. Space is push-to-talk with `preventDefault` on keydown and keyup, so it never activates a focused button or scrolls the page; in a text field (the ARM box) it types instead. The LAND and E-STOP buttons are never disabled. |
 | Speed tier, profile, plugins removed | deleted upstream components | `SpeedControl`, `ControlSchemeToggle` (and TrackPoint pointer-lock mode, which swallows Esc), `PluginControls`/`usePlugins`, `ControlsOverlay`, `CommandButtons`, `CameraTiltControl`, `AxisIndicator`, `DrawingOverlay`/`useVideoSizing`. They stay in git history at 1aff2b5. |
 | REAL/TWIN banner and ARM gate | `ModeBanner.tsx`, `CommandBar.tsx` (`ArmGate`), `lib/gates.ts` | ARM box shown in REAL mode only. It uppercases input, enables the ARM button only for exactly `ARM`, sends `{"type":"cmd","command":"arm","arm_phrase":"ARM"}`, then blurs so the hotkeys come back. TAKEOFF follows `telemetry.armed`. |
 | `{"type":"cmd"}` for every command | `lib/commands.ts` | Includes `tilt_up`/`tilt_down`/`tilt_stop` (upstream put `camera_tilt_direction` inside axes, which `OperatorInput` forbids). |
@@ -166,11 +167,11 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 
 ## Test results
 
-77 passed and 6 skipped (the opt-in gov tests) in about 90 s at 00:27 ET. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` (f4af4b3 plus its working-tree edits at 00:24).
+83 passed and 6 skipped (the opt-in gov tests) in about 110 s at 00:48 ET. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3 and again at 2587456 (00:48).
 
 | File | Count | Checks |
 |---|---|---|
-| `test_ui_browser.py` | 26 | See the list below. |
+| `test_ui_browser.py` | 32 | See the list below. |
 | `test_ui_production.py` | 2 | The minified build (`--base /ui/`), served same-origin by the mock: worker chunk present, heartbeat 5 Hz from one socket, Esc, Space and L work, HTTP fallback works, only the configured backend URL is in the bundle. |
 | `test_ui_latency.py` | 1 | Measurements below, with loose regression bounds. |
 | `test_screenshots.py` | 2 | Twin and real screenshots. |
@@ -179,8 +180,10 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 | `test_frontend_static.py` | 10 | `npm run build`, `eslint --max-warnings 0`, one backend URL, no speed/profile/plugin code, only the worker sends `hb`, every button is a `UiButton`, the followed thing is always called "subject", no web fonts, loopback dev server. |
 | `test_ui_gov_backend.py` | 6 (opt-in) | Real governor backend in twin mode with no twin: telemetry renders, no ARM needed in twin, TAKEOFF shows "no video", the governor sees the worker heartbeat (`hb_age` under 600 ms), Esc E-STOPs the governor and reset works, `POST /command` passes CORS, no contract errors in the backend log. |
 
-The 26 browser tests check that:
-- the heartbeat runs at 5 Hz from a single socket, and survives a 2.5 s main-thread block;
+The 32 browser tests check that:
+- the heartbeat runs at 5 Hz from a single socket, survives a 2 s main-thread stall, stops about 3 s into a hang and resumes after it;
+- a Worker that cannot start shows NO HEARTBEAT while E-STOP still works;
+- governor-reported heartbeat loss shows the banner and locks TAKEOFF;
 - no axes are sent while idle;
 - axes go out at about 30 Hz while a key is held and stop within 100 ms of release;
 - axes stop on blur and on a hidden tab, even with the key still down;
@@ -192,11 +195,14 @@ The 26 browser tests check that:
 - Esc goes over HTTP when the socket is down, the banner appears, and auto-reconnect clears it;
 - E-STOP is re-sent over HTTP when the socket is "deaf";
 - a quick reset is not re-asserted (this test fails without the fix);
+- a LAND right after TAKEOFF over an unread socket is re-sent over HTTP and not hidden by the takeoff check (this test fails without the fix);
 - L lands over WS and over HTTP;
 - LAND and E-STOP are more than 800 px apart;
 - the twin banner shows and takeoff needs no ARM;
 - the REAL banner and ARM gate work: "AR" keeps the button disabled, "arm" plus Enter sends exactly `arm_phrase:"ARM"`, and TAKEOFF then unlocks;
 - stick keys and L are ignored while typing, and Esc still works there;
+- Space types in the ARM box;
+- push-to-talk with the voice link down never shows LISTENING;
 - the candidate picker sends `Select`;
 - mask colors follow the autopilot state;
 - the pack timer goes amber and red, and pack swap works;
@@ -217,7 +223,7 @@ All measurements are loopback (127.0.0.1) against the mock backend, using the vi
 | Esc key to E-STOP at the backend, over WS | 1.0 ms | 4.1 ms | n=10. One earlier run under load average 5.3 had a 72 ms outlier. |
 | Esc key to E-STOP at the backend, over HTTP (socket down) | 2.4 ms | 3.7 ms | n=10, includes the CORS preflight path. |
 | Backend state change to DOM | 87 ms | 110 ms | n=20, random phase. About 50 ms of this is waiting for the 10 Hz telemetry tick. |
-| Heartbeat inter-arrival at the backend | 199.8 ms | 206.4 ms | Max 209 ms, 5.0 Hz. Also 5 Hz during a 2.5 s main-thread block. |
+| Heartbeat inter-arrival at the backend | 199.8 ms | 206.4 ms | Max 209 ms, 5.0 Hz. Also 5 Hz through a 2 s main-thread stall; stops about 3 s into a hang. |
 | Control socket reconnect after the backend comes back | 190 to 1320 ms | | Depends on where the 2 s-capped backoff is. |
 | axes rate while a key is held | 30.5 Hz | | |
 | Production bundle | 271 kB JS (87 kB gzip), 26 kB CSS, 3 kB worker | | |
@@ -244,10 +250,13 @@ All measurements are loopback (127.0.0.1) against the mock backend, using the vi
 8. Vite binds 127.0.0.1 only. The production port stays 5173; my tests use 5273.
 9. `turbodrone/.gitignore` ignores every `lib/` folder (a Python template rule), which silently hid `src/lib/`. That is probably why the brief's `lib/ws.ts` did not exist. I re-included it in `turbodrone/frontend/.gitignore` with a comment.
 10. `BrowserRouter` now takes `basename` from Vite's base: the production test found that the app rendered nothing under a sub-path.
+11. The heartbeat requires a live page (3 s): an independent review pointed out that a worker heartbeating for a hung page hides the hang from the governor. The page answers by `postMessage`, so background-tab timer throttling does not trip it.
+12. Space types in text fields: the ARM box exists only before arming, and recording a voice mission by accident while typing is worse than Space not doing push-to-talk there.
+13. LAND right after TAKEOFF: for 5 s after a takeoff, ON_GROUND telemetry does not count as "landed", so an unconfirmed LAND is re-sent over HTTP.
 
 ## Known gaps and risks
 
-- **A frozen or discarded tab stops the heartbeat.** The worker survives timer throttling and a busy main thread. But if Chrome freezes the page (Memory Saver, a long time in the background), its workers freeze too. The governor then goes neutral at 1.5 s and lands at 5 s, which is fail-safe but unwanted. During flights:
+- **A frozen, discarded or hung tab stops the heartbeat, on purpose.** The worker survives timer throttling and short stalls. But if Chrome freezes the page (Memory Saver, a long time in the background), its workers freeze too, and a page that hangs for 3 s stops answering the worker. The governor then goes neutral at 1.5 s and lands at 5 s, which is fail-safe but unwanted. During flights:
   - keep the UI in its own visible Chrome window;
   - exclude it from Memory Saver and Energy Saver;
   - do not minimize it.
