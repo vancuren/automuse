@@ -317,7 +317,8 @@ $MHD_PY -m mhd.governor.sysid --backend http://127.0.0.1:8000 --axis pitch --amp
 - Steps are ordinary human sticks, capped at 64 counts, so **LAND and E-STOP always win**.
 - It refuses unless the drone is AIRBORNE. It aborts if the flight state changes, if the governor stops flying its sticks, or if the UI heartbeat is older than 1 s. Ctrl-C releases the sticks.
 - Results go to `logs/sysid-yaw-<time>.json` and `logs/sysid-pitch-<time>.json`.
-- Pass: each prints a fit with K, deadband and lag (not `None`), and the drone ends near where it started.
+- Pass: each prints a fit with K, deadband and lag (not `None`), and `[sysid] <axis> direction OK`. The drone ends near where it started.
+- `direction REVERSED` means that axis moved against the stick. `apply_sysid` flips `wire.sign` for it (3.7), and it must match what you saw in 3.3.
 - If the marker leaves the view on the largest yaw step, rerun with `--amps 0.10 0.20 0.30`.
 
 **3.7 Apply the results, then turn feed-forward on.**
