@@ -18,6 +18,8 @@ the demo (25%), so every Meta model is named on screen, and new work is captione
 - Show this caption at 0:50 and again at the close, for at least 4 s each:
   **"UI shell and X69 driver: turbodrone (Apache-2.0). Everything else built Nov 3-4."**
 - Keep the narration under about 400 words (about 140 words a minute).
+- The twin takes from `scripts/demo_twin.py` use a synthesized operator voice (macOS `say`, fed into
+  the agent's microphone input). Caption that once, the first time a twin take plays with sound.
 
 ## Recordings to use
 
@@ -59,7 +61,7 @@ Same beats and narration from 0:50 on (B4-B8 = A4-A8), with T-clips in place of 
 
 | # | Time | On screen | Narration | Captions | Source |
 |---|---|---|---|---|---|
-| B1 | 0:00-0:15 | Twin S1 UI take: Space held, "Drone, follow the person in the blue shirt.", the transcript and the mission card fill in, the mask goes green; inset: the chase view as the drone turns to follow. | none: the take's own sound track (the spoken command and the MMS-TTS reply) | "Digital twin: the real X69 software, real packets, real models" | T1, T2 |
+| B1 | 0:00-0:15 | Twin S1 UI take: Space held, "Drone, follow the person in the blue shirt.", the transcript and the mission card fill in, the mask goes green; inset: the chase view as the drone turns to follow. | none: the take's own sound track (the spoken command and the MMS-TTS reply) | "Digital twin: the real X69 software, real packets, real models" · "Command voiced by macOS `say` into the agent's microphone input" | T1, T2 |
 | B2 | 0:15-0:30 | The real X69: the manual or yaw-only clip (R3). If there is none, the props-off clip (R4). | "This is the same software flying a thirty-four dollar toy drone. You tell it who to follow, and it flies itself: a follow-me camera you direct with your voice, for creators, coaches, and people with limited mobility." | R3: "Real Loiley X69, yaw-only follow through the governor" or "manual flight through the governor". R4: "Real X69, props off: takeoff and E-stop flags" | R3 or R4 |
 | B3 | 0:30-0:50 | As A3. | As A3. | As A3. | as A3 |
 | B4-B8 | 0:50-3:00 | As A4-A8. In B7, use the twin for the landing ("land" heard by the local listener in T1), not R1. | As A4-A8. In B5, the twin footage is now the main evidence, so hold the S1 and S2 numbers on screen longer. | As A4-A8. | as A4-A8 |
