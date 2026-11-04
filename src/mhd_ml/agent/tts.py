@@ -93,6 +93,7 @@ class Speaker:
         self._say_proc: Optional[subprocess.Popen] = None
         self.mms_failed = False
         self._busy = False
+        self._audible: list[tuple[float, float, str]] = []   # (start, end, text) of lines actually played
         self.history: list[dict] = []          # {text, engine, queued_ms, started_ms, synth_ms}
         self.warmup_ms: Optional[float] = None
 
@@ -112,6 +113,21 @@ class Speaker:
         if interrupt:
             self._interrupt()
         self._q.put((text, now_ms()))
+
+    def audible_words(self, now: Optional[float] = None, tail_s: float = 1.5) -> set[str]:
+        """Words of every line that was playing at some point in the last `tail_s` seconds (monotonic
+        clock). The safety listener uses this to ignore its own voice coming back through the mic."""
+        from .words import words
+
+        now = time.monotonic() if now is None else now
+        out: set[str] = set()
+        for start, end, text in list(self._audible):
+            if start <= now and (end == float("inf") or now <= end + tail_s):
+                out.update(words(text))
+        return out
+
+    def _mark_audible(self, text: str, start: float, end: float) -> None:
+        self._audible = [a for a in self._audible[-5:] if a[1] != float("inf")] + [(start, end, text)]
 
     def wait_idle(self, timeout: float = 30.0) -> bool:
         """Block until every queued line has finished playing."""
@@ -170,14 +186,24 @@ class Speaker:
                 rec["engine"] = "mms"
                 rec["started_ms"] = now_ms()
                 if self.play:
-                    self._play(wav, self.mms.sample_rate)
+                    t0 = time.monotonic()
+                    self._mark_audible(text, t0, float("inf"))
+                    try:
+                        self._play(wav, self.mms.sample_rate)
+                    finally:
+                        self._mark_audible(text, t0, time.monotonic())
                 return
             except Exception as e:
                 log.warning("MMS-TTS failed (%s); falling back to `say`", e)
         rec["engine"] = "say"
         rec["started_ms"] = now_ms()
         if self.play:
-            self._say(text)
+            t0 = time.monotonic()
+            self._mark_audible(text, t0, float("inf"))
+            try:
+                self._say(text)
+            finally:
+                self._mark_audible(text, t0, time.monotonic())
 
     def _play(self, wav: np.ndarray, sr: int) -> None:
         import sounddevice as sd  # lazy

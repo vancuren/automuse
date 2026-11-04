@@ -47,7 +47,7 @@ from .backend_link import BackendLink
 from .intent import HedgedRouter, glimmer_client, spark_client
 from .safety_listener import CommandSender, SafetyConfig, SafetyListener
 from .tts import Speaker
-from .words import SafetyHit
+from .words import SafetyHit, safety_action_for_word
 
 log = logging.getLogger("mhd.agent.service")
 
@@ -281,6 +281,24 @@ class AgentService:
 
     # ---- safety -------------------------------------------------------------------------------
     def _on_safety_hit(self, hit: SafetyHit) -> None:          # listener thread
+        # Our own reply coming back through the microphone ("Landing now." contains "landing"): ignore a
+        # safety word that is part of a line the speaker played in the last 1.5 s. Anything else the
+        # operator says during a reply still goes through.
+        audible = getattr(self.speaker, "audible_words", None)
+        if audible is not None and self.cfg.get("safety", {}).get("ignore_own_voice", True):
+            try:
+                aw = audible()
+                same_word = hit.word in aw or hit.canonical in aw
+                # "Landing now." may come back as "land in now": any land word on our side covers it.
+                # Hover is only skipped on the exact word, so an operator's "stop" is never dropped.
+                land_echo = hit.action == "land" and any(
+                    (safety_action_for_word(w, fuzzy=False) or ("",))[0] == "land" for w in aw)
+                if same_word or land_echo:
+                    log.info("safety word %r ignored: it is the agent's own voice", hit.word)
+                    self.safety_hits.append({"hit": hit.as_dict(), "result": {"ok": False, "via": "echo"}})
+                    return
+            except Exception:
+                log.exception("echo check failed; sending the command anyway")
         self.sender.submit(hit)                                # first: get the command out
         if self.loop is not None:
             self.loop.call_soon_threadsafe(lambda: self._spawn(self._safety_feedback(hit)))

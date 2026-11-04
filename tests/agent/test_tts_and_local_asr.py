@@ -93,3 +93,13 @@ def test_local_asr_push_to_talk(audio_items, recognizer):
         t = asr.transcribe_file(it["abspath"])
         assert all(w in t.text for w in must), (cid, t.text)
         assert t.latency_ms < 1500
+
+
+def test_audible_words_window():
+    s = Speaker(engine="none")
+    t = time.monotonic()
+    s._mark_audible("Landing now.", t - 1.0, float("inf"))        # still playing
+    assert s.audible_words(now=t) == {"landing", "now"}
+    s._mark_audible("Landing now.", t - 1.0, t - 0.5)             # finished 0.5 s ago
+    assert "landing" in s.audible_words(now=t, tail_s=1.5)
+    assert s.audible_words(now=t + 2.0, tail_s=1.5) == set()       # long gone

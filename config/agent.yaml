@@ -55,6 +55,7 @@ safety:
   partial_window_s: 3.0
   debounce_s: 1.0
   fuzzy: true
+  ignore_own_voice: true   # skip a safety word that is part of the reply the speaker just played
 
 tts:
   engine: mms          # mms (MMS-TTS) | say | none

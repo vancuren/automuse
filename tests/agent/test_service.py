@@ -320,3 +320,41 @@ def test_autopilot_announcements_are_spoken(backend, llm):
     finally:
         asr.stop()
     assert sp.lines == [("Got them. Following.", False)]
+
+
+class EchoSpeaker(RecordingSpeaker):
+    """Pretends a line is coming out of the laptop speakers right now."""
+
+    def __init__(self, words):
+        super().__init__()
+        self.words = set(words)
+
+    def audible_words(self):
+        return self.words
+
+
+def _hit(word, action):
+    from mhd_ml.agent.words import SafetyHit
+
+    return SafetyHit(action=action, command="land" if action == "land" else "pause", word=word,
+                     canonical=word, fuzzy=False, transcript=word)
+
+
+def test_own_voice_is_not_a_command(backend, llm):
+    asr = FakeRealtimeASR(port=ASR_PORT).start()
+    n0 = len(backend.commands)
+    sp = EchoSpeaker({"landing", "now"})                 # the agent is saying "Landing now."
+    try:
+        async def script(svc, hub):
+            svc._on_safety_hit(_hit("landing", "land"))  # its own echo: ignored
+            svc._on_safety_hit(_hit("land", "land"))     # "land in now": ignored (already landing)
+            svc._on_safety_hit(_hit("stop", "hover"))    # the operator: delivered
+            assert await wait_for(lambda: len(backend.commands) > n0, 3)
+            await asyncio.sleep(0.5)
+
+        svc = asyncio.run(run_with_speaker(backend, make_cfg(asr.url), script, sp))
+    finally:
+        asr.stop()
+    sent = [c["command"] for c in backend.commands[n0:]]
+    assert sent == ["pause"], sent
+    assert sum(1 for h in svc.safety_hits if h["result"].get("via") == "echo") == 2

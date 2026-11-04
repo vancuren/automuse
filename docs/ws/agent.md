@@ -214,6 +214,7 @@ Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/l
 - **24 kHz capture by default** (PLAN), 16 kHz for headsets; if a device refuses the rate, the hub
   captures at the device rate and resamples.
 - **Push-to-talk auto-release after 15 s** (lost `ptt_up`).
+- **The listener ignores the agent's own voice** (see gap 4).
 
 ## Known gaps and risks
 
@@ -227,9 +228,11 @@ Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/l
    or `none` in `config/agent.yaml` (parsing tolerates prose around the JSON).
 3. **Propeller noise:** detection falls off below about 10 dB SNR (table above). Use a headset or a
    mic close to the mouth for flights; the UI LAND button and Esc E-STOP remain the primary controls.
-4. **Echo:** with laptop speakers, the listener hears the agent's own voice. "Landing now." contains
-   "landing" and re-sends land, which is harmless (already landing). A subject phrase containing a
-   safety word would be heard too. A headset avoids both.
+4. **Echo:** with laptop speakers the listener hears the agent's own voice. While a reply plays (and
+   1.5 s after), a safety word that is part of that reply is ignored (`safety.ignore_own_voice`); a
+   land word is ignored while "Landing now." is audible. An operator's "stop" is never dropped (no
+   reply or announcement contains a hover word). Tested with a stand-in speaker only, not with real
+   speakers and mic; a headset avoids the question entirely.
 5. **Known false lands (safe direction):** `SAFETY_WORDS` (frozen) maps "lend" and "lan" to land, so
    "lend me a hand" lands; in heavy noise "camera lens" was once heard as "camer land".
 6. The Voice Transcribe file endpoint occasionally doubles a word ("woman woman"); realtime is the default.
