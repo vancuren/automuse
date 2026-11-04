@@ -92,9 +92,9 @@ $MHD_ML_PY scripts/agent/integration_smoke.py [--backend-tree ../gov]   # vs the
 
 ## Test results
 
-`$MHD_ML_PY -m pytest tests/agent -q` at 01:45 ET: **195 passed, 2 skipped** (the 2 skipped are the
-real-API tests; with `MHD_REAL_API=1` they pass too). About 2 minutes, mostly audio decoding. The
-scaffold tests (`tests/test_contracts.py`, `tests/test_intent_spec.py`, core venv) still pass.
+`$MHD_ML_PY -m pytest tests/agent -q` at 01:56 ET on the final code: **199 passed, 2 skipped** (the 2
+skipped are the real-API tests; with `MHD_REAL_API=1` they pass too). About 2 minutes, mostly audio
+decoding. The scaffold tests (`tests/test_contracts.py`, `tests/test_intent_spec.py`, core venv) still pass.
 
 - `test_keyword_grammar.py`: 62 grammar cases (follow with color, person + garment/object, distance,
   safety words, refusals, clarify, plurals) plus invariants.
@@ -199,7 +199,7 @@ blocking wait in the test script, fixed), 10 missions + 4 safety commands delive
 Other: Omnilingual load 0.32-0.39 s, decode 0.15 s for a 2 s clip. MMS-TTS: torch import 2.3 s +
 load 0.4 s at warm-up, then 0.12 s ("Landing now.") to 0.47 s (refusal line) per reply.
 
-Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/logs/spend.jsonl`).
+Spend for this workstream: about **$0.22** of the $3 cap (every batch logged in `$MHD_HOME/logs/spend.jsonl`).
 
 ## Decisions made overnight
 
