@@ -384,7 +384,8 @@ export function useControls(opts: { flightState: FlightState | null }) {
     const dz = (v: number) => (Math.abs(v) < GAMEPAD_DEADZONE ? 0 : v);
     let raf = 0;
     const poll = () => {
-      const gp = navigator.getGamepads()[0];
+      // The first connected pad, whatever its index (a re-plugged pad may come back as 1).
+      const gp = Array.from(navigator.getGamepads()).find((g) => g !== null && g.connected) ?? null;
       if (gp && inputAllowed()) {
         // Left stick: axes[0] X, axes[1] Y. Right stick: axes[2] X, axes[3] Y. +Y is down.
         const next: Axes = {
