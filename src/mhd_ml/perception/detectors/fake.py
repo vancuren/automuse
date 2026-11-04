@@ -17,7 +17,7 @@ from ..types import Detection, clip_box, mask_to_polygon
 class ColorBlobDetector:
     name = "fake"
 
-    def __init__(self, default_color: str = "blue", min_area_px: int = 200, delay_s: float = 0.0):
+    def __init__(self, default_color: str = "blue", min_area_px: int = 1600, delay_s: float = 0.0):
         self.default_color = default_color
         self.min_area_px = min_area_px
         self.delay_s = delay_s
@@ -38,7 +38,7 @@ class ColorBlobDetector:
         sx, sy = FRAME_W / 640, FRAME_H / 360
         for i in range(1, n):
             x, y, w, h, area = st[i]
-            if area < self.min_area_px / 4:
+            if area < self.min_area_px / 4:      # min_area_px is in 1280x720 pixels
                 continue
             blob = (labels == i).astype(np.uint8)
             # Pretend the blob is a shirt: the "person" box extends above and below it.

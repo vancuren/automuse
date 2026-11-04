@@ -241,7 +241,7 @@ class PerceptionCore:
         x1, y1, x2, y2 = clip_box(tr.kf.box())
         w, h = x2 - x1, y2 - y1
         poly = [(round(x1 + u * w, 1), round(y1 + v * h, 1)) for u, v in tr.poly_rel] or None
-        source = ObsSource(tr.pending_source) if tr.pending_source else ObsSource.tracker
+        source = self._det_source() if tr.pending_source else ObsSource.tracker
         latency = tr.pending_latency_ms
         tr.pending_source, tr.pending_latency_ms = None, None
         state = SubjectState.confirmed if tr.n_confirms >= self.cfg.confirm_needed else SubjectState.candidate

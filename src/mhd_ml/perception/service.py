@@ -95,7 +95,19 @@ class PerceptionService:
             return []
         if img.shape[1] != 1280 or img.shape[0] != 720:
             img = cv2.resize(img, (1280, 720), interpolation=cv2.INTER_LINEAR)
-        return self.core.on_frame(meta, img)
+        try:
+            return self.core.on_frame(meta, img)
+        except Exception:                 # a pipeline bug must not drop the connection
+            log.exception("frame %d: pipeline error", meta.frame_id)
+            return []
+
+    def _fuse(self, job, dets, latency):
+        try:
+            return self.core.on_detection(job, dets, latency, now_ms())
+        except Exception:
+            log.exception("fusing a detection failed")
+            self.core.detection_failed(job)
+            return []
 
     def _run_detector(self, job: DetJob):
         t0 = time.perf_counter()
@@ -113,7 +125,7 @@ class PerceptionService:
         if err:
             log.debug("detector: %s", err)
         self.det_latencies = (self.det_latencies + [latency])[-50:]
-        msgs = await loop.run_in_executor(self.frame_pool, self.core.on_detection, job, dets, latency, now_ms())
+        msgs = await loop.run_in_executor(self.frame_pool, self._fuse, job, dets, latency)
         self._enqueue(msgs)
 
     def _maybe_detect(self) -> None:
@@ -211,12 +223,15 @@ class PerceptionService:
                                 self.obs_log.write(data + "\n")
 
                     tasks = [asyncio.create_task(reader()), asyncio.create_task(writer())]
-                    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                    for t in pending:
-                        t.cancel()
-                    for t in done:
-                        if t.exception():
-                            raise t.exception()
+                    try:
+                        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                        for t in done:
+                            if t.exception():
+                                raise t.exception()
+                    finally:
+                        for t in tasks:
+                            t.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -250,13 +265,14 @@ class PerceptionService:
         self.detector.detect(np.full((720, 1280, 3), 127, np.uint8), "person")
         log.info("detector warm-up %.1f s", time.perf_counter() - t0)
 
-    async def run(self) -> None:
+    async def run(self, install_signals: bool = True) -> None:
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, self.stop.set)
-            except (NotImplementedError, RuntimeError):
-                pass
+        if install_signals:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.add_signal_handler(sig, self.stop.set)
+                except (NotImplementedError, RuntimeError):
+                    pass
         await loop.run_in_executor(self.det_pool, self.warm_up)
         tasks = [asyncio.create_task(self.frames_loop()), asyncio.create_task(self.subject_loop()),
                  asyncio.create_task(self.status_loop())]
