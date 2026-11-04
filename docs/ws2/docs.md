@@ -66,10 +66,12 @@ hit reports only the variable name and the file or commit. It also flags credent
 
 1. **Name: "Voice Follow Drone".** The UI already uses it (`turbodrone/frontend/index.html`: "Voice
    Follow Drone · Operator"). Renaming touches README.md, NOTICE, docs/SUBMISSION.md and the UI title.
-2. **The README says exactly what the twin run covers.** `scripts/e2e_twin.py` posts the follow
-   Mission over HTTP; it does not speak. So the status line says the voice agent drives the same
-   backend in its own tests. The demo workstream's recording (voice through Glimmer into the twin)
-   is the place to claim the spoken chain, once it lands.
+2. **The README says exactly what each run covers.** `scripts/e2e_twin.py` posts the follow Mission
+   over HTTP; it does not speak, so the Results table says "a follow mission posted to the backend".
+   The claim that the whole chain runs with voice rests on the demo workstream's S1 take at 03:24
+   (`logs/demo-20261104-032416-s1/demo_result.json` in its worktree: Voice Transcribe, the Glimmer
+   LoRA in 4.03 s, FOLLOW, a spoken "land"), shown as the README's hero still and in results.md 1d.
+   The caption says the command was voiced by `say`.
 3. **Newest numbers win.** Test counts come from docs/STATUS.md at 03:10 (governor 185, agent 200,
    perception 60), not the workstream docs (179, 199, 61).
 4. **Results shown in the README:** the last three SAM runs (02:58-03:02), not the earlier S1 run
