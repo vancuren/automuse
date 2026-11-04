@@ -42,6 +42,7 @@ from mhd.contracts import FRAME_H, FRAME_W, Truth, TwinControl, now_ms
 
 from . import media
 from . import protocol as P
+from . import screen_counter
 from .dynamics import RcFaultInjector, RcLinkStats, X69Dynamics, load_params
 from .scenarios import Scenario, list_scenarios, load_scenario
 from .video import FileRecorder, VideoPipeline
@@ -642,7 +643,7 @@ def build_app(args: argparse.Namespace) -> FastAPI:
             while True:
                 line = await q.get()
                 await ws.send_text(line)
-        except (WebSocketDisconnect, RuntimeError):
+        except Exception:  # noqa: BLE001 - subscriber went away
             pass
         finally:
             twin.truth_subs.discard(q)
@@ -662,8 +663,12 @@ def build_app(args: argparse.Namespace) -> FastAPI:
                 await twin.passive_loop(c)
         except (WebSocketDisconnect, RuntimeError):
             pass
+        except Exception as exc:  # noqa: BLE001 - a dropped renderer must never take the twin down
+            log.info("renderer %s disconnected: %s", role, type(exc).__name__)
         finally:
             twin.renderers.discard(c)
+
+    screen_counter.mount(app)          # /counter page for the real drone's latency measurement
 
     if (WEB_DIR / "js").exists():
         app.mount("/js", StaticFiles(directory=WEB_DIR / "js"), name="js")

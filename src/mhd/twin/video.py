@@ -222,8 +222,9 @@ class VideoPipeline:
             self.stall.next_ms = 0.0
 
     def downstream_estimate(self) -> float:
-        if len(self.downstream_ms) >= 5:
-            return median(self.downstream_ms)
+        snap = list(self.downstream_ms)
+        if len(snap) >= 5:
+            return median(snap)
         return 60.0
 
     # ------------------------------------------------------------------ threads
@@ -367,19 +368,20 @@ class VideoPipeline:
     # ------------------------------------------------------------------ status
     @staticmethod
     def _rate(times: deque, window_ms: float = 2000.0) -> float:
-        if len(times) < 2:
+        snap = list(times)        # one C-level copy: other threads append to this deque
+        if len(snap) < 2:
             return 0.0
         now = now_ms()
-        recent = [t for t in times if now - t <= window_ms]
+        recent = [t for t in snap if now - t <= window_ms]
         if len(recent) < 2:
             return 0.0
         return (len(recent) - 1) / max(1e-3, (recent[-1] - recent[0]) / 1000.0)
 
     @staticmethod
     def _p(vals, q) -> Optional[float]:
-        if not vals:
+        s = sorted(list(vals))
+        if not s:
             return None
-        s = sorted(vals)
         return round(s[min(len(s) - 1, int(q * (len(s) - 1) + 0.5))], 1)
 
     def status(self) -> dict:
