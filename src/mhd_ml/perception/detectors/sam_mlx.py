@@ -15,6 +15,7 @@ single thread (the service runs all SAM work on one worker thread).
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -50,6 +51,7 @@ class SamMlxEngine:
         self.processor = Sam31Processor.from_pretrained(str(model_dir))
         self.predictor = Sam3Predictor(self.model, self.processor, score_threshold=threshold)
         self.threshold = threshold
+        self.lock = threading.RLock()     # serializes every MLX call (detector and SAM tracker)
         self.set_resolution(resolution)
         self.load_s = time.perf_counter() - t0
 
@@ -105,14 +107,15 @@ class SamMlxEngine:
     # ----- the detector interface ----------------------------------------------------------
     def detect(self, image_bgr: np.ndarray, phrase: str, threshold: Optional[float] = None,
                timings: Optional[dict] = None) -> list[Detection]:
-        t0 = time.perf_counter()
-        px = self.preprocess(image_bgr)
-        t1 = time.perf_counter()
-        feats = self.backbone(px)
-        t2 = time.perf_counter()
-        result = self.detect_features(feats, phrase, threshold)
-        dets = self.to_detections(result, phrase)
-        t3 = time.perf_counter()
+        with self.lock:
+            t0 = time.perf_counter()
+            px = self.preprocess(image_bgr)
+            t1 = time.perf_counter()
+            feats = self.backbone(px)
+            t2 = time.perf_counter()
+            result = self.detect_features(feats, phrase, threshold)
+            dets = self.to_detections(result, phrase)
+            t3 = time.perf_counter()
         if timings is not None:
             timings.update(pre_ms=(t1 - t0) * 1e3, backbone_ms=(t2 - t1) * 1e3,
                            head_ms=(t3 - t2) * 1e3, total_ms=(t3 - t0) * 1e3)
@@ -143,7 +146,7 @@ class SamMlxDetector:
 
     name = "sam_mlx"
 
-    def __init__(self, model_dir: Optional[str] = None, resolution: int = NATIVE_RES,
+    def __init__(self, model_dir: Optional[str] = None, resolution: int = 672,
                  threshold: float = 0.25, engine: Optional[SamMlxEngine] = None):
         self.engine = engine or SamMlxEngine(model_dir, resolution, threshold)
         self.last_timings: dict = {}
