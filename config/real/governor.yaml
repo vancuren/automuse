@@ -1,4 +1,4 @@
-# REAL-DRONE calibration of config/governor.yaml (created 2026-11-04 16:01 for our unit's Lewei board).
+# REAL-DRONE calibration of config/governor.yaml (scripts/apply_sysid.py, last run 2026-11-04 16:35).
 # Identical to config/governor.yaml except the values tagged [measured ...] or [set ...]. Never for the twin.
 # Safety governor parameters (loaded by mhd.governor.config.load_governor_config).
 #
@@ -80,7 +80,7 @@ landing:
   reassert_per_s: 5         # (unused while press_s > 0)
   press_s: 2.0              # [set 2026-11-04 16:30: button-style LAND for our Lewei unit. Pulsed 5/s (Session A 15:54)
   release_s: 6.0            # and held nonstop (16:19) did not stop the motors; 2 s held then released did (bench 13:22).]
-  throttle_ramp: false      # Fallback if Session A shows 0x80 does not land: while LANDING, also ramp the
+  throttle_ramp: true       # Fallback if Session A shows 0x80 does not land: while LANDING, also ramp the [set 2026-11-04 16:35: --throttle-ramp]
                             # throttle stick down (the land flag is still re-asserted). Tune in the twin,
                             # check at low height in Session B before relying on it.
   throttle_down: 0.35       # normalized throttle reached by the ramp (0.35 x 127 = 44 counts below center)
