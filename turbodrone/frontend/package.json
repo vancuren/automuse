@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:mock": "VITE_BACKEND_URL=http://127.0.0.1:8600 VITE_TWIN_CHASE_URL=http://127.0.0.1:8600/chase vite --port 5273 --strictPort",
+    "mock": "\"$MHD_PY\" mock/mock_backend.py --port 8600"
   },
   "dependencies": {
     "react": "^19.1.0",
