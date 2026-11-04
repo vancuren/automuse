@@ -437,7 +437,41 @@ class ChatIntentClient:
     def __init__(self, cfg: ChatConfig, http_client=None):
         self.cfg = cfg
         self.name = cfg.label
-        self._client = http_client
+        self._client = http_client          # injected (tests); never closed here
+        self._own = None                    # one long-lived client: no TLS handshake per command
+        self._own_loop = None
+
+    def _http(self):
+        """The client to use: the injected one, else a long-lived one bound to the running loop."""
+        import httpx
+
+        if self._client is not None:
+            return self._client
+        loop = asyncio.get_running_loop()
+        if self._own is None or self._own_loop is not loop or self._own.is_closed:
+            self._own = httpx.AsyncClient(timeout=httpx.Timeout(self.cfg.timeout_s, connect=3.0),
+                                          limits=httpx.Limits(keepalive_expiry=120.0))
+            self._own_loop = loop
+        return self._own
+
+    async def warm(self) -> Optional[float]:
+        """Open the connection ahead of the first command (GET /models, free). Returns ms or None."""
+        t0 = time.monotonic()
+        try:
+            h = self._headers()
+            h.pop("Accept", None)
+            r = await self._http().get(self.cfg.base_url.rstrip("/") + "/models", headers=h)
+            return _ms(t0) if r.status_code < 500 else None
+        except Exception:
+            return None
+
+    async def aclose(self) -> None:
+        if self._own is not None and not self._own.is_closed:
+            try:
+                await self._own.aclose()
+            except Exception:
+                pass
+        self._own = None
 
     def _body(self, transcript: str) -> dict:
         c = self.cfg
@@ -478,8 +512,7 @@ class ChatIntentClient:
 
         t0 = time.monotonic()
         url = self.cfg.base_url.rstrip("/") + "/chat/completions"
-        own = self._client is None
-        client = self._client or httpx.AsyncClient(timeout=httpx.Timeout(self.cfg.timeout_s, connect=3.0))
+        client = self._http()
         content, ttft, usage = "", None, {}
         try:
             headers = self._headers()
@@ -539,9 +572,6 @@ class ChatIntentClient:
         except Exception as e:
             return IntentAttempt(self.name, None, _ms(t0), content, f"{e.__class__.__name__}: {e}"[:300],
                                  ttft, False, usage)
-        finally:
-            if own:
-                await client.aclose()
 
 
 def _ms(t0: float) -> float:
@@ -582,7 +612,7 @@ class HedgedRouter:
     """
 
     def __init__(self, glimmer: Optional[ChatIntentClient] = None, spark: Optional[ChatIntentClient] = None,
-                 mode: str = "auto", prefer_window_s: float = 2.5, total_timeout_s: float = 8.0,
+                 mode: str = "auto", prefer_window_s: float = 2.5, total_timeout_s: float = 5.0,
                  safety_fast_path: bool = True):
         self.glimmer = glimmer if mode in ("auto", "glimmer") else None
         self.spark = spark if mode in ("auto", "spark") else None
@@ -670,7 +700,16 @@ class HedgedRouter:
             return
         self.history.append({"late": True, "model": c.name, "transcript": transcript, **a.summary()})
 
+    async def warm(self) -> dict:
+        """Pre-open the HTTPS connections to every model server (call at startup and every minute)."""
+        clients = [c for c in (self.glimmer, self.spark) if c is not None]
+        res = await asyncio.gather(*(c.warm() for c in clients), return_exceptions=True)
+        return {c.name: (None if isinstance(r, Exception) else r) for c, r in zip(clients, res)}
+
     async def aclose(self) -> None:
         for t in list(self._background):
             t.cancel()
         self._background.clear()
+        for c in (self.glimmer, self.spark):
+            if c is not None:
+                await c.aclose()

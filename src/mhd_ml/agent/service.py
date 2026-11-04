@@ -179,7 +179,7 @@ class AgentService:
                                  model=s.get("model", "muse-spark-1.3"), timeout_s=float(s.get("timeout_s", 8.0)))
         return HedgedRouter(glimmer=glimmer, spark=spark, mode=mode,
                             prefer_window_s=float(r.get("glimmer_window_s", 2.5)),
-                            total_timeout_s=float(r.get("total_timeout_s", 8.0)),
+                            total_timeout_s=float(r.get("total_timeout_s", 5.0)),
                             safety_fast_path=bool(r.get("safety_fast_path", True)))
 
     async def start(self) -> None:
@@ -206,6 +206,7 @@ class AgentService:
         await self.link.wait_connected(timeout=3.0)
         await self.emit("status", "agent ready", data=self.status())
         self._spawn(self._status_heartbeat(), background=True)
+        self._spawn(self._keep_model_connections_warm(), background=True)
         if self.start_mic:
             self._spawn(self._mic_watchdog(), background=True)
 
@@ -216,6 +217,17 @@ class AgentService:
                 "safety_listener": bool(self._safety_thread and self._safety_thread.is_alive()),
                 "backend_connected": bool(self.link and self.link.connected),
                 "mic_rate": self.hub.sample_rate, "mic_silent": self.hub.suspect_no_permission}
+
+    async def _keep_model_connections_warm(self, period_s: float = 60.0) -> None:
+        """Open the HTTPS connections to Spark / Glimmer now and keep them open (GET /models is free),
+        so a push-to-talk command does not pay a TLS handshake."""
+        while not self.stopped.is_set():
+            try:
+                warm = await self.router.warm()
+                log.info("model connections warm: %s", warm)
+            except Exception:
+                pass
+            await asyncio.sleep(period_s)
 
     async def _status_heartbeat(self, period_s: float = 5.0) -> None:
         """Re-send status every few seconds so a UI that connects later (or reconnects) sees it, and

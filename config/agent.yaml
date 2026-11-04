@@ -42,7 +42,8 @@ spark:
 
 router:
   glimmer_window_s: 2.5          # Glimmer's answer wins if it is valid within this window
-  total_timeout_s: 8.0           # after this the keyword grammar answers
+  total_timeout_s: 5.0           # after this the keyword grammar answers (Spark had a 6.5 s outlier;
+                                 # 5 s keeps release-to-reply under the 6 s p95 target)
   safety_fast_path: true         # "stop" / "land" in a push-to-talk command never waits for a model
 
 safety:
