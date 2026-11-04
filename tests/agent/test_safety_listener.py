@@ -263,3 +263,30 @@ def test_ambiguous_spellings_need_a_pure_safety_utterance():
     assert match_safety("aboard now").action == "land"
     assert match_safety("stalk stalk").action == "hover"
     assert match_safety("all aboard the train") is None
+
+
+class ScriptedRecognizer:
+    """Returns the queued transcripts in order (for partial-decode logic tests)."""
+
+    def __init__(self, texts):
+        self.texts = list(texts)
+
+    def transcribe(self, audio, sample_rate=16000):
+        return self.texts.pop(0) if self.texts else ""
+
+
+def test_trailing_safety_word_fires_once_it_stops_changing():
+    """Noise holds the VAD open after "okay land": the second identical partial accepts the last word."""
+    lst = SafetyListener(recognizer=ScriptedRecognizer(["okay land", "okay land"]))
+    lst._ring.append(np.zeros(16000 * 2, np.float32))
+    lst._fed, lst._speech_start = 16000 * 2, 0
+    assert lst._partial_decode() == []                 # could still become "landscape"
+    hits = lst._partial_decode()                       # 0.4 s later, nothing new: it was "land"
+    assert hits and hits[0].action == "land"
+
+
+def test_growing_partial_does_not_fire_on_a_prefix():
+    lst = SafetyListener(recognizer=ScriptedRecognizer(["a picture of the land", "a picture of the landscape"]))
+    lst._ring.append(np.zeros(16000 * 2, np.float32))
+    lst._fed, lst._speech_start = 16000 * 2, 0
+    assert lst._partial_decode() == [] and lst._partial_decode() == []

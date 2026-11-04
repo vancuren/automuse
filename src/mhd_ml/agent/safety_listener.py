@@ -37,7 +37,7 @@ from mhd.contracts import now_ms
 
 from .asr_local import ASR_SAMPLE_RATE, OmnilingualRecognizer, get_shared_recognizer
 from .audio import load_wav, resample, speech_bounds
-from .words import SafetyHit, match_safety, preload_dictionary
+from .words import SafetyHit, match_safety, preload_dictionary, words
 
 log = logging.getLogger("mhd.agent.safety")
 
@@ -146,6 +146,7 @@ class SafetyListener:
         self._last_partial_at = 0
         self._fired_in_segment: set[str] = set()
         self._last_fire: dict[str, float] = {}           # action -> stream time (s) of last fire
+        self._prev_tail: Optional[tuple] = None          # last two words of the previous partial
         self.hits: list[SafetyHit] = []
         self.decodes = 0
         self.decode_ms_total = 0.0
@@ -192,6 +193,7 @@ class SafetyListener:
                 back = int((self.cfg.min_speech_s + 0.3) * ASR_SAMPLE_RATE)
                 self._speech_start = max(self._ring.start, self._fed - back)
                 self._last_partial_at = self._fed
+                self._prev_tail = None
             if self._fed - self._last_partial_at >= int(self.cfg.partial_interval_s * ASR_SAMPLE_RATE):
                 self._last_partial_at = self._fed
                 if self._allow_partial:
@@ -231,6 +233,7 @@ class SafetyListener:
                     out.append(h)
             self._fired_in_segment.clear()     # the next segment may fire the same action again
             self._speech_start = None
+            self._prev_tail = None
         return out
 
     def _partial_decode(self) -> list[SafetyHit]:
@@ -242,7 +245,15 @@ class SafetyListener:
         text, ms = self._decode(audio)
         if self.on_transcript and text:
             self.on_transcript("partial", text)
-        hit = match_safety(text, partial=True, truncated_start=truncated, fuzzy=self.cfg.fuzzy)
+        # The last word is normally ignored (it may be the start of "landscape"). But if the last two
+        # words are unchanged since the previous partial (0.4 s ago), no more speech arrived: the word
+        # is complete, even though noise may be holding the VAD open. Accept it now rather than wait
+        # for the segment to close (up to max_speech_s).
+        ws = words(text)
+        tail = tuple(ws[-2:])
+        stable = bool(ws) and tail == self._prev_tail
+        self._prev_tail = tail
+        hit = match_safety(text, partial=not stable, truncated_start=truncated, fuzzy=self.cfg.fuzzy)
         if hit:
             h = self._fire(hit, ms)
             return [h] if h else []
