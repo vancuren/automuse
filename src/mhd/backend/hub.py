@@ -35,7 +35,7 @@ from mhd.governor.core import AGENT_COMMANDS, Governor
 from mhd.governor.telemetry import build_telemetry
 
 from .frames import FrameStore
-from .modes import BackendEnv
+from .modes import CAMERA_ONLY_FLAG, BackendEnv, camera_only_requested
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +133,16 @@ class Hub:
         self.gov = governor
         self.frames = FrameStore(env.flight_mode, on_frame=self.gov.note_frame)
         self.model = install_governor(self.gov)
-        logger.warning("[hub] governor installed: FLIGHT_MODE=%s DRONE_IP=%s (armed=%s, headless_bypass=%s)",
-                       env.flight_mode, env.drone_ip, self.gov.armed, self.gov.cfg.twin_headless_bypass)
+        logger.warning("[hub] governor installed: FLIGHT_MODE=%s DRONE_IP=%s (armed=%s, headless_bypass=%s, "
+                       "camera_only=%s)", env.flight_mode, env.drone_ip, self.gov.armed,
+                       self.gov.cfg.twin_headless_bypass, self.camera_only)
         return self.model
+
+    @property
+    def camera_only(self) -> bool:
+        """MHD_CAMERA_ONLY (real camera, no flight). Either source is enough: the validated env, or
+        the raw variable (fail safe, should the RC adapter ever be built before setup())."""
+        return bool(self.env is not None and self.env.camera_only) or camera_only_requested()
 
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
@@ -143,9 +150,18 @@ class Hub:
         self._relay_task = asyncio.create_task(self._relay_events())
 
     def make_rc_adapter(self, drone_ip: str, control_port: int, local_port: int = 0):
-        """The X69 RC adapter with keepalive retry and link counters (see turbodrone_glue)."""
-        from mhd.governor.turbodrone_glue import GovernedX69LgRcAdapter
-        self.rc_adapter = GovernedX69LgRcAdapter(drone_ip, control_port, local_port=local_port)
+        """The X69 RC adapter with keepalive retry and link counters (see turbodrone_glue).
+
+        Camera-only mode: an adapter with no socket at all. The governor still builds every RC
+        packet (twin behavior), and nothing is ever sent, to any address, not even loopback.
+        """
+        from mhd.governor.turbodrone_glue import CameraOnlyRcAdapter, GovernedX69LgRcAdapter
+        if self.camera_only:
+            self.rc_adapter = CameraOnlyRcAdapter(drone_ip, control_port, local_port=local_port)
+            logger.warning("[hub] CAMERA ONLY (real camera, NO FLIGHT): RC adapter without a socket; "
+                           "no RC packet or keepalive is sent to any address")
+        else:
+            self.rc_adapter = GovernedX69LgRcAdapter(drone_ip, control_port, local_port=local_port)
         return self.rc_adapter
 
     def on_shutdown(self, callback: Callable[[], None]) -> None:
@@ -575,6 +591,8 @@ class Hub:
         link_flags, link_extra = self.link_flags_and_stats()
         extra.update(link_extra)
         flags = list(link_flags)
+        if self.camera_only:
+            flags.insert(0, CAMERA_ONLY_FLAG)         # the UI's REAL CAMERA - NO FLIGHT banner
         pause = self.rc_pause_status()
         if pause.get("active"):
             flags.append("rc_paused")                 # debug RC pause: no control packets now

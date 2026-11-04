@@ -67,6 +67,35 @@ def port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.2) -> bool:
         return False
 
 
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def rtsp_has_publisher(url: str, timeout: float = 1.0) -> bool:
+    """True if the loopback RTSP server answers DESCRIBE for `url` with 200 OK: mediamtx does so only
+    while someone publishes on that path (404 otherwise). Loopback only; one TCP request, no reader
+    session (no SETUP / PLAY). Used by scripts/run_stack.sh --mode camera to wait for the camera."""
+    from urllib.parse import urlparse
+    u = urlparse(url)
+    host = (u.hostname or "").lower()
+    if u.scheme != "rtsp" or host not in LOOPBACK_HOSTS:
+        raise ValueError(f"rtsp_has_publisher checks loopback rtsp:// URLs only, got {url!r}")
+    req = (f"DESCRIBE {url} RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n"
+           "User-Agent: mhd-camera-check\r\n\r\n").encode()
+    data = b""
+    try:
+        with socket.create_connection((host, u.port or 554), timeout=timeout) as s:
+            s.sendall(req)
+            while b"\r\n" not in data and len(data) < 4096:
+                chunk = s.recv(1024)
+                if not chunk:
+                    break
+                data += chunk
+    except OSError:
+        return False
+    status = data.split(b"\r\n", 1)[0].split()
+    return len(status) >= 2 and status[0].startswith(b"RTSP/") and status[1] == b"200"
+
+
 def start_mediamtx(rtsp_port: int, log_dir: Path, wait_s: float = 5.0) -> subprocess.Popen:
     if port_open(rtsp_port):
         raise RuntimeError(f"port {rtsp_port} is already in use; is another mediamtx running?")

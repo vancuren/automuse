@@ -228,6 +228,10 @@ class GovernedX69LgRcAdapter(X69LgRcProtocolAdapter):
     """
 
     def __init__(self, *args, **kwargs):
+        self._init_link_state()
+        super().__init__(*args, **kwargs)        # starts the keepalive thread (our _keepalive_loop)
+
+    def _init_link_state(self) -> None:
         self._stats_lock = threading.Lock()
         self.rc_sent = 0
         self.rc_errors = 0
@@ -243,7 +247,6 @@ class GovernedX69LgRcAdapter(X69LgRcProtocolAdapter):
         self._pause_keep: Optional[Callable[[], bool]] = None
         self._pause_info: dict = {}
         self.rc_pause_dropped_total = 0
-        super().__init__(*args, **kwargs)        # starts the keepalive thread (our _keepalive_loop)
 
     # ---------------------------------------------------------------------------------- RC pause
     def pause_rc(self, seconds: float, keep_paused: Optional[Callable[[], bool]] = None,
@@ -378,3 +381,75 @@ class GovernedX69LgRcAdapter(X69LgRcProtocolAdapter):
                     "keepalive_sent": self.keepalive_sent, "keepalive_errors": self.keepalive_errors,
                     "keepalive_age_ms": round((time.monotonic() - self.keepalive_last_ok) * 1000.0, 1),
                     "keepalive_alive": self._keepalive_thread.is_alive()}
+
+
+class CameraOnlyViolation(RuntimeError):
+    """Something tried to use the RC socket in camera-only mode (there is none). A bug, never a link error."""
+
+
+class _NoRcSocket:
+    """Stands in for the RC adapter's UDP socket in camera-only mode: refuses every send."""
+
+    def _refuse(self, *_args, **_kwargs):
+        raise CameraOnlyViolation("camera-only mode: the RC adapter has no socket; nothing may be sent")
+
+    sendto = send = sendmsg = sendall = connect = bind = _refuse
+
+    def close(self) -> None:
+        return None
+
+
+class CameraOnlyRcAdapter(GovernedX69LgRcAdapter):
+    """MHD_CAMERA_ONLY=1 (twin mode with a real camera, no aircraft): the RC adapter that never sends.
+
+    The governor's RC packets are built exactly as in the twin (same model, same packet builder, same
+    one-shot flag handling) and then dropped and counted. No socket is ever created, so nothing can
+    be sent to any address, not even loopback. The keepalive thread only refreshes keepalive_last_ok,
+    so telemetry shows a healthy link (no keepalive_stale, no rc_send_errors) and the governor,
+    autopilot and telemetry run exactly as in twin mode.
+    """
+
+    camera_only = True
+
+    def __init__(self, drone_ip: str = "127.0.0.1", control_port: int = 0, *, local_port: int = 0) -> None:
+        # Deliberately NOT X69LgRcProtocolAdapter.__init__: it opens a UDP socket, binds local_port,
+        # and starts a keepalive thread that sends D1 datagrams.
+        self._init_link_state()
+        self.drone_ip = drone_ip                 # informational only: never used as a destination
+        self.control_port = int(control_port)
+        self.local_port = 0                      # nothing is bound
+        self.debug_packets = False
+        self.packet_counter = 0
+        self.speed_scale_by_index = {0: 0.55, 1: 0.75, 2: 1.0}   # upstream's table; the governor pins 2
+        self.sock = _NoRcSocket()
+        self.rc_suppressed = 0                   # RC packets built and dropped (would have been sent)
+        self._keepalive_stop = threading.Event()
+        self._keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True,
+                                                  name="CameraOnlyKeepalive")
+        self._keepalive_thread.start()
+
+    def send_control_packet(self, packet: bytes) -> None:
+        if self._pause_until and self._drop_for_pause():
+            return                               # debug RC pause: same bookkeeping as the twin
+        with self._stats_lock:
+            self.rc_suppressed += 1
+        if self.debug_packets:
+            self.packet_counter += 1
+            logger.debug("[camera-only-rc] #%05d not sent: %s", self.packet_counter, packet.hex(" "))
+
+    def _keepalive_loop(self) -> None:
+        while not self._keepalive_stop.wait(1.0):
+            with self._stats_lock:
+                self.keepalive_last_ok = time.monotonic()   # nothing is sent: the link is "fine"
+
+    def stop(self) -> None:
+        self._keepalive_stop.set()
+        if self._keepalive_thread.is_alive():
+            self._keepalive_thread.join(timeout=1.0)
+
+    def link_stats(self) -> dict:
+        stats = super().link_stats()
+        with self._stats_lock:
+            stats["rc_suppressed"] = self.rc_suppressed
+        stats["camera_only"] = True
+        return stats
