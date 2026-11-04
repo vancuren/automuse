@@ -18,6 +18,7 @@ Exit status: 0 = clean (warnings allowed), 1 = something must be fixed before go
 from __future__ import annotations
 
 import argparse
+import bisect
 import os
 import re
 import subprocess
@@ -86,17 +87,28 @@ class Report:
         self.warns.append(msg)
 
 
-def scan_blob(where: str, data: bytes, values, rep: Report, line_of=None) -> None:
+def scan_blob(where: str, data: bytes, values, rep: Report, locate=None, max_hits: int = 20) -> None:
+    """Report every occurrence (up to max_hits per value or pattern). locate(offset) names the place;
+    by default it is where:line."""
+    def loc(off: int) -> str:
+        return locate(off) if locate else f"{where}:{data.count(b'\n', 0, off) + 1}"
+
     for name, value, is_secret in values:
-        if value in data:
-            ln = data[: data.index(value)].count(b"\n") + 1
-            loc = line_of(ln) if line_of else f"{where}:{ln}"
-            (rep.fail if is_secret else rep.warn)(f"value of {name} found in {loc}")
+        seen, start = [], 0
+        while len(seen) < max_hits:
+            off = data.find(value, start)
+            if off < 0:
+                break
+            place = loc(off)
+            if place not in seen:
+                seen.append(place)
+                (rep.fail if is_secret else rep.warn)(f"value of {name} found in {place}")
+            start = off + len(value)
     for label, rx in PATTERNS:
-        for m in rx.finditer(data):
-            ln = data[: m.start()].count(b"\n") + 1
-            loc = line_of(ln) if line_of else f"{where}:{ln}"
-            rep.fail(f"{label} at {loc}: {mask(m.group(0))}")
+        for n, m in enumerate(rx.finditer(data)):
+            if n >= max_hits:
+                break
+            rep.fail(f"{label} at {loc(m.start())}: {mask(m.group(0))}")
 
 
 def main() -> int:
@@ -135,19 +147,14 @@ def main() -> int:
     if not args.no_history:
         log = git("log", "-p", "--all", "--full-history", "--no-color", "--text",
                   "--format=commit %H%n%B", tree=tree)
-        commits = [m.start() for m in re.finditer(rb"^commit [0-9a-f]{40}$", log, re.M)]
+        starts = [m.start() for m in re.finditer(rb"^commit [0-9a-f]{40}$", log, re.M)]
 
-        def line_of(ln: int) -> str:
-            # map a line number in the log to its commit
-            pos, n = 0, 1
-            while n < ln:
-                pos = log.index(b"\n", pos) + 1
-                n += 1
-            starts = [c for c in commits if c <= pos]
-            sha = log[starts[-1] + 7: starts[-1] + 47].decode() if starts else "?"
+        def locate(off: int) -> str:
+            i = bisect.bisect_right(starts, off) - 1
+            sha = log[starts[i] + 7: starts[i] + 47].decode() if i >= 0 else "?"
             return f"git history (commit {sha[:10]})"
 
-        scan_blob("history", log, values, rep, line_of=line_of)
+        scan_blob("history", log, values, rep, locate=locate)
         names = git("log", "--all", "--format=", "--name-only", tree=tree).decode().splitlines()
         for rel in sorted(set(n for n in names if n)):
             name = rel.rsplit("/", 1)[-1]
@@ -162,7 +169,7 @@ def main() -> int:
                 where = parts[3] if len(parts) > 3 else parts[1]
                 (rep.fail if int(parts[2]) > 100 * MB else rep.warn)(
                     f"history blob {where}: {int(parts[2]) / MB:.0f} MB")
-        print(f"history: {len(commits)} commits on all branches scanned")
+        print(f"history: {len(starts)} commits on all branches scanned")
 
     for w in rep.warns:
         print("WARN", w)

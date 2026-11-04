@@ -82,3 +82,17 @@ def test_generic_token_pattern_is_masked(tmp_path):
     assert r.returncode == 1
     assert "sk- token at client.py:1" in r.stdout
     assert token not in r.stdout
+
+
+def test_every_commit_holding_a_secret_is_named(tmp_path):
+    repo, env = make_repo(tmp_path), write_env(tmp_path)
+    for i in range(2):                                      # two separate leaks, each cleaned up again
+        (repo / f"leak{i}.txt").write_text(f"token {FAKE_KEY}\n")
+        run(["git", "add", "."], repo)
+        run(["git", "commit", "-q", "-m", f"leak {i}"], repo)
+        (repo / f"leak{i}.txt").unlink()
+        run(["git", "commit", "-q", "-am", f"clean {i}"], repo)
+    r = scan(repo, env)
+    hits = [l for l in r.stdout.splitlines() if l.startswith("FAIL value of MODEL_API_KEY found in git history")]
+    assert len(set(hits)) >= 2, r.stdout                   # the adding and the deleting commits of both
+    assert FAKE_KEY not in r.stdout

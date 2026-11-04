@@ -15,7 +15,7 @@ Branch `ws2/docs`, from `integration` at `6bb13fb`. Written 2026-11-04, 03:05-05
 | `licenses/SAM_LICENSE.txt` | The SAM License, copied unchanged from the installed meta-sam-parser 0.1.0 wheel. |
 | `docs/SUBMISSION.md` | The submission checklist: portal checks, drafts of every form field, the new-work statement, the secret-scan command, making the repo public, the video, submitting. |
 | `scripts/secret_scan.py` | The pre-publication scan (stdlib only). |
-| `tests/docs/test_secret_scan.py` | 4 tests for it on throwaway git repos. |
+| `tests/docs/test_secret_scan.py` | 5 tests for it on throwaway git repos. |
 
 ## How to run
 
@@ -23,25 +23,30 @@ Branch `ws2/docs`, from `integration` at `6bb13fb`. Written 2026-11-04, 03:05-05
 cd <checkout> && source env.sh
 $MHD_PY scripts/secret_scan.py                 # working tree + git log -p --all; RESULT: clean or FAIL
 $MHD_PY scripts/secret_scan.py --no-history    # working tree only
-$MHD_PY -m pytest -q tests/docs                # 4 tests, under a second
+$MHD_PY -m pytest -q tests/docs                # 5 tests, about a second
 ```
 
 The scan reads the values in `$MHD_HOME/.env` (as the shell reads them: an inline `# comment` is not
 a value) and looks for each one, in memory, in every tracked and untracked-but-not-ignored file and
 in `git log -p --all --text` (every branch, diff and commit message). It never prints a value: a
-hit reports only the variable name and the file or commit. It also flags credential patterns
+hit reports only the variable name and the file:line or the commit (every commit that holds it, up
+to 20 per value, so a history rewrite knows what to touch). It also flags credential patterns
 (masked), `.env` files tracked now or in history, video or media/logs files, and files over 50 MB
 (warning) or 100 MB (failure, GitHub's limit), including history blobs.
 
 ## Results
 
-- `tests/docs`: **4 passed** (0.8 s): a planted key that was committed and then removed is found in
-  history and never printed; a private value warns; a tracked `.env` fails; a token pattern is masked.
-- `scripts/secret_scan.py` on this repository at 03:30 ET: **RESULT: clean, 0 failures**, 372 tracked
-  files and 135 commits on all branches. 3 warnings, all one private (non-secret) `.env` value that
-  also occurs inside local file paths quoted in `docs/research/` (and the planning commit). The
-  first run reported a false failure: the Baseten line in `.env` is empty with an inline comment,
-  and the scanner took the comment for the value; fixed and covered by a test.
+- `tests/docs`: **5 passed** (about 1 s): a planted key that was committed and then removed is found
+  in history and never printed; every commit holding a key is named; a private value warns; a
+  tracked `.env` fails; a token pattern is masked.
+- `scripts/secret_scan.py` on this repository at 04:05 ET: **RESULT: clean, 0 failures**, 376 tracked
+  files and 198 commits on all branches (ws2/demo and ws2/ops included). 8 warnings, all the same
+  private (non-secret) `.env` value, which is a substring of the owner's home-folder path: it occurs
+  in local paths quoted in `docs/research/` (5 lines in dossier.md, 1 in turbodrone-brief.md, from
+  the planning commit `cd916c4`) and in docs/RUNBOOK.md (ws2/ops `5389c5c`). Harmless, but the owner
+  may prefer to trim those paths. The first run reported a false failure: the Baseten line in `.env`
+  is empty with an inline comment, and the scanner took the comment for the value; fixed and covered
+  by a test.
 - Every relative link in the new documents resolves, except `docs/RUNBOOK.md` (the ops workstream's,
   not merged yet) and the demo stills (see Gaps).
 - Every number in README.md and docs/results.md was taken from, or recomputed from, the sources the
