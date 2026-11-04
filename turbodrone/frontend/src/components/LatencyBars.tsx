@@ -43,7 +43,8 @@ const PRIMARY_KEYS = new Set(["detector", "intent"]);
 
 /** Latency bars (new): the four numbers that decide whether the autopilot may fly. */
 export default function LatencyBars({ telemetry, stale }: { telemetry: Telemetry | null; stale: boolean }) {
-  const extras = Object.entries(telemetry?.latency_ms ?? {}).filter(([k]) => !PRIMARY_KEYS.has(k));
+  // fc_* are the Lewei flight controller's telemetry (volts, status, counts), not latencies.
+  const extras = Object.entries(telemetry?.latency_ms ?? {}).filter(([k]) => !PRIMARY_KEYS.has(k) && !k.startsWith("fc_"));
   const last = useRef<Record<string, { v: number; at: number }>>({});
   const now = performance.now();
   return (

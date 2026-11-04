@@ -21,7 +21,8 @@ Endpoints, same as drone-backend:
 Test-only endpoints:
     GET  /mock/log           every message received (also appended to --log, one JSON object per line)
     POST /mock/reset         clear the log and reset the simulation
-    POST /mock/control       {"flight_mode", "scenario", "ws_mode": "normal"|"down"|"deaf", ...}
+    POST /mock/control       {"flight_mode", "scenario", "ws_mode": "normal"|"down"|"deaf", "extra_flags",
+                              "extra_latency": {"fc_battery_v": 3.9}, ...}
     POST /mock/candidates    push a Candidates message to the UI agent sockets
     GET  /mock/stats         connection counts
 
@@ -304,6 +305,7 @@ class Sim:
     drop_hb: bool = False            # ignore heartbeats (the governor would flag heartbeat_missing)
     land_cause: str = "operator"
     extra_flags: list[str] = field(default_factory=list)
+    extra_latency: dict[str, float] = field(default_factory=dict)   # e.g. the Lewei board's fc_battery_v
     frame_age_ms: Optional[float] = None   # override for screenshots/tests
     t0: float = field(default_factory=time.monotonic)
     last_tick: float = field(default_factory=time.monotonic)
@@ -510,7 +512,7 @@ class Sim:
         obs_age = None
         if subject is not None:
             obs_age = round((440 if ap == AP.doubt else 190) + 50 * math.sin(t * 1.3), 1)
-        latency = {"capture_to_backend": frame_age, "tick": 0.31}
+        latency = {"capture_to_backend": frame_age, "tick": 0.31, **self.extra_latency}
         if subject is not None and subject.detector_latency_ms is not None:
             latency["detector"] = subject.detector_latency_ms
         if self.mission is not None:
@@ -869,6 +871,8 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
             sim.pack_time_s[sim.pack_id] = float(body["pack_time_s"])
         if "extra_flags" in body:
             sim.extra_flags = list(body["extra_flags"])
+        if "extra_latency" in body:
+            sim.extra_latency = {str(k): float(v) for k, v in dict(body["extra_latency"]).items()}
         if "frame_age_ms" in body:
             sim.frame_age_ms = body["frame_age_ms"]
         if "time_offset_s" in body:  # move the synthetic subject to a chosen spot

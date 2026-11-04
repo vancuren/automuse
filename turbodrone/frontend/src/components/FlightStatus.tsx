@@ -83,6 +83,8 @@ export function PackTimer({
   }[level];
   const pct = Math.min(100, (t / PACK_LAND_S) * 100);
   const onGround = !stale && telemetry?.flight_state === "ON_GROUND";
+  // Lewei board only: the flight controller's own battery reading (informational, 0.1 V steps).
+  const volts = telemetry?.latency_ms?.fc_battery_v;
   return (
     <div className="flex items-center gap-2">
       <div
@@ -93,6 +95,15 @@ export function PackTimer({
       >
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Pack {pack}</span>
+          {typeof volts === "number" && Number.isFinite(volts) && (
+            <span
+              data-testid="fc-battery"
+              className={`font-mono text-sm font-bold ${stale ? "text-slate-500" : volts < 3.5 ? "text-amber-300" : "text-slate-200"}`}
+              title="battery voltage reported by the flight controller (Lewei board)"
+            >
+              {volts.toFixed(1)} V
+            </span>
+          )}
           <span className="font-mono text-xl font-bold">{fmtClock(t)}</span>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded bg-slate-800">
