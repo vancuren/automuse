@@ -127,7 +127,7 @@ function App() {
               gamepadConnected={controls.gamepadConnected}
             />
             <LatencyBars telemetry={tlm.telemetry} stale={tlm.stale} />
-            <SafetyFlags telemetry={tlm.telemetry} stale={tlm.stale} />
+            <SafetyFlags telemetry={tlm.telemetry} stale={tlm.stale} events={agent.events} />
           </div>
         </div>
 
@@ -137,6 +137,7 @@ function App() {
             partial={agent.partial}
             lines={agent.lines}
             agentStatus={agent.status}
+            health={agent.health}
             pttError={agent.pttError}
           />
           <MissionCard mission={mission} provisional={agentIsNewer} />

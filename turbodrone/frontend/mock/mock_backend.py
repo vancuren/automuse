@@ -96,6 +96,10 @@ AP_SCRIPT = [(AP.find, 3.0), (AP.confirm, 2.5), (AP.follow, 14.0), (AP.doubt, 2.
              (AP.follow, 8.0), (AP.lost, 2.0), (AP.search, 3.0), (AP.follow, 10.0)]
 LOOP_FROM = 2
 
+# The real agent re-sends this health report every 5 s as a status AgentEvent.
+AGENT_HEALTH = {"asr": "meta", "intent": "auto", "glimmer": "glimmer-30b+lora", "spark": "muse-spark-1.3",
+                "safety_listener": True, "backend_connected": True, "mic_rate": 24000, "mic_silent": False}
+
 # What the fake agent "hears" on each push-to-talk, in turn, and the intent it returns.
 UTTERANCES: list[tuple[str, Intent]] = [
     ("follow the person in the blue shirt",
@@ -600,25 +604,44 @@ class Hub:
         self.sim.utterance_idx += 1
         text, intent = UTTERANCES[idx]
         released = time.monotonic()
-        await self.send_agent(AgentEvent(kind="final", text=text))
+        await self.send_agent(AgentEvent(kind="final", text=text,
+                                         data={"model": "muse-voice-transcribe-1.0", "asr_ms": 610.0}))
         await self.send_agent(AgentEvent(kind="status", text="thinking: Glimmer-LoRA and Spark in parallel"))
         self.spawn(self._finish_mission(text, intent, idx, released))
 
     async def _finish_mission(self, text: str, intent: Intent, idx: int, released: float) -> None:
         await asyncio.sleep(random.uniform(0.9, 1.4))
         model = "muse-spark-1.3" if idx % 3 == 2 else "glimmer-30b+lora"
-        mission = self.sim.new_mission(text, intent, model, (time.monotonic() - released) * 1000)
-        await self.send_agent(AgentEvent(kind="intent", data=mission.model_dump(mode="json")))
-        await self.send_agent(AgentEvent(kind="reply", text=mission.reply))
+        latency_ms = round((time.monotonic() - released) * 1000, 1)
+        reason = "glimmer valid within 2.5 s" if model.startswith("glimmer") else "spark answered first"
+        # Same shape as the real agent: no mission_id here; the Mission goes to the backend.
+        await self.send_agent(AgentEvent(kind="intent", text=intent.action, data={
+            "intent": intent.model_dump(), "model": model, "latency_ms": latency_ms, "reason": reason,
+            "attempts": [], "transcript": text}))
+        mission = self.sim.new_mission(text, intent, model, latency_ms) if intent.action in ("follow", "hover", "land") else None
+        await self.send_agent(AgentEvent(kind="reply", text=mission.reply if mission else build_reply(intent)))
 
     async def sim_loop(self) -> None:
-        """10 Hz: step the simulation and broadcast Telemetry."""
+        """10 Hz: step the simulation, relay transitions like the backend hub does, broadcast Telemetry."""
         prev_ap = self.sim.autopilot_state
+        prev_fs = self.sim.flight_state
+        next_health = 0.0
         while True:
             self.sim.step()
-            if self.sim.scenario == "cycle" and self.sim.autopilot_state == AP.confirm and prev_ap != AP.confirm:
+            fs, ap = self.sim.flight_state, self.sim.autopilot_state
+            if fs != prev_fs:
+                await self.send_agent(AgentEvent(kind="status", text=f"flight {prev_fs.value} -> {fs.value}",
+                                                 data={"kind": "flight_state", "from": prev_fs.value, "to": fs.value}))
+            if ap != prev_ap:
+                await self.send_agent(AgentEvent(kind="status", text=f"autopilot {prev_ap.value} -> {ap.value} (mock)",
+                                                 data={"kind": "state", "from": prev_ap.value, "to": ap.value,
+                                                       "reason": "mock"}))
+            if self.sim.scenario == "cycle" and ap == AP.confirm and prev_ap != AP.confirm:
                 await self.push_candidates()
-            prev_ap = self.sim.autopilot_state
+            prev_ap, prev_fs = ap, fs
+            if time.monotonic() >= next_health:  # the agent's 5 s "agent alive" report
+                next_health = time.monotonic() + 5.0
+                await self.send_agent(AgentEvent(kind="status", text="agent alive", data=AGENT_HEALTH))
             tm = self.sim.telemetry()
             self.last_telemetry = tm
             text = tm.model_dump_json()
@@ -747,6 +770,7 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
         conn = hub.next_conn()
         if role == "ui":
             hub.agent_ui.add(ws)
+            await ws.send_text(AgentEvent(kind="status", text="agent ready", data=AGENT_HEALTH).model_dump_json())
         try:
             while True:
                 raw = await ws.receive_text()

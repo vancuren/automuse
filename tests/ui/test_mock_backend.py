@@ -14,7 +14,7 @@ import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from mhd.contracts import FRAME_H, FRAME_W, AgentEvent, Candidates, Mission, Telemetry
+from mhd.contracts import FRAME_H, FRAME_W, AgentEvent, Candidates, Intent, Telemetry
 
 MOCK_PATH = Path(__file__).resolve().parents[2] / "turbodrone/frontend/mock/mock_backend.py"
 spec = importlib.util.spec_from_file_location("mock_backend", MOCK_PATH)
@@ -100,16 +100,17 @@ def test_push_to_talk_produces_transcript_mission_and_reply(client):
     with client.websocket_connect("/ws/agent?role=ui") as ws:
         ws.send_text(json.dumps({"type": "agent_event", "kind": "ptt_down"}))
         ws.send_text(json.dumps({"type": "agent_event", "kind": "ptt_up"}))
-        kinds, mission = [], None
+        kinds, data = [], None
         while "reply" not in kinds:
             ev = AgentEvent.model_validate_json(ws.receive_text())
             kinds.append(ev.kind)
             if ev.kind == "intent":
-                mission = Mission.model_validate(ev.data)
+                data = ev.data  # the real agent's shape: intent, model, latency_ms, reason, transcript
     assert "final" in kinds and kinds.index("final") < kinds.index("intent") < kinds.index("reply")
-    assert mission.intent.subject_phrase == "person in blue shirt"
-    assert mission.model in ("glimmer-30b+lora", "muse-spark-1.3")
-    assert client.sim.mission.mission_id == mission.mission_id
+    intent = Intent.model_validate(data["intent"])
+    assert intent.subject_phrase == "person in blue shirt"
+    assert data["model"] in ("glimmer-30b+lora", "muse-spark-1.3") and data["latency_ms"] > 0
+    assert client.sim.mission.intent == intent and client.sim.mission.model == data["model"]
 
 
 def test_candidates_message_validates(client):

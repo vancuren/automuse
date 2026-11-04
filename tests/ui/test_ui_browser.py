@@ -366,3 +366,34 @@ def test_telemetry_loss_shows_unknown_and_locks_takeoff(ui, browser_ctx):
     assert page.is_disabled(sel("takeoff-btn"))
     assert page.is_enabled(sel("land-btn")) and page.is_enabled(sel("estop-btn"))
     page.close()
+
+
+# ── Agent and governor events ───────────────────────────────────────────────────────────────
+
+def test_agent_and_governor_events_go_to_the_right_place(ui, mock_backend):
+    ui.wait_for_selector(sel("agent-health"), timeout=3000)  # "agent ready" on connect
+    assert "listener on" in ui.inner_text(sel("agent-health"))
+    assert "agent alive" not in ui.inner_text(sel("transcript"))
+    assert "agent ready" not in ui.inner_text(sel("transcript"))
+
+    # A governor transition, as the backend hub relays it, lands in the Safety feed only.
+    mock_backend.control(agent_event={"type": "agent_event", "kind": "status",
+                                      "text": "autopilot FOLLOW -> DOUBT (obs_age)",
+                                      "data": {"kind": "state", "from": "FOLLOW", "to": "DOUBT"}})
+    ui.wait_for_selector(f'{sel("system-events")} >> text=FOLLOW -> DOUBT', timeout=2000)
+    assert "DOUBT" not in ui.inner_text(sel("transcript"))
+
+    # The local listener heard a safety word.
+    mock_backend.control(agent_event={"type": "agent_event", "kind": "safety_word", "text": "land",
+                                      "data": {"command": "land", "action": "land", "decode_ms": 140.0}})
+    ui.wait_for_selector(f'{sel("transcript")} >> text=heard “land” → land', timeout=2000)
+
+    # An intent from the agent (its real shape has no mission_id) shows before telemetry has it.
+    mock_backend.control(agent_event={"type": "agent_event", "kind": "intent", "text": "refuse", "data": {
+        "intent": {"action": "refuse", "subject_phrase": "", "category": "none", "color": "none",
+                   "distance": "medium", "reason_code": "identity_request"},
+        "model": "muse-spark-1.3", "latency_ms": 2310.0, "reason": "spark answered first",
+        "transcript": "follow my friend dave"}})
+    ui.wait_for_selector(f'{sel("model-badge")} >> text=muse-spark-1.3', timeout=2000)
+    assert "identity_request" in ui.inner_text(sel("intent-json"))
+    assert "2.31 s" in ui.inner_text(sel("mission-latency"))

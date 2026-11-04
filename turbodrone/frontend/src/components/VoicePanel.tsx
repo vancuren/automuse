@@ -1,4 +1,5 @@
-import type { VoiceLine } from "../hooks/useAgentLink";
+import { useEffect, useState } from "react";
+import type { AgentHealth, VoiceLine } from "../hooks/useAgentLink";
 import type { LinkStatus } from "../lib/reconnectingSocket";
 import Panel from "./Panel";
 
@@ -18,27 +19,49 @@ const KIND_LABEL: Record<string, string> = {
   status: "agent",
 };
 
+/** The agent re-sends its health every 5 s; silence for this long means it is gone. */
+const AGENT_SILENT_MS = 12000;
+
+/** Caption: is the agent alive, and is the always-on local stop/land listener running? */
+function HealthCaption({ agentStatus, health }: { agentStatus: LinkStatus; health: AgentHealth | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (agentStatus !== "open") return <span className="font-semibold text-red-300">voice link {agentStatus}</span>;
+  if (!health) return <span>waiting for the agent…</span>;
+  if (now - health.at > AGENT_SILENT_MS) return <span className="font-semibold text-amber-300">agent silent</span>;
+  if (health.micSilent) return <span className="font-semibold text-red-300">microphone silent: check permission</span>;
+  if (health.safetyListener === false) return <span className="font-semibold text-red-300">LOCAL STOP/LAND LISTENER OFF</span>;
+  return (
+    <span data-testid="agent-health">
+      agent alive · local stop/land listener {health.safetyListener ? "on" : "?"}
+      {health.asr ? ` · ASR ${health.asr}` : ""}
+      {health.intent ? ` · intent ${health.intent}` : ""}
+    </span>
+  );
+}
+
 /** Push-to-talk state and the live transcript (new). */
 export default function VoicePanel({
   ptt,
   partial,
   lines,
   agentStatus,
+  health,
   pttError,
 }: {
   ptt: boolean;
   partial: string;
   lines: VoiceLine[];
   agentStatus: LinkStatus;
+  health: AgentHealth | null;
   pttError: string | null;
 }) {
   const recent = lines.slice(-6);
   return (
-    <Panel
-      title="Voice"
-      testId="voice-panel"
-      caption={agentStatus === "open" ? "Muse Voice Transcribe · local stop/land listener" : `voice link ${agentStatus}`}
-    >
+    <Panel title="Voice" testId="voice-panel" caption={<HealthCaption agentStatus={agentStatus} health={health} />}>
       <div className="flex flex-col gap-1.5">
         <div
           data-testid="ptt-indicator"
@@ -58,6 +81,7 @@ export default function VoicePanel({
                 {KIND_LABEL[l.kind] ?? l.kind}
               </span>
               {l.text}
+              {l.meta && <span className="ml-2 font-mono text-[10px] text-slate-500">{l.meta}</span>}
             </div>
           ))}
           {partial && (

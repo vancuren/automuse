@@ -17,8 +17,30 @@ export interface VoiceLine {
   id: number;
   kind: AgentEvent["kind"];
   text: string;
+  meta?: string; // e.g. which ASR model and how long it took
   at: number; // Date.now(), display only
 }
+
+/** A governor or autopilot transition relayed by the backend as a status AgentEvent. */
+export interface SystemEvent {
+  id: number;
+  text: string;
+  at: number;
+}
+
+/** The agent's own health, from its periodic "agent alive" status event. */
+export interface AgentHealth {
+  text: string;
+  safetyListener: boolean | null;
+  asr: string | null;
+  intent: string | null;
+  micSilent: boolean;
+  at: number; // Date.now() of the last health message
+}
+
+/** Status events whose data.kind marks them as governor/autopilot events (backend hub). */
+const SYSTEM_EVENT_KINDS = new Set(["state", "flight_state", "announce", "safety"]);
+const MAX_EVENTS = 20;
 
 const MAX_LINES = 30;
 /** Candidate boxes are a snapshot of one frame: drop them before they drift far from the scene. */
@@ -44,9 +66,17 @@ export function useAgentLink() {
   const [candidatesAt, setCandidatesAt] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
 
-  const addLine = useCallback((kind: AgentEvent["kind"], text: string) => {
-    const line: VoiceLine = { id: nextId.current++, kind, text, at: Date.now() };
+  const [events, setEvents] = useState<SystemEvent[]>([]);
+  const [health, setHealth] = useState<AgentHealth | null>(null);
+
+  const addLine = useCallback((kind: AgentEvent["kind"], text: string, meta?: string) => {
+    const line: VoiceLine = { id: nextId.current++, kind, text, meta, at: Date.now() };
     setLines((prev) => [...prev.slice(-(MAX_LINES - 1)), line]);
+  }, []);
+
+  const addEvent = useCallback((text: string) => {
+    const ev: SystemEvent = { id: nextId.current++, text, at: Date.now() };
+    setEvents((prev) => [...prev.slice(-(MAX_EVENTS - 1)), ev]);
   }, []);
 
   useEffect(() => {
@@ -67,14 +97,41 @@ export function useAgentLink() {
         }
         if (!isAgentEvent(msg)) return;
         const text = msg.text ?? "";
+        const data = (msg.data ?? {}) as Record<string, unknown>;
         switch (msg.kind) {
           case "partial":
             setPartial(text);
             break;
-          case "final":
+          case "final": {
             setPartial("");
-            if (text) addLine("final", text);
+            const asrMs = typeof data.asr_ms === "number" ? ` · ${(data.asr_ms / 1000).toFixed(2)} s` : "";
+            const meta = typeof data.model === "string" ? `${data.model}${asrMs}` : undefined;
+            if (text) addLine("final", text, meta);
             break;
+          }
+          case "status":
+            if ("safety_listener" in data) {
+              // The agent's periodic health report: shown in the panel caption, not logged.
+              setHealth({
+                text: text || "agent alive",
+                safetyListener: typeof data.safety_listener === "boolean" ? data.safety_listener : null,
+                asr: typeof data.asr === "string" ? data.asr : null,
+                intent: typeof data.intent === "string" ? data.intent : null,
+                micSilent: data.mic_silent === true,
+                at: Date.now(),
+              });
+            } else if (typeof data.kind === "string" && SYSTEM_EVENT_KINDS.has(data.kind)) {
+              if (text) addEvent(text); // governor/autopilot transition: the Safety panel feed
+            } else if (text) {
+              addLine("status", text);
+            }
+            break;
+          case "safety_word": {
+            const cmd = typeof data.command === "string" ? ` → ${data.command}` : "";
+            const ms = typeof data.decode_ms === "number" ? `local listener · ${Math.round(data.decode_ms)} ms` : "local listener";
+            addLine("safety_word", `heard “${text}”${cmd}`, ms);
+            break;
+          }
           case "intent": {
             const m = missionFromIntentEvent(msg);
             if (m) {
@@ -85,8 +142,6 @@ export function useAgentLink() {
           }
           case "reply":
           case "error":
-          case "safety_word":
-          case "status":
             if (text) addLine(msg.kind, text);
             break;
           default:
@@ -100,7 +155,7 @@ export function useAgentLink() {
       sock.stop();
       sockRef.current = null;
     };
-  }, [addLine]);
+  }, [addLine, addEvent]);
 
   // Candidates expire so a stale picker never lingers over the video.
   useEffect(() => {
@@ -157,6 +212,8 @@ export function useAgentLink() {
     pttError,
     partial,
     lines,
+    events,
+    health,
     agentMission,
     agentMissionAt,
     candidates,
