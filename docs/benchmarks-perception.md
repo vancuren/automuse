@@ -253,7 +253,7 @@ On these frames the hosted model matches the MLX one. **Rate limits:** the team 
 workstreams were using the same key. The first unpaced S3 run was spoiled by the 5 s back-off
 that followed (recall near 0, discarded). On flight day, keep batch jobs off the key while
 `--detector sam_api` flies; a 429 costs 5 s of detections, and the autopilot then hovers.
-Spend for G2 via API: $0.31 (124 calls). Workstream total so far: $0.46.
+Spend for G2 via API: $0.31 (122 calls). Workstream total: $0.46 (183 images).
 
 ### Adaptive follow cadence (00:38 ET, Glimmer training on the GPU, twin Chrome not running)
 

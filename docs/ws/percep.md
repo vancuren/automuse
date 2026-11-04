@@ -88,7 +88,7 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
   re-seed, counter block. Pipeline: states, ties and Select, the color tie-break, loss, cadence,
   re-seed rejection, and the safety fixes. SAM API client: parsing, no retry on 400, cache,
   spend cap, deadline. WebSocket integration with the fake backend. Replay.
-- **Spend:** $0.46 of the $8 cap (185 sam-3.1 images).
+- **Spend:** $0.46 of the $8 cap (183 sam-3.1 images, per the ledger).
 
 ## Decisions made overnight (nobody to ask)
 
