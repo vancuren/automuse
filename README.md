@@ -80,6 +80,9 @@ agreed to be filmed, and it calls the person or thing it follows the *subject*.
 
 ### Meta models
 
+Six Meta models: three through the Meta Model API and four as open weights on the laptop (SAM 3.1
+runs both ways), one of them fine-tuned by us.
+
 | Model | ID | Runs on | Role |
 |---|---|---|---|
 | Muse Voice Transcribe | `muse-voice-transcribe-1.0` | Meta Model API, realtime WebSocket | push-to-talk speech to text |
@@ -217,8 +220,8 @@ $MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000 --intent auto \
 Session A first, then `scripts/run_backend.sh --mode real`, a production UI build, ARM, and a second
 person on LAND and E-STOP. Never fly near people who have not agreed to it.
 
-**Tests:** `$MHD_PY -m pytest tests/gov tests/twin tests/train tests/ui` and
-`$MHD_ML_PY -m pytest tests/percep tests/agent`.
+**Tests:** `$MHD_PY -m pytest tests/gov tests/twin tests/train tests/ui tests/docs` and
+`$MHD_ML_PY -m pytest tests/percep tests/agent`. Before publishing: `$MHD_PY scripts/secret_scan.py`.
 
 ## Built during the event vs. reused
 
