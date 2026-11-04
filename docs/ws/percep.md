@@ -84,7 +84,7 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
 - **The color gate.** With the red walker off screen, "person in red shirt" boxes the blue
   walker (score 0.47-0.72). Candidates whose shirt region matches the requested color in less
   than 8% of its pixels are now dropped: 34 false alarms -> 0, no true detection lost.
-- **Tests.** `tests/percep`: 51 passed. Fusion: Kalman timing, color score, association,
+- **Tests.** `tests/percep`: 54 passed. Fusion: Kalman timing, color score, association,
   re-seed, counter block. Pipeline: states, ties and Select, the color tie-break, loss, cadence,
   re-seed rejection, and the safety fixes. SAM API client: parsing, no retry on 400, cache,
   spend cap, deadline. WebSocket integration with the fake backend. Replay.
@@ -110,7 +110,10 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
    stays fixed until the set is re-sent (every 2 s at most). Perception then reports "candidate"
    with no box until a `Select`. It never picks for the user.
 8. Detector cadence: 2 Hz while searching, candidate, lost, or in doubt (tracker score < 0.5, a
-   rejected re-seed, or a detection that missed the subject); 1 Hz while following.
+   rejected re-seed, or a detection that missed the subject). While following: at most 1 Hz, and
+   faster when the detector is slow, so that `confirm_age_ms` stays under about 1.3 s
+   (period = 1300 ms - detector p95, never faster than 2 Hz). Under GPU load this keeps every
+   frame under the autopilot's 1.5 s forward-motion gate (measured: max 1467 ms).
 9. The counter block is masked only on frames whose `flight_mode` is "twin" (`--mask-counter auto`).
 10. `confirm_age_ms` is measured from the capture time of the frame the detector saw, not from
    when its result arrived. Detector latency therefore counts as age, as it should.
@@ -146,9 +149,15 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
    - `tracker_score` comes from VitTrack (0..1). It is 0 on a frame where the tracker missed and
      the box is the Kalman prediction. Below 0.5 is "doubt".
    - `track_id` changes on every new track. A re-find always gets a new id, so it goes through CONFIRM.
-   - `confirm_age_ms` cycles roughly 0.3-1.3 s (idle GPU, 1 Hz) or 0.6-1.7 s (GPU shared with
-     Glimmer training). The 1.5 s forward-motion rule will intermittently block forward motion
-     under GPU load; use `--follow-hz 1.5` there.
+   - `confirm_age_ms` stays under about 1.3-1.5 s while following: measured max 1467 ms with the
+     GPU shared with Glimmer training. The cadence adapts to detector latency, so the 1.5 s
+     forward-motion gate holds.
+   - Measured against the gov autopilot's thresholds (config/autopilot.yaml in ws/gov):
+     - VitTrack `tracker_score` p5 / p50 is 0.54 / 0.71 on the live composite run and 0.52 / 0.63
+       on twin S1. It is under `follow_min_score` 0.4 in 0-4% of frames (14% for the close, fast
+       red walker in S2 at 3.1 fps).
+     - Frame-to-frame width ratio is at most 1.26 (limit 1.6); center jumps are at most 32 px
+       (limit 320).
    - Detector p95 for the autopilot's timing formulas: about 250 ms (MLX 672, idle), 700 ms (MLX
      672 under load), 1.3 s (API p95 round trip; 2.5 s deadline).
 4. **HFOV:** pass `--hfov-deg` (or set `MHD_HFOV_DEG`) to the Session A value. Perception only

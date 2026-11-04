@@ -44,7 +44,10 @@ class PerceptionConfig:
     min_score: float = 0.4            # detector confidence needed to be a candidate (PLAN 4.3)
     tie_ratio: float = 0.85           # 2nd-best rank >= this x best rank -> look-alikes tie
     find_period_ms: float = 500.0     # detector at 2 Hz while finding, candidate, lost or in doubt
-    follow_period_ms: float = 1000.0  # 1 Hz while following a confirmed, healthy track
+    follow_period_ms: float = 1000.0  # at most 1 Hz while following a confirmed, healthy track
+    max_confirm_age_ms: float = 1300.0  # while following, detect often enough that confirm_age
+                                        # stays under this (the autopilot gates forward motion
+                                        # at 1.5 s): period = this - detector p95
     doubt_score: float = 0.5          # tracker score below this -> detector back at 2 Hz
     lost_score: float = 0.15          # tracker score below this counts as a miss
     lost_frames: int = 3              # consecutive misses before the track is reported lost
@@ -153,6 +156,7 @@ class PerceptionCore:
         self.last_det_submit_ms = -1e18
         self._latest: Optional[tuple[FrameMeta, np.ndarray]] = None
         self._track_seq = 0
+        self._det_latency: deque = deque(maxlen=20)      # recent detector latencies, ms
         self.stats = {"frames": 0, "detections": 0, "reseed_ok": 0, "reseed_rejected": 0,
                       "tracks_started": 0, "candidates_sent": 0}
 
@@ -293,7 +297,16 @@ class PerceptionCore:
         following = (tr is not None and not tr.lost and tr.n_confirms >= self.cfg.confirm_needed
                      and tr.last_score >= self.cfg.doubt_score
                      and tr.reject_streak == 0 and tr.det_misses == 0)
-        return self.cfg.follow_period_ms if following else self.cfg.find_period_ms
+        if not following:
+            return self.cfg.find_period_ms
+        # Just before a result lands, confirm_age is about period + detector latency; keep its
+        # worst case near max_confirm_age_ms, but never detect faster than the find rate.
+        if self._det_latency:
+            lat = sorted(self._det_latency)
+            p95 = lat[min(len(lat) - 1, int(math.ceil(0.95 * len(lat))) - 1)]
+            period = self.cfg.max_confirm_age_ms - p95
+            return min(self.cfg.follow_period_ms, max(self.cfg.find_period_ms, period))
+        return self.cfg.follow_period_ms
 
     def detection_due(self, now_ms: float) -> Optional[DetJob]:
         """A detector job for the newest frame if it is time and none is in flight."""
@@ -343,6 +356,8 @@ class PerceptionCore:
         """Fuse a detector result for job's frame (captured earlier). Returns [Candidates] or []."""
         with self.lock:
             self.det_inflight = False
+            if latency_ms is not None:
+                self._det_latency.append(float(latency_ms))
             if self.mission is None or job.mission_id != self.mission.mission_id:
                 return []                         # from an old mission
             self.stats["detections"] += 1

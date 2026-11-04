@@ -278,3 +278,24 @@ def test_wrong_color_detection_never_becomes_a_track():
     obs = [m for m in msgs if m.type == "subject_obs"]
     assert all(o.state == SubjectState.searching and o.box is None for o in obs)
     assert core.stats.get("color_rejected", 0) >= 2
+
+
+@pytest.mark.parametrize("latency, expected", [(200.0, 1000.0), (700.0, 600.0), (1200.0, 500.0)])
+def test_follow_cadence_adapts_to_detector_latency(latency, expected):
+    """Following: period = max_confirm_age (1.3 s) - detector p95, between 2 Hz and 1 Hz."""
+    core = _core()
+    scene = Scene([Person(500, 200, shirt=BLUE)])
+    core.on_find(FindRequest(mission_id="cad", subject_phrase="person", category="person"))
+    pending = []
+    for i in range(80):
+        img, boxes = scene.frame(i)
+        t = i * 1000.0 / FPS
+        core.on_frame(_meta(i, t), img)
+        job = core.detection_due(t)
+        if job is not None:
+            pending.append(job)
+        for j in list(pending):
+            core.on_detection(j, truth_dets(boxes), latency_ms=latency, now_ms=t)
+            pending.remove(j)
+    assert core.track.n_confirms >= 2
+    assert core.detector_period_ms() == pytest.approx(expected)
