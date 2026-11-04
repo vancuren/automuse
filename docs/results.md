@@ -196,9 +196,20 @@ hard: a closed loop with a REAL-mode governor, the base configs, and the plant's
   - the drone was at 0.13-0.25 m/s;
   - the walker's gait swung the true box between 68 and 145 px.
 
-  So the twin's pitch size threshold is now 12 % (`config/twin/governor.yaml`, marked TWIN). The
-  real drone keeps 6 %. The twin's pitch sign is correct by construction, and `twin_only` keeps the
-  file away from the real drone.
+  The twin's pitch size threshold went to 12 %. A third take at 05:10 still tripped, for a different
+  reason: the drone was closing in (true distance 6.20 to 5.80 m), but the walker turned and its box
+  narrowed from about 90 to 70 px. Box width is the check's distance cue, and a turning walker fools
+  it. That is the "turn to profile" weakness review 3 found in the other direction; a height-based
+  check would need its own review.
+
+  So the twin config (`config/twin/governor.yaml`, marked TWIN) now uses the earlier twin tuning:
+  12 % and the near-cap requirement (0.7). The real drone keeps 6 % and no near-cap requirement. The
+  twin's pitch sign is correct by construction, and `twin_only` keeps the file away from the real
+  drone.
+- **A clean take on the final code:** a fourth take at 05:15 (`logs/demo-20261104-051519-s1-final4`,
+  `media/demo/demo-s1-final4-20261104-051519-{ui,chase}.mp4`) followed for 100 % of the 36.6 s follow
+  window, locked 99.6 %, with bearing RMS 0.095 rad and no wrong-way hover. After the spoken land
+  the autopilot noticed the loss but said nothing, and touchdown ended the mission.
 
 ### 1d. The whole chain with voice (demo takes)
 
@@ -536,7 +547,7 @@ The real drone's camera latency is measured in Session A with the screen counter
 
 Source: [docs/ws/gov.md](ws/gov.md).
 
-**Tests.** `tests/gov`: 220 tests, all passing on `integration` at 04:56 ET (185 at 03:10). At the
+**Tests.** `tests/gov`: 224 tests, all passing on `integration` at 05:27 ET (185 at 03:10). At the
 end of the review-fix pass (02:20 ET) there were 179:
 
 | Group | Tests |
@@ -613,11 +624,11 @@ What review 3 checked, with the probe on and with it off:
 
 ## 7. Test suites and spend
 
-Tests on `integration`, all passing at 04:56 ET (`logs/tests-20261104-044601/`):
+Tests on `integration`, all passing: governor, twin, UI, ops and docs at 05:27 ET on the final code (`logs/tests-final-051850/`), the rest at 04:56 (`logs/tests-20261104-044601/`):
 
 | Suite | Tests | Run with |
 |---|---|---|
-| governor and autopilot (`tests/gov`) | 220 | `$MHD_PY -m pytest tests/gov -q -p no:logging` |
+| governor and autopilot (`tests/gov`) | 224 | `$MHD_PY -m pytest tests/gov -q -p no:logging` |
 | voice agent (`tests/agent`) | 200 (plus 2 opt-in real-API tests) | `$MHD_ML_PY -m pytest tests/agent -q` |
 | twin (`tests/twin`) | 65 | `$MHD_PY -m pytest tests/twin -q` |
 | UI (`tests/ui`) | 89, plus 6 against the real governed backend (run that module on its own: `UI_GOV_TREE=$MHD_TREE $MHD_PY -m pytest tests/ui/test_ui_gov_backend.py`) | `$MHD_PY -m pytest tests/ui` |

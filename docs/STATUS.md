@@ -1,6 +1,6 @@
 # Status for the morning
 
-Last updated: 2026-11-04 05:05 ET. Deadline: 2026-11-04 21:00 ET (submit by 19:00).
+Last updated: 2026-11-04 05:30 ET. Deadline: 2026-11-04 21:00 ET (submit by 19:00).
 Everything is merged on `integration`, and `main` matches it.
 - Your step-by-step morning guide: **docs/RUNBOOK.md**.
 - The submission checklist: **docs/SUBMISSION.md**.
@@ -30,18 +30,18 @@ The final reviewer's verdict is "safe with conditions" for forward-only follow:
 | Follow "person in blue shirt" (S1), final code | following 100% of the time; lock 95.3%; bearing RMS 0.103 rad; 0 identity switches; mission to FOLLOW 1.6 s |
 | Blue and red shirts crossing (S2) | following 90% (brief DOUBT/CONFIRM at a track change); lock 96.8%; 2.5% of frames on the red walker |
 | Follow "green car" (S3) | following 100%; lock 96.0%; bearing RMS 0.127 rad; 0 switches |
-| Safety in the twin | S1-S3 ran with the real thresholds: 0 wrong-way hovers. Two demo takes (05:01, 05:06) false-tripped the strict pitch check: the 0.3 m/s walker pulled away while the drone accelerated. The twin now uses 12 % for that one threshold (real: 6 %, marked TWIN). |
-| Recorded demo takes | voice, then Glimmer, then SAM, then follow, then voice land. Seven takes in `media/demo/`, recommended S1 `demo-s1-20261104-033642`, S2 `demo-s2-20261104-032802`, S3 `demo-s3-20261104-034231`. They were recorded at 03:24-03:51, before the safety changes, so cut each at touchdown (docs/video_script.md). |
+| Safety in the twin | S1-S3 ran with the real thresholds: 0 wrong-way hovers. Two demo takes (05:01, 05:06) false-tripped the strict pitch check: the 0.3 m/s walker pulled away while the drone accelerated. A third (05:10) tripped because the walker turned and its box narrowed while the drone closed in. The twin config now uses the earlier twin tuning for this check: 12 % and a near-cap requirement (real: 6 % and none, marked TWIN). |
+| Recorded demo takes | voice, then Glimmer, then SAM, then follow, then voice land. **New S1 take on the final code: `media/demo/demo-s1-final4-20261104-051519-ui.mp4` (and `-chase.mp4`)**: following 100% of the follow window, locked 99.6%, bearing RMS 0.095 rad, no wrong-way hover, silent landing, mission ended at touchdown. The earlier takes (S2 `demo-s2-20261104-032802`, S3 `demo-s3-20261104-034231`) predate the safety changes; cut those at touchdown (docs/video_script.md). |
 | Fine-tuned Muse Glimmer (LoRA) | 98.0% action accuracy on 300 held-out commands, 100% on 80 hand-written ones; base Glimmer 93.7%; Spark 1.3 95.3%; 3.6 s on this Mac |
 | Voice | Voice Transcribe about 0.23 s after you stop talking; local stop/land listener 18/18, 0 false triggers |
 | Morning tools | `scripts/preflight.py`, `scripts/session_a.py`, `scripts/apply_sysid.py`, `scripts/make_aruco.py`, `scripts/run_stack.sh` |
 | Docs | README, docs/results.md, docs/video_script.md, licenses and notices, secret scan |
 
-Tests on `integration`, all passing at 04:56 ET (718 in total):
+Tests on `integration`, all passing (733 in total; governor, twin, UI, ops and docs re-run at 05:27 ET on the final code, the rest at 04:56):
 
 | Suite | Passed |
 |---|---|
-| governor | 220 |
+| governor | 224 |
 | twin | 65 |
 | UI | 90, plus 6 against the real backend |
 | perception | 60 |
@@ -49,7 +49,7 @@ Tests on `integration`, all passing at 04:56 ET (718 in total):
 | training | 38 |
 | contracts | 6 |
 | upstream X69 | 20 |
-| morning tools | 14 |
+| morning tools | 14, plus 3 full-stack runs against the twin |
 | docs | 5 |
 
 ## Your morning, in order (details in docs/RUNBOOK.md)
