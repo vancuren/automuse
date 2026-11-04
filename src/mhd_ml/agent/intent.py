@@ -220,7 +220,8 @@ UNSAFE_WORDS = {"stalk", "stalking", "spy", "spying", "surveil", "surveillance",
 UNSAFE_PHRASES = ("follow her home", "follow him home", "follow them home", "through the window",
                   "into the window", "fly at", "fly into", "crash into", "without them knowing",
                   "without her knowing", "without him knowing", "secretly")
-UNSUPPORTED_PHRASES = ("take off", "takeoff", "lift off", "liftoff", "flip", "barrel roll", "spin",
+UNSUPPORTED_PHRASES = ("take off", "takeoff", "lift off", "liftoff", "flip", "backflip", "frontflip",
+                       "somersault", "barrel roll", "spin",
                        "do a trick", "fly higher", "go higher", "go up", "go down", "fly lower",
                        "come back", "return home", "go home", "take a picture", "take a photo",
                        "take a selfie", "turn left", "turn right", "fly to", "go to", "fly over",
@@ -454,7 +455,9 @@ class ChatIntentClient:
             h["Accept"] = "text/event-stream"
         return h
 
-    async def infer(self, transcript: str) -> IntentAttempt:
+    async def infer(self, transcript: str, drain: bool = False) -> IntentAttempt:
+        """drain=True (benchmarks only): keep reading after the JSON is complete so the final usage
+        chunk arrives; latency_ms still marks the moment the JSON was complete."""
         import httpx
 
         t0 = time.monotonic()
@@ -478,7 +481,7 @@ class ChatIntentClient:
                                      None if intent else "invalid intent JSON", _ms(t0), repaired, usage)
 
             async def run_stream():
-                nonlocal content, ttft, usage
+                nonlocal content, ttft, usage, done_at
                 async with client.stream("POST", url, json=body, headers=headers) as r:
                     if r.status_code != 200:
                         err = (await r.aread()).decode("utf-8", "replace")[:300]
@@ -501,15 +504,18 @@ class ChatIntentClient:
                                 if ttft is None:
                                     ttft = _ms(t0)
                                 content += piece
-                        if content and _complete_json_prefix(content):
+                        if done_at is None and content and _complete_json_prefix(content):
                             intent, repaired = parse_model_output(content)
                             if intent is not None:
-                                return intent, repaired, None
+                                done_at = _ms(t0)
+                                if not drain:
+                                    return intent, repaired, None
                 intent, repaired = parse_model_output(content)
                 return intent, repaired, None if intent else "invalid intent JSON"
 
+            done_at = None
             intent, repaired, err = await asyncio.wait_for(run_stream(), timeout=self.cfg.timeout_s)
-            return IntentAttempt(self.name, intent, _ms(t0), content, err, ttft, repaired, usage)
+            return IntentAttempt(self.name, intent, done_at or _ms(t0), content, err, ttft, repaired, usage)
         except asyncio.TimeoutError:
             return IntentAttempt(self.name, None, _ms(t0), content, "timeout", ttft, False, usage)
         except asyncio.CancelledError:

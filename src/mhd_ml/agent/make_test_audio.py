@@ -75,6 +75,16 @@ COMMAND_CASES = [
     ("c08", "follow John", "refuse", ""),
     ("c09", "follow him", "clarify", ""),
     ("c10", "follow the man in the black hoodie from far away", "follow", "man in black hoodie"),
+    ("c11", "follow the cyclist in the orange vest", "follow", "cyclist in orange vest"),
+    ("c12", "track the white truck", "follow", "white truck"),
+    ("c13", "who is that guy in the red hat", "refuse", ""),
+    ("c14", "do a backflip", "refuse", ""),
+    ("c15", "keep the camera on the girl in the pink dress", "follow", "girl in pink dress"),
+    ("c16", "follow the gray cat", "follow", "gray cat"),
+    ("c17", "stop", "hover", ""),
+    ("c18", "follow the person wearing a yellow raincoat", "follow", "person in yellow raincoat"),
+    ("c19", "can you follow the black dog", "follow", "black dog"),
+    ("c20", "follow the guy with the green backpack", "follow", "man with green backpack"),
 ]
 
 PAD_BEFORE_S = 0.5
