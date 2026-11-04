@@ -135,6 +135,7 @@ class AgentService:
         self.missions: list[Mission] = []
         self.safety_hits: list[dict] = []
         self.stopped = asyncio.Event()
+        self._started_mono = time.monotonic()
 
     # ---- setup --------------------------------------------------------------------------------
     def _build_asr(self):
@@ -189,6 +190,7 @@ class AgentService:
 
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
+        self._started_mono = time.monotonic()
         self.link = BackendLink(self.cfg.get("backend", "ws://127.0.0.1:8000"), on_message=self._on_message)
         await self.link.start()
         self.router = self._build_router()
@@ -221,7 +223,16 @@ class AgentService:
                 "spark": self.router.spark.name if self.router and self.router.spark else None,
                 "safety_listener": bool(self._safety_thread and self._safety_thread.is_alive()),
                 "backend_connected": bool(self.link and self.link.connected),
-                "mic_rate": self.hub.sample_rate, "mic_silent": self.hub.suspect_no_permission}
+                "mic_rate": self.hub.sample_rate, "mic_silent": self.mic_silent()}
+
+    def mic_silent(self) -> bool:
+        """True when the listener cannot be hearing anything: macOS delivering exact zeros (no
+        Microphone permission), or a real mic that has delivered no audio for 3 s (failed to open,
+        unplugged). Dry runs without a mic (--no-mic) only report the permission case."""
+        if self.hub.suspect_no_permission:
+            return True
+        return self.start_mic and self.hub.seconds_since_audio() > 3.0 and \
+            (time.monotonic() - self._started_mono) > 3.0
 
     async def _keep_model_connections_warm(self, period_s: float = 60.0) -> None:
         """Open the HTTPS connections to Spark / Glimmer now and keep them open (GET /models is free),
@@ -259,13 +270,19 @@ class AgentService:
         log.info("safety listener running")
 
     async def _mic_watchdog(self) -> None:
-        warned = False
+        warned_zero = warned_none = False
         while not self.stopped.is_set():
             await asyncio.sleep(1.0)
-            if self.hub.suspect_no_permission and not warned:
-                warned = True
+            if self.hub.suspect_no_permission and not warned_zero:
+                warned_zero = True
                 await self.emit("error", "The microphone is delivering pure silence: grant Microphone "
                                          "permission to this terminal app (System Settings > Privacy).")
+            elif self.mic_silent() and not self.hub.suspect_no_permission and not warned_none:
+                warned_none = True
+                await self.emit("error", "No audio from the microphone: voice commands and the safety "
+                                         "listener cannot hear. Check the input device (mic_check --list).")
+            elif not self.mic_silent():
+                warned_zero = warned_none = False
 
     def _spawn(self, coro, background: bool = False) -> asyncio.Task:
         t = asyncio.create_task(coro, name=("bg-" if background else "") + getattr(coro, "__name__", "task"))

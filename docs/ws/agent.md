@@ -285,7 +285,9 @@ Spend for this workstream: about **$0.22** of the $3 cap (every batch logged in 
   AgentEvents. Verified end to end by `scripts/agent/integration_smoke.py`.
 - **UI:** already sends `{"type":"agent_event","kind":"ptt_down"|"ptt_up"}` on `/ws/agent?role=ui` and
   reads the agent's events. Event payloads the agent emits:
-  - `status` every 5 s: `data = {asr, intent, glimmer, spark, safety_listener, backend_connected, mic_rate, mic_silent}`
+  - `status` every 5 s: `data = {asr, intent, glimmer, spark, safety_listener, backend_connected, mic_rate, mic_silent}`;
+    `mic_silent` is true when macOS delivers exact zeros (no permission) or a live mic delivered no
+    audio for 3 s; show it loudly, because then neither push-to-talk nor the safety listener can hear.
   - `partial` (text), `final` (text, `data.model`, `data.asr_ms`, `data.details`)
   - `intent` (text = action, `data = {intent, model, latency_ms, reason, attempts, transcript, reply, mission_id}`)
   - `reply` (text), `error` (text), `safety_word` (text = word, `data = {command, action, transcript, kind, decode_ms}`)

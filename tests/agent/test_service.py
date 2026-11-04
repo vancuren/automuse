@@ -461,3 +461,25 @@ def test_hanging_voice_transcribe_falls_back_after_two_seconds(backend, llm, aud
     assert svc._fallback_s < 5.0
     final = [e for e in svc.events if e["kind"] == "final"][-1]
     assert final["data"]["model"] == "omnilingual-ctc-300m"
+
+
+def test_dead_microphone_is_reported(backend, llm):
+    """A mic that never delivers audio: status says mic_silent and an error event explains it."""
+    asr = FakeRealtimeASR(port=ASR_PORT).start()
+    try:
+        async def go():
+            hub = MicHub(sample_rate=24000)
+            hub.start = lambda: None                      # "opens" but never delivers audio
+            svc = AgentService(make_cfg(asr.url), hub=hub, start_mic=True, speaker=RecordingSpeaker())
+            await svc.start()
+            assert not svc.status()["mic_silent"]         # grace period at startup
+            await asyncio.sleep(4.2)
+            st = svc.status()
+            await svc.stop()
+            return svc, st
+
+        svc, st = asyncio.run(go())
+    finally:
+        asr.stop()
+    assert st["mic_silent"] is True
+    assert any(e["kind"] == "error" and "No audio from the microphone" in e["text"] for e in svc.events)

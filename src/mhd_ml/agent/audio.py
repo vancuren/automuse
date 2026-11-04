@@ -141,6 +141,7 @@ class MicHub:
         self._zero_run_s = 0.0
         self.suspect_no_permission = False
         self.overflows = 0
+        self.last_audio_mono = 0.0
 
     def start(self) -> None:
         import sounddevice as sd  # lazy: only the live mic path touches audio hardware
@@ -189,8 +190,13 @@ class MicHub:
             self.suspect_no_permission = False
         self.publish(x)
 
+    def seconds_since_audio(self) -> float:
+        """How long since the last chunk arrived (inf if none ever did)."""
+        return time.monotonic() - self.last_audio_mono if self.last_audio_mono else float("inf")
+
     def publish(self, x: np.ndarray) -> None:
         """Deliver one float chunk to every subscriber (also used to inject audio in tests)."""
+        self.last_audio_mono = time.monotonic()
         self._ring.append(x)
         with self._lock:
             subs = list(self._subs)
