@@ -91,9 +91,8 @@ else built Nov 3-4."
 
 - [ ] Everything merged to `main` (the integrator's job), tests green.
 - [ ] README: replace the status line with the real-flight result, add the video link
-      (`VIDEO_LINK`), replace `OWNER/REPO`, and drop "being written tonight" once docs/RUNBOOK.md
-      exists. Check with
-      `grep -n "OWNER/REPO\|VIDEO_LINK\|being written tonight" README.md` (no output when done).
+      (`VIDEO_LINK`), and replace `OWNER/REPO`. Check with
+      `grep -n "OWNER/REPO\|VIDEO_LINK" README.md` (no output when done).
       The drafts on this page also say `OWNER/REPO`: fill it in when you paste them.
 - [ ] Every image in the README loads: `ls docs/img/demo_s1_2_voice_mission_follow.png
       docs/img/demo_s1_chase_follow.png docs/img/demo_s2_crossing_follow.png` (from the demo
