@@ -1,0 +1,33 @@
+[project]
+name = "mhd-ml"
+version = "0.1.0"
+description = "On-device Meta models: SAM 3.1 (MLX) perception, Muse Glimmer (MLX), Omnilingual ASR, MMS-TTS, and the voice agent"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "mlx>=0.32",
+  "mlx-vlm==0.7.11",
+  "mlx-lm>=0.32.2",
+  "sherpa-onnx>=2.0.1",
+  "soundfile",
+  "sounddevice",
+  "transformers>=5.14",
+  "torch>=2.12",
+  "numpy>=2",
+  "opencv-contrib-python==5.0.0.93",
+  "meta-sam-parser>=0.1.0",
+  "pydantic>=2.7",
+  "websockets>=13",
+  "httpx>=0.27",
+  "openai>=1.40",
+  "huggingface_hub>=0.30",
+  "pyyaml",
+  "pytest>=8",
+  "pillow",
+]
+
+[tool.uv]
+package = false
+override-dependencies = [
+  "opencv-python; sys_platform == 'never'",
+  "opencv-python-headless; sys_platform == 'never'",
+]
