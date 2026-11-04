@@ -1,0 +1,10 @@
+{
+  "name": "mhd-twin-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Three.js renderer for the X69 digital twin (drone camera and chase view).",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "three": "^0.180.0"
+  }
+}

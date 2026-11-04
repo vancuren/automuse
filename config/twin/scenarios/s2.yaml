@@ -1,0 +1,44 @@
+# S2: a blue shirt and a red shirt cross in front of the drone (PLAN.md 4.2).
+# The red-shirt walker passes between the drone and the blue-shirt subject, so the subject is
+# briefly occluded: an identity-switch test.
+name: s2
+description: Blue and red shirts walk in opposite directions and cross in front of the drone.
+world:
+  ground: {kind: grass, size_m: 60, texture: 0.9}
+  bounds: [-6.5, -2.5, 6.5, 10.5]
+  sky: day
+  sun: {azimuth_deg: 220, elevation_deg: 45}
+  walls:
+    - {x1: -7, y1: 11, x2: 7, y2: 11, height: 3.2, color: "#cfd6dc", kind: house}
+    - {x1: -7, y1: -3, x2: -7, y2: 11, height: 1.7, color: "#7d5f43", kind: fence}
+    - {x1: 7, y1: -3, x2: 7, y2: 11, height: 1.7, color: "#7d5f43", kind: fence}
+    - {x1: -7, y1: -3, x2: 7, y2: -3, height: 1.7, color: "#7d5f43", kind: fence}
+  trees:
+    - {x: -5.6, y: 9.2, height: 5.0, radius: 1.6}
+    - {x: 5.0, y: 8.4, height: 4.4, radius: 1.4}
+    - {x: 5.6, y: -1.4, height: 4.0, radius: 1.3}
+  props:
+    - {kind: bench, x: -3.4, y: 9.8, heading_deg: 180}
+    - {kind: planter, x: 0.0, y: 10.4}
+drone: {x: 0.0, y: 0.0, yaw_deg: 0.0}
+actors:
+  - id: walker_blue
+    kind: person
+    label: person in blue shirt
+    colors: {shirt: "#1f4fc4", pants: "#262626", skin: "#8d5a3b", hair: "#120c08", shoes: "#e8e8e8"}
+    height_m: 1.72
+    speed_mps: 0.3
+    mode: pingpong
+    pause_s: 1.0
+    start_s: 1.0
+    path: [[-3.0, 5.0], [3.0, 5.0]]
+  - id: walker_red
+    kind: person
+    label: person in red shirt
+    colors: {shirt: "#c62828", pants: "#4a4a4a", skin: "#e0b9a0", hair: "#6b4a2b", shoes: "#3a2a1a"}
+    height_m: 1.80
+    speed_mps: 0.3
+    mode: pingpong
+    pause_s: 1.0
+    start_s: 1.0
+    path: [[3.0, 3.6], [-3.0, 3.6]]

@@ -1,0 +1,35 @@
+# S1: one walker in a blue shirt on a backyard lawn (PLAN.md 4.2).
+# World frame: x east, y north, z up (meters). The drone starts at the origin facing north (+y).
+name: s1
+description: One walker in a blue shirt loops slowly across a backyard lawn in front of the drone.
+world:
+  ground: {kind: grass, size_m: 60, texture: 0.9}
+  bounds: [-6.5, -2.5, 6.5, 10.5]           # where the drone can fly (fences and house)
+  sky: day
+  sun: {azimuth_deg: 135, elevation_deg: 50}
+  walls:
+    - {x1: -7, y1: 11, x2: 7, y2: 11, height: 3.2, color: "#d9cdb4", kind: house}
+    - {x1: -7, y1: -3, x2: -7, y2: 11, height: 1.7, color: "#8b6a48", kind: fence}
+    - {x1: 7, y1: -3, x2: 7, y2: 11, height: 1.7, color: "#8b6a48", kind: fence}
+    - {x1: -7, y1: -3, x2: 7, y2: -3, height: 1.7, color: "#8b6a48", kind: fence}
+  trees:
+    - {x: -5.2, y: 8.6, height: 4.6, radius: 1.5}
+    - {x: 5.4, y: 9.0, height: 5.2, radius: 1.7}
+    - {x: -5.0, y: -1.6, height: 4.0, radius: 1.3}
+    - {x: 5.2, y: 2.5, height: 3.6, radius: 1.1}
+  props:
+    - {kind: bench, x: 3.6, y: 9.6, heading_deg: 180}
+    - {kind: planter, x: -2.5, y: 10.4}
+    - {kind: planter, x: 2.0, y: 10.4}
+drone: {x: 0.0, y: 0.0, yaw_deg: 0.0}
+actors:
+  - id: walker_blue
+    kind: person
+    label: person in blue shirt
+    colors: {shirt: "#1f4fc4", pants: "#b8a582", skin: "#c58c6d", hair: "#2b1d14", shoes: "#2a2a2a"}
+    height_m: 1.76
+    speed_mps: 0.3
+    mode: loop
+    pause_s: 1.5
+    start_s: 2.0
+    path: [[-2.4, 4.0], [2.4, 4.4], [2.0, 6.6], [-2.0, 6.2]]
