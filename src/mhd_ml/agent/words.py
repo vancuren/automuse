@@ -41,10 +41,14 @@ NEAR_MISSES = {
 }
 
 # Inflections that mean the same thing as their safety word (exact match only).
-EXTRA_EXACT = {
-    "landed": "land", "landin": "land", "aboard": "land", "abord": "land", "aborting": "land",
-    "stopping": "hover", "stob": "hover", "stap": "hover", "stalk": "hover", "stog": "hover",
-    "hovering": "hover", "preeze": "hover", "preese": "hover", "freese": "hover", "freez": "hover",
+INFLECTIONS = {"landed": "land", "aborting": "land", "stopping": "hover", "hovering": "hover"}
+
+# Misspellings seen from Omnilingual CTC on `say` test audio (listener only; the keyword grammar, which
+# also reads clean Voice Transcribe text, must not turn "stalk" into hover).
+CTC_VARIANTS = {
+    "landin": "land", "aboard": "land", "abord": "land",
+    "stob": "hover", "stap": "hover", "stalk": "hover", "stog": "hover",
+    "preeze": "hover", "preese": "hover", "freese": "hover", "freez": "hover",
 }
 
 # CTC sometimes glues a safety word to a neighbour ("stop now land" -> "stop nowland"). A word that is a
@@ -84,18 +88,25 @@ def edit_distance(a: str, b: str, limit: int = 2) -> int:
 
 
 def safety_action_for_word(word: str, fuzzy: bool = True) -> Optional[tuple[str, str, bool]]:
-    """(action, canonical, was_fuzzy) for one normalized word, or None. action is 'land' or 'hover'."""
+    """(action, canonical, was_fuzzy) for one normalized word, or None. action is 'land' or 'hover'.
+
+    fuzzy=False: SAFETY_WORDS and inflections only (the keyword grammar). fuzzy=True adds the CTC
+    misspellings, glued words ("nowland"), and edit distance 1 (the safety listener)."""
     if word in SAFETY_WORDS:
         return SAFETY_WORDS[word], word, False
-    if word in EXTRA_EXACT:
-        return EXTRA_EXACT[word], word, False
+    if word in INFLECTIONS:
+        return INFLECTIONS[word], word, False
+    if not fuzzy:
+        return None
+    if word in CTC_VARIANTS:
+        return CTC_VARIANTS[word], word, True
     for canon in ("land", "stop", "hover", "abort"):
         if len(word) > len(canon) + 1:
             if word.startswith(canon) and word[len(canon):] in GLUE:
                 return FUZZY_CANON[canon], canon, True
             if word.endswith(canon) and word[:-len(canon)] in GLUE:
                 return FUZZY_CANON[canon], canon, True
-    if not fuzzy or len(word) < 4 or word in NEAR_MISSES:
+    if len(word) < 4 or word in NEAR_MISSES:
         return None
     for canon, action in FUZZY_CANON.items():
         if word[0] == canon[0] and edit_distance(word, canon, limit=1) <= 1:

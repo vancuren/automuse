@@ -1,0 +1,60 @@
+# Voice and intent agent (PLAN.md 4.6). Command-line flags override these values.
+#   $MHD_ML_PY -m mhd_ml.agent.service --config config/agent.yaml [--backend ...] [--asr ...] [--intent ...]
+backend: ws://127.0.0.1:8000
+asr: meta              # meta = Muse Voice Transcribe (cloud) | local = Omnilingual CTC-300M (edge mode)
+intent: auto           # auto = Glimmer and Spark hedged | glimmer | spark | keyword
+
+mic:
+  sample_rate: 24000   # 24000, or 16000 for a Bluetooth headset
+  device: null         # sounddevice device name or index; null = system default input
+  preroll_s: 0.3       # audio kept from just before push-to-talk goes down
+
+voice_transcribe:
+  url: wss://api.meta.ai/v1/asr/realtime
+  file_url: https://api.meta.ai/v1/asr/transcribe
+  model: muse-voice-transcribe-1.0
+  endpoint: realtime   # realtime | file
+  warm_session: true   # keep one session open between utterances, streaming 80 ms of silence
+  mode: PUSH_TO_TALK
+  language_bias: [English]
+  keywords: null       # null = the built-in drone vocabulary (asr_meta.DEFAULT_KEYWORDS)
+  final_timeout_s: 6.0
+
+glimmer:
+  # Fireworks (OpenAI-compatible). Leave model empty until the train workstream has a deployment;
+  # with no model the router runs Spark + keyword only. Local edge mode: base_url
+  # http://127.0.0.1:8080/v1, api_key_env null, label glimmer-30b.
+  base_url: https://api.fireworks.ai/inference/v1
+  model: ""
+  label: glimmer-30b+lora
+  api_key_env: FIREWORKS_API_KEY
+  response_format: json_schema   # json_schema | json_object | none
+  max_tokens: 256
+  timeout_s: 8.0
+
+spark:
+  enabled: true
+  base_url: https://api.meta.ai/v1
+  model: muse-spark-1.3
+  reasoning_effort: minimal      # cannot be "none" (HTTP 400); minimal is the fastest
+  timeout_s: 8.0
+
+router:
+  glimmer_window_s: 2.5          # Glimmer's answer wins if it is valid within this window
+  total_timeout_s: 8.0           # after this the keyword grammar answers
+  safety_fast_path: true         # "stop" / "land" in a push-to-talk command never waits for a model
+
+safety:
+  enabled: true
+  vad_threshold: 0.5
+  min_silence_s: 0.25
+  min_speech_s: 0.10
+  max_speech_s: 8.0
+  partial_interval_s: 0.4
+  partial_window_s: 3.0
+  debounce_s: 1.0
+  fuzzy: true
+
+tts:
+  engine: mms          # mms (MMS-TTS) | say | none
+  voice: Samantha      # voice for the `say` fallback
