@@ -1,0 +1,217 @@
+"""Unit tests for the pure autopilot function (PLAN.md 4.4)."""
+from __future__ import annotations
+
+import math
+
+from conftest import make_obs
+from mhd.autopilot import AutopilotRun, autopilot_start, autopilot_step, bearing_rad, yaw_kp, yaw_rate_per_unit
+from mhd.contracts import AutopilotState as S
+from mhd.governor.config import load_autopilot_config, replace
+
+P = load_autopilot_config()
+
+
+class Driver:
+    """Steps the autopilot alone at 25 Hz, assuming the governor applied exactly its output."""
+
+    def __init__(self, params=P, can_move=True):
+        self.p = params
+        self.t = 0.0
+        self.s = autopilot_start(AutopilotRun(), "m1", self.t)
+        self.can_move = can_move
+        self.applied = {"yaw": 0.0, "pitch": 0.0}
+        self.fid = 0
+        self.events = []
+
+    def step(self, obs=None):
+        sticks, self.s, ev = autopilot_step(obs, self.s, self.p, self.t, can_move=self.can_move,
+                                            applied_yaw=self.applied["yaw"], applied_pitch=self.applied["pitch"])
+        self.events += ev
+        self.applied = {"yaw": sticks["yaw"] if self.can_move else 0.0,
+                        "pitch": sticks["pitch"] if self.can_move else 0.0}
+        self.t += 40.0
+        return sticks
+
+    def obs(self, **kw):
+        self.fid += 1
+        kw.setdefault("confirm_age_ms", 200.0)
+        return make_obs(self.fid, self.t - 150.0, **kw)
+
+    def run(self, seconds, **obs_kw):
+        out = None
+        for _ in range(int(round(seconds * 25))):
+            out = self.step(self.obs(**obs_kw) if obs_kw is not None else None)
+        return out
+
+    def run_blind(self, seconds):
+        out = None
+        for _ in range(int(round(seconds * 25))):
+            out = self.step(None)
+        return out
+
+
+def test_bearing_sign_and_gain_formula():
+    assert bearing_rad(640, P) == 0.0
+    assert bearing_rad(900, P) > 0 and bearing_rad(300, P) < 0
+    f = 640 / math.tan(math.radians(75) / 2)
+    assert math.isclose(bearing_rad(1280, P), math.atan(640 / f))
+    assert math.isclose(yaw_kp(P) * yaw_rate_per_unit(P) * P.delay.theta_s, 0.4)
+
+
+def test_find_confirm_follow_takes_about_one_second_of_lock():
+    d = Driver()
+    assert d.s.mode == S.find
+    d.step(d.obs(cx=900))
+    assert d.s.mode == S.confirm
+    d.run(0.9, cx=900)
+    assert d.s.mode == S.confirm             # not yet: < 1 s of consistent lock
+    d.run(0.2, cx=900)
+    assert d.s.mode == S.follow
+    out = d.step(d.obs(cx=900))
+    assert out["yaw"] > 0 and out["throttle"] == 0 and out["roll"] == 0
+
+
+def test_confirm_resets_on_a_jump_or_track_switch():
+    d = Driver()
+    d.run(0.5, cx=900)
+    d.step(d.obs(cx=300))                    # jumped across the frame
+    assert d.s.mode == S.find
+    d.run(0.5, cx=900)
+    d.step(d.obs(cx=905, track_id=7))        # another identity
+    assert d.s.mode == S.find
+
+
+def test_follow_to_doubt_on_low_score_then_lost_after_p95_plus_half():
+    d = Driver()
+    d.run(1.3, cx=800)
+    assert d.s.mode == S.follow
+    out = d.step(d.obs(cx=800, score=0.2))
+    assert d.s.mode == S.doubt and out["yaw"] == 0 and out["pitch"] == 0
+    d.run(1.9, cx=800, score=0.2)            # default detector p95 1.5 s + 0.5 s
+    assert d.s.mode == S.doubt
+    d.run(0.2, cx=800, score=0.2)
+    assert d.s.mode in (S.lost, S.search)
+
+
+def test_doubt_recovers_only_on_a_fresh_detector_confirmation():
+    d = Driver()
+    d.run(1.3, cx=800)
+    d.step(d.obs(cx=800, score=0.2))
+    assert d.s.mode == S.doubt
+    d.run(0.3, cx=800, confirm_age_ms=2000.0)    # tracker fine but confirmation predates the doubt
+    assert d.s.mode == S.doubt
+    d.step(d.obs(cx=800, confirm_age_ms=0.0))
+    assert d.s.mode == S.follow
+
+
+def test_lost_when_confirmation_age_too_old():
+    d = Driver()
+    d.run(1.3, cx=800)
+    age = {"v": 200.0}
+    for _ in range(100):
+        age["v"] += 40.0
+        d.step(d.obs(cx=800, confirm_age_ms=age["v"]))
+        if d.s.mode != S.follow:
+            break
+    assert d.s.mode == S.lost and age["v"] > 2500.0 - 1.0
+
+
+def test_search_is_stop_and_stare_within_90_degrees_then_gives_up():
+    d = Driver()
+    d.run(1.3, cx=1000)                      # last seen on the right
+    d.step(d.obs(cx=1000, state="lost", w=0))
+    assert d.s.mode == S.doubt
+    heads = []
+    for _ in range(int(30 * 25)):
+        d.step(d.obs(state="searching", w=0))
+        heads.append(d.s.heading)
+        if d.s.mode == S.give_up:
+            break
+    assert d.s.mode == S.give_up
+    center = d.s.last_seen_abs
+    assert max(abs(h - center) for h in heads) <= math.radians(90) + 0.06
+    assert max(heads) > center + math.radians(50)        # searched toward the last-seen side
+    kinds = [e["to"] for e in d.events if e["kind"] == "state"]
+    assert "SEARCH" in kinds and kinds[-1] == "GIVE_UP"
+    assert any(e["kind"] == "announce" for e in d.events)
+
+
+def test_refind_from_search_goes_through_confirm():
+    d = Driver()
+    d.run(1.3, cx=1000)
+    d.step(d.obs(state="lost", w=0))
+    d.run(3.0, state="searching", w=0)
+    assert d.s.mode in (S.lost, S.search)
+    d.step(d.obs(cx=700))
+    assert d.s.mode == S.confirm
+
+
+def test_search_waits_when_the_governor_will_not_move():
+    d = Driver(can_move=False)
+    d.run(1.3, cx=1000)
+    d.step(d.obs(state="lost", w=0))
+    d.run(5.0, state="searching", w=0)
+    assert d.s.mode == S.lost                # LOST holds; SEARCH needs motion
+    assert d.s.heading == 0.0
+
+
+def test_forward_only_when_gated():
+    d = Driver()
+    small = dict(cx=640, w=100, h=300, cy=360)           # far away: wants forward
+    d.run(1.3, **small)
+    assert d.s.mode == S.follow
+    assert d.step(d.obs(**small))["pitch"] > 0
+    assert d.step(d.obs(cx=640, w=100, h=300, cy=155))["pitch"] == 0       # y1 = 5 px: top edge within 2%
+    assert d.step(d.obs(cx=640, w=100, h=300, cy=360, confirm_age_ms=1600))["pitch"] == 0   # stale confirm
+    # |bearing| >= 0.4 rad: yaw only
+    cx = 640 + math.tan(0.45) * (640 / math.tan(math.radians(37.5)))
+    d2 = Driver()
+    d2.run(1.3, cx=cx, w=100, h=300)
+    out = d2.step(d2.obs(cx=cx, w=100, h=300))
+    assert out["pitch"] == 0 and out["yaw"] > 0
+
+
+def test_forward_cap_and_size_deadband():
+    d = Driver()
+    d.run(1.3, cx=640, w=20, h=300)                       # tiny: very far
+    assert math.isclose(d.step(d.obs(cx=640, w=20, h=300))["pitch"], P.forward.cap)
+    d2 = Driver()
+    w_ref = P.forward.ref_width_frac.medium * 1280
+    d2.run(1.3, cx=640, w=w_ref * 1.05, h=300)            # within the +/-0.08 deadband
+    assert d2.step(d2.obs(cx=640, w=w_ref * 1.05, h=300))["pitch"] == 0
+
+
+def test_standoff_hover_then_back_off_and_budget():
+    d = Driver()
+    big = dict(cx=640, w=800, h=650, cy=360)              # too close
+    d.run(1.3, **big)
+    assert d.s.mode == S.follow
+    assert d.step(d.obs(**big))["pitch"] == 0             # hover first
+    d.run(0.6, **big)
+    out = d.step(d.obs(**big))
+    assert out["pitch"] < 0 and abs(out["pitch"]) <= P.forward.cap * P.forward.back_cap_ratio
+    # keep backing off: the 1 m budget runs out (0.08 x 127 counts x 0.012 m/s = 0.12 m/s -> ~8 s)
+    d.run(12.0, **big)
+    assert d.step(d.obs(**big))["pitch"] == 0
+    assert d.s.backward_m >= P.forward.backward_budget_m
+    assert any(e["kind"] == "safety" for e in d.events)
+
+
+def test_feedforward_off_by_default_and_bounded_when_on():
+    assert P.yaw.feedforward.enabled is False
+    pff = replace(P, **{"yaw.feedforward.enabled": True})
+    d = Driver(pff)
+    cx = {"v": 700.0}
+    for _ in range(int(3 * 25)):
+        cx["v"] = min(1100.0, cx["v"] + 2.0)
+        d.step(d.obs(cx=cx["v"]))
+    assert d.s.mode == S.follow and d.s.ff_rate > 0
+
+
+def test_idle_outputs_zero_and_mission_filter():
+    s = AutopilotRun()
+    out, s2, ev = autopilot_step(make_obs(1, 0.0, cx=1000), s, P, 40.0)
+    assert out == {"throttle": 0.0, "yaw": 0.0, "pitch": 0.0, "roll": 0.0} and s2.mode == S.idle
+    d = Driver()
+    d.step(make_obs(1, d.t - 100, cx=900, mission_id="other"))
+    assert d.s.mode == S.find

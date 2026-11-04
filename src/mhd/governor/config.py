@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import typing
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -51,6 +51,15 @@ class AxisInts:
         return getattr(self, axis)
 
 
+@dataclass(frozen=True)
+class AxisSigns(AxisInts):
+    """Per-axis sign; an axis left out of the YAML keeps +1 (never 0)."""
+    throttle: int = 1
+    yaw: int = 1
+    pitch: int = 1
+    roll: int = 1
+
+
 # ----------------------------------------------------------------------------------------------
 # Governor
 
@@ -58,7 +67,7 @@ class AxisInts:
 @dataclass(frozen=True)
 class WireCfg:
     full_scale_counts: int = 127
-    sign: AxisInts = AxisInts(1, 1, 1, 1)
+    sign: AxisSigns = AxisSigns()
     deadband_counts: AxisInts = AxisInts(0, 0, 0, 0)
     deadband_threshold: float = 0.01
 
