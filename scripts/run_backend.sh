@@ -5,12 +5,16 @@
 #                          [--rtsp-url rtsp://127.0.0.1:8554/live/ch00_1] [--headless] [--host 127.0.0.1]
 #                          [--logs DIR]   (default $MHD_LOGS: control-*.jsonl and flight_timer.json)
 #   scripts/run_backend.sh --mode real [--port 8000]          # DRONE_IP=172.16.11.1, RTSP from the drone
+#   scripts/run_backend.sh --camera [--rtsp-url rtsp://127.0.0.1:8554/live/ch00_1] [--port 8000]
+#       REAL CAMERA, NO FLIGHT: twin mode (DRONE_IP=127.0.0.1) with MHD_CAMERA_ONLY=1, video from the
+#       Lewei bridge on loopback, configs from config/camera/; the RC adapter has no socket and sends
+#       nothing. Refuses --mode real, --control-port and --local-control-port.
 #   [--governor-config FILE] [--autopilot-config FILE]   twin: any file (default config/*.yaml);
 #       real: only config/{governor,autopilot}.yaml or config/real/ (Session B values), never a
 #       twin_only file, and GOVERNOR_CONFIG / AUTOPILOT_CONFIG from the shell are ignored.
 #   --dry-run: check the arguments, print what would run, and exit (contacts nothing).
 #
-# --mode is required (FLIGHT_MODE has no default). Twin mode talks only to loopback. --headless sets
+# --mode (or --camera) is required (FLIGHT_MODE has no default). Twin mode talks only to loopback. --headless sets
 # GOVERNOR_TWIN_HEADLESS=1 (skip UI-heartbeat checks); the governor refuses it in real mode.
 # Binds 127.0.0.1 by default so nothing else on the network can command the drone. No --reload, ever.
 # Control logs: $MHD_LOGS/control-*.jsonl; flight timer: $MHD_LOGS/flight_timer.json.
@@ -19,10 +23,13 @@ TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$TREE/env.sh"
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
 
 MODE="" PORT="" CONTROL_PORT="" LOCAL_CONTROL_PORT="" RTSP_URL="" HEADLESS=0 HOST="127.0.0.1" LOGS=""
-GOV_CFG_ARG="" AP_CFG_ARG="" DRY_RUN=0
+GOV_CFG_ARG="" AP_CFG_ARG="" DRY_RUN=0 CAMERA=0
+# Camera-only mode: no RC socket exists, so this port is never used. It is still not the twin's RC port
+# (23458), so even a bug could not steer a twin that happens to run on this Mac.
+CAMERA_CONTROL_PORT=23999
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --governor-config) GOV_CFG_ARG="$2"; shift 2 ;;
     --autopilot-config) AP_CFG_ARG="$2"; shift 2 ;;
     --headless) HEADLESS=1; shift ;;
+    --camera) CAMERA=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --logs) LOGS="$2"; shift 2 ;;
     --host) HOST="$2"; shift 2 ;;
@@ -62,15 +70,40 @@ real_config() {   # real_config governor|autopilot FILE -> prints the absolute p
   echo "$f"
 }
 
+if [[ "$CAMERA" == 1 ]]; then
+  # Real camera, no flight: always twin mode. Refuse anything that hints at the real drone or an RC link.
+  if [[ -n "$MODE" && "$MODE" != twin ]]; then
+    echo "run_backend.sh: --camera (real camera, NO flight) runs in twin mode only; refusing --mode $MODE" >&2; exit 2
+  fi
+  if [[ -n "$CONTROL_PORT$LOCAL_CONTROL_PORT" ]]; then
+    echo "run_backend.sh: --camera sends no RC packets; --control-port/--local-control-port do not apply" >&2; exit 2
+  fi
+  MODE=twin
+fi
+
 case "$MODE" in
   twin)
     export FLIGHT_MODE=twin DRONE_IP=127.0.0.1
     export X69_LG_RTSP_URL="${RTSP_URL:-rtsp://127.0.0.1:8554/live/ch00_1}"
-    [[ -n "$GOV_CFG_ARG" ]] && export GOVERNOR_CONFIG="$GOV_CFG_ARG"
-    [[ -n "$AP_CFG_ARG" ]] && export AUTOPILOT_CONFIG="$AP_CFG_ARG"
+    if [[ "$CAMERA" == 1 ]]; then
+      export MHD_CAMERA_ONLY=1 CONTROL_PORT="$CAMERA_CONTROL_PORT"
+      unset X69_LG_LOCAL_CONTROL_PORT
+      # config/camera/ unless given here (GOVERNOR_CONFIG / AUTOPILOT_CONFIG from the shell are ignored)
+      export GOVERNOR_CONFIG="${GOV_CFG_ARG:-config/camera/governor.yaml}"
+      export AUTOPILOT_CONFIG="${AP_CFG_ARG:-config/camera/autopilot.yaml}"
+    else
+      unset MHD_CAMERA_ONLY                  # only --camera turns it on
+      [[ -n "$GOV_CFG_ARG" ]] && export GOVERNOR_CONFIG="$GOV_CFG_ARG"
+      [[ -n "$AP_CFG_ARG" ]] && export AUTOPILOT_CONFIG="$AP_CFG_ARG"
+    fi
     ;;
   real)
     if [[ "$HEADLESS" == 1 ]]; then echo "run_backend.sh: --headless is twin-only" >&2; exit 2; fi
+    case "$(echo "${MHD_CAMERA_ONLY:-}" | tr '[:upper:]' '[:lower:]')" in
+      ""|0|false|no|off) ;;
+      *) echo "run_backend.sh: MHD_CAMERA_ONLY=${MHD_CAMERA_ONLY} is set in the shell: refusing --mode real" \
+              "(camera-only runs use --camera)" >&2; exit 2 ;;
+    esac
     export FLIGHT_MODE=real DRONE_IP=172.16.11.1
     if [[ -n "$RTSP_URL" ]]; then export X69_LG_RTSP_URL="$RTSP_URL"; else unset X69_LG_RTSP_URL; fi
     if [[ -n "${GOVERNOR_CONFIG:-}${AUTOPILOT_CONFIG:-}" ]]; then
@@ -80,7 +113,7 @@ case "$MODE" in
     if [[ -n "$GOV_CFG_ARG" ]]; then GOVERNOR_CONFIG="$(real_config governor "$GOV_CFG_ARG")"; export GOVERNOR_CONFIG; fi
     if [[ -n "$AP_CFG_ARG" ]]; then AUTOPILOT_CONFIG="$(real_config autopilot "$AP_CFG_ARG")"; export AUTOPILOT_CONFIG; fi
     ;;
-  *) echo "run_backend.sh: --mode twin|real is required" >&2; usage >&2; exit 2 ;;
+  *) echo "run_backend.sh: --mode twin|real (or --camera) is required" >&2; usage >&2; exit 2 ;;
 esac
 
 export DRONE_TYPE=x69_lg X69_LG_VIDEO_MODE=rtsp PLUGINS_ENABLED=false LOG_LEVEL
@@ -92,7 +125,8 @@ if [[ "$HEADLESS" == 1 ]]; then export GOVERNOR_TWIN_HEADLESS=1; else unset GOVE
 PORT="${PORT:-8000}"
 if [[ -n "$LOGS" ]]; then mkdir -p "$LOGS"; export MHD_LOGS="$(cd "$LOGS" && pwd)"; fi
 
-echo "[run_backend] tree=$TREE logs=$MHD_LOGS mode=$FLIGHT_MODE drone=$DRONE_IP:$CONTROL_PORT rtsp=${X69_LG_RTSP_URL:-<drone default>} http=$HOST:$PORT headless=$HEADLESS" >&2
+echo "[run_backend] tree=$TREE logs=$MHD_LOGS mode=$FLIGHT_MODE drone=$DRONE_IP:$CONTROL_PORT rtsp=${X69_LG_RTSP_URL:-<drone default>} http=$HOST:$PORT headless=$HEADLESS camera_only=${MHD_CAMERA_ONLY:-0}" >&2
+[[ "$CAMERA" == 1 ]] && echo "[run_backend] CAMERA ONLY (real camera, NO FLIGHT): MHD_CAMERA_ONLY=1, the RC adapter has no socket and sends nothing" >&2
 echo "[run_backend] governor config=${GOVERNOR_CONFIG:-config/governor.yaml} autopilot config=${AUTOPILOT_CONFIG:-config/autopilot.yaml}" >&2
 if [[ "$DRY_RUN" == 1 ]]; then echo "[run_backend] dry run: not starting" >&2; exit 0; fi
 cd "$TREE/turbodrone/backend"
