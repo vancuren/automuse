@@ -217,7 +217,7 @@ $MHD_PY scripts/apply_sysid.py --throttle-ramp on --write    # writes config/rea
 | 2. The Mac's Wi-Fi goes off | you turn Wi-Fi off for 10 s, then on again | the motors; whether the Mac rejoins the drone by itself |
 | 3. RC packets stop, keepalive continues | `POST /debug/rc_pause {"seconds": 10}` | see the note below |
 
-- After test 1, restart the backend in its window: press the up arrow, then Enter. It comes back disarmed, so type ARM again.
+- After test 1, press **Enter in the `run_stack.sh` window**. It restarts the backend with the same settings, and the UI reconnects by itself. The backend comes back disarmed, so type ARM again.
 - **Note on test 3.** In real mode the backend allows the pause only while the governor is **ON_GROUND**, for at most 15 s.
   - So test 3 runs with the motors **idle**. It shows whether the drone tolerates 10 s of keepalive-only traffic: does the video keep streaming, does an LED change, does it still take off right after?
   - LAND, E-STOP and TAKEOFF end the pause at once.

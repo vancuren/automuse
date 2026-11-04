@@ -41,6 +41,8 @@ import httpx
 
 TREE = Path(os.environ.get("MHD_TREE") or Path(__file__).resolve().parents[1])
 PY = os.environ.get("MHD_PY", sys.executable)
+# Backend keeps one long-lived /ws connection (closed in close()); websockets warns on its first send.
+warnings.filterwarnings("ignore", message=r"connect\(\) must be used as a context manager", category=DeprecationWarning)
 ML_PY = os.environ.get("MHD_ML_PY", "")
 DRONE_IP = "172.16.11.1"
 
@@ -245,9 +247,7 @@ class Backend:
             for attempt in (1, 2):
                 try:
                     if self._ws is None:
-                        with warnings.catch_warnings():       # a long-lived socket, closed in close()
-                            warnings.simplefilter("ignore", DeprecationWarning)
-                            self._ws = wsc.connect(self.ws_url, open_timeout=3)
+                        self._ws = wsc.connect(self.ws_url, open_timeout=3)
                     self._ws.send(json.dumps(msg))
                     return
                 except Exception:  # noqa: BLE001
