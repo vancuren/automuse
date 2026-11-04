@@ -238,6 +238,10 @@ Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/l
 - **24 kHz capture by default** (PLAN), 16 kHz for headsets; if a device refuses the rate, the hub
   captures at the device rate and resamples.
 - **Push-to-talk auto-release after 15 s** (lost `ptt_up`).
+- **Voice Transcribe is raced against the clock:** if its final has not arrived 2 s after release
+  (network half up, e.g. drone Wi-Fi with a dropping tether, where DNS or TLS can hang for the 10 s
+  connect timeout), the recorded audio is transcribed locally instead (measured: final 2.4 s after
+  release in the test, versus up to 10+ s waiting).
 - **The listener ignores the agent's own voice** only in the harmless case (see gap 4), and the agent
   never says a hover word out loud: a follow reply containing one is spoken as "Following now."
   (Mission.reply keeps the full text), and such autopilot announcements are not spoken.

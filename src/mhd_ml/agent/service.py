@@ -407,7 +407,16 @@ class AgentService:
         t, err = None, None
         try:
             if st.task is not None:
-                t = await st.task
+                # Voice Transcribe's final normally lands ~0.1-0.3 s after release. If the network is
+                # half up (drone Wi-Fi, tether dropping: DNS or TLS hanging), don't wait for its 10 s
+                # timeouts: after fallback_after_s the same audio is transcribed locally instead.
+                wait_s = float(self.cfg.get("voice_transcribe", {}).get("fallback_after_s", 2.0))
+                try:
+                    t = await asyncio.wait_for(asyncio.shield(st.task), timeout=wait_s)
+                except asyncio.TimeoutError:
+                    err = f"no Voice Transcribe final {wait_s:.1f} s after release"
+                    st.task.cancel()
+                    log.warning("%s; using local ASR", err)
             else:
                 await self._drain(st)
                 audio = np.concatenate(st.chunks) if st.chunks else np.zeros(0, np.float32)

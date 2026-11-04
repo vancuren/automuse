@@ -81,7 +81,7 @@ class FakeRealtimeASR:
             await ws.send(json.dumps({"type": "error", "message": "; ".join(problems), "sessionId": "x"}))
             await ws.close(1008, "invalid request")
             return
-        await asyncio.sleep(self.ack_delay_s)
+        await asyncio.sleep(self.ack_delay_s)        # a huge ack delay simulates a hanging network
         sid = f"fake-{len(self.sessions)}"
         await ws.send(json.dumps({"sessionId": sid}))
         words = self.transcript.split()
@@ -125,7 +125,13 @@ class FakeRealtimeASR:
         if self._lt:
             async def _stop():
                 self._server.close()
-                await self._server.wait_closed()
+                try:
+                    await asyncio.wait_for(self._server.wait_closed(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass                # a handler is still "hanging" on purpose (ack_delay_s)
+                for t in asyncio.all_tasks():
+                    if t is not asyncio.current_task():
+                        t.cancel()
             try:
                 self._lt.run(_stop(), timeout=5)
             finally:

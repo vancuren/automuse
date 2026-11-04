@@ -438,3 +438,26 @@ def test_stop_during_push_to_talk_is_clean(backend, llm, audio_items):
     finally:
         asr.stop()
     assert dt < 3.0 and not [t for t in svc._tasks if not t.done()]
+
+
+def test_hanging_voice_transcribe_falls_back_after_two_seconds(backend, llm, audio_items):
+    """Network half up: the realtime socket connects but never acks. Local ASR answers ~2 s after release."""
+    asr = FakeRealtimeASR(port=ASR_PORT, ack_delay_s=30.0).start()
+    cfg = make_cfg(asr.url)
+    cfg["voice_transcribe"]["warm_session"] = False
+    n0 = len(backend.missions)
+    try:
+        async def script(svc, hub):
+            t0 = time.monotonic()
+            # c02 "follow the red car" (Omnilingual hears c12's "white truck" as "white trock")
+            await svc.simulate_file(item(audio_items, "commands", "c02", 24000)["abspath"], realtime=False)
+            assert await wait_for(lambda: len(backend.missions) > n0, 8)
+            svc._fallback_s = time.monotonic() - t0
+
+        svc = asyncio.run(run_with_speaker(backend, cfg, script, RecordingSpeaker()))
+    finally:
+        asr.stop()
+    assert backend.missions[-1]["intent"]["subject_phrase"] == "red car"
+    assert svc._fallback_s < 5.0
+    final = [e for e in svc.events if e["kind"] == "final"][-1]
+    assert final["data"]["model"] == "omnilingual-ctc-300m"
