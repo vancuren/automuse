@@ -37,7 +37,7 @@ The final reviewer's verdict is "safe with conditions" for forward-only follow:
 | Morning tools | `scripts/preflight.py`, `scripts/session_a.py`, `scripts/apply_sysid.py`, `scripts/make_aruco.py`, `scripts/run_stack.sh` |
 | Docs | README, docs/results.md, docs/video_script.md, licenses and notices, secret scan |
 
-Tests on `integration`, all passing (733 in total; governor, twin, UI, ops and docs re-run at 05:27 ET on the final code, the rest at 04:56):
+Tests on `integration`, all passing (730 in total, counting the opt-in UI and full-stack runs; governor, twin, UI, ops and docs re-run at 05:27 ET on the final code, the rest at 04:56):
 
 | Suite | Passed |
 |---|---|
