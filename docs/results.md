@@ -525,6 +525,7 @@ Tests on `integration`, all passing (docs/STATUS.md, 03:10 ET):
 | UI (`tests/ui`) | 89 (plus 6 opt-in against the real backend) | `$MHD_PY -m pytest tests/ui` |
 | perception (`tests/percep`) | 60 | `$MHD_ML_PY -m pytest tests/percep -q` |
 | training (`tests/train`) | 38 | `$MHD_PY -m pytest tests/train -q` |
+| secret scan (`tests/docs`, added by the docs workstream after 03:10) | 4 | `$MHD_PY -m pytest -q tests/docs` |
 | upstream turbodrone x69_lg | 15 | `cd turbodrone/backend && $MHD_PY -m unittest tests.test_x69_lg_protocol tests.test_x69_lg_rtsp_video_protocol tests.test_x69_lg_video_mode` |
 
 Paid API spend overnight, from `logs/spend.jsonl` (115 entries): **$2.52** in total.
