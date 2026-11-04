@@ -215,6 +215,9 @@ Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/l
   captures at the device rate and resamples.
 - **Push-to-talk auto-release after 15 s** (lost `ptt_up`).
 - **The listener ignores the agent's own voice** (see gap 4).
+- **Backlog guard:** if the CPU is busy and mic audio backs up by more than 0.3 s, the listener skips
+  partial decodes until it catches up (segment decodes always run), so a safety word is never heard
+  seconds late behind a decode queue; it logs a warning above 2 s of backlog.
 
 ## Known gaps and risks
 

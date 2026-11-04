@@ -207,3 +207,27 @@ def test_prop_noise_10db(audio_items, recognizer):
                 false.append((it["id"], [h.transcript for h in hits]))
     assert not false, false
     assert det >= 0.7 * total, f"{det}/{total}"      # measured 13/17 at 10 dB
+
+
+def test_backlog_skips_partials_but_still_detects(audio_items, recognizer):
+    """A 10 s backlog (CPU was busy): partial decodes are skipped, the segment decode still fires."""
+    import queue
+    import threading
+
+    it = next(i for i in audio_items["safety"] if i["id"] == "land_long")
+    x, sr = load_wav(it["abspath"], target_sr=16000)
+    q = queue.Queue()
+    for i in range(0, len(x), 1280):
+        q.put(x[i:i + 1280])
+    q.put(np.zeros(16000, np.float32))            # trailing silence closes the segment
+    lst = SafetyListener(recognizer=recognizer)
+    stop = threading.Event()
+    th = threading.Thread(target=lst.run_queue, args=(q, 16000, stop), daemon=True)
+    th.start()
+    t0 = time.monotonic()
+    while not lst.hits and time.monotonic() - t0 < 10:
+        time.sleep(0.02)
+    stop.set()
+    th.join(timeout=2)
+    assert lst.hits and lst.hits[0].action == "land"
+    assert lst.partials_skipped > 0 and lst.max_backlog_s > 1.0

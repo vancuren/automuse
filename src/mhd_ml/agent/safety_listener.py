@@ -147,9 +147,16 @@ class SafetyListener:
         self.hits: list[SafetyHit] = []
         self.decodes = 0
         self.decode_ms_total = 0.0
+        self.partials_skipped = 0
+        self.max_backlog_s = 0.0
+        self._allow_partial = True
 
     # ---- feeding -------------------------------------------------------------------------------
-    def feed(self, samples: np.ndarray, sample_rate: int = ASR_SAMPLE_RATE) -> list[SafetyHit]:
+    def feed(self, samples: np.ndarray, sample_rate: int = ASR_SAMPLE_RATE,
+             allow_partial: bool = True) -> list[SafetyHit]:
+        """allow_partial=False skips the partial decodes (used to catch up when audio is backing up;
+        segment-final decodes always run)."""
+        self._allow_partial = allow_partial
         x = np.asarray(samples, dtype=np.float32)
         if sample_rate != ASR_SAMPLE_RATE:
             x = resample(x, sample_rate, ASR_SAMPLE_RATE)
@@ -185,7 +192,10 @@ class SafetyListener:
                 self._last_partial_at = self._fed
             if self._fed - self._last_partial_at >= int(self.cfg.partial_interval_s * ASR_SAMPLE_RATE):
                 self._last_partial_at = self._fed
-                out.extend(self._partial_decode())
+                if self._allow_partial:
+                    out.extend(self._partial_decode())
+                else:
+                    self.partials_skipped += 1
         else:
             self._speech_start = None
         return out
@@ -273,15 +283,26 @@ class SafetyListener:
         out.extend(self.flush())
         return out
 
-    def run_queue(self, q: "queue.Queue[np.ndarray]", sample_rate: int, stop: threading.Event) -> None:
-        """Live mode: consume float chunks from a MicHub subscription until `stop` is set."""
+    def run_queue(self, q: "queue.Queue[np.ndarray]", sample_rate: int, stop: threading.Event,
+                  catch_up_s: float = 0.3) -> None:
+        """Live mode: consume float chunks from a MicHub subscription until `stop` is set.
+
+        If the CPU is busy and audio backs up by more than `catch_up_s`, partial decodes are skipped
+        until the listener has caught up (each segment is still decoded when it ends), so a safety
+        word is never heard seconds late because of a decode queue."""
+        warned_at = 0.0
         while not stop.is_set():
             try:
                 x = q.get(timeout=0.2)
             except queue.Empty:
                 continue
+            backlog_s = q.qsize() * len(x) / sample_rate
+            self.max_backlog_s = max(self.max_backlog_s, backlog_s)
+            if backlog_s > 2.0 and time.monotonic() - warned_at > 10:
+                warned_at = time.monotonic()
+                log.warning("safety listener is %.1f s behind real time (CPU busy?)", backlog_s)
             try:
-                self.feed(x, sample_rate)
+                self.feed(x, sample_rate, allow_partial=backlog_s <= catch_up_s)
             except Exception:
                 log.exception("safety listener feed failed; continuing")
 
