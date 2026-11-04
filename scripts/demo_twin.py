@@ -68,15 +68,14 @@ PRESETS = {
     "s1": dict(scenario="s1", subject="person in blue shirt", category="person", color="blue",
                command="Drone, follow the person in the blue shirt.",
                readme={"1_dashboard_twin": "1_dashboard_twin", "2_voice_mission_follow": "2_voice_mission_follow",
-                       "3_follow_walking": "3_follow_walking", "5_landing_voice": "5_landing_voice",
-                       "chase_follow": "chase_follow"}),
+                       "5_landing_voice": "5_landing_voice", "chase_follow": "chase_follow"}),
     # S2: the walkers cross at scenario t = 11, 32, 53 s (both 0.3 m/s on 6 m legs, 1 s pauses).
     "s2": dict(scenario="s2", subject="person in blue shirt", category="person", color="blue",
                command="Drone, follow the person in the blue shirt.", still_scn_s="32,53",
                readme={"scn_53s": "crossing_follow"}),
     "s3": dict(scenario="s3", subject="green car", category="vehicle", color="green",
                command="Drone, follow the green car.",
-               readme={"2_voice_mission_follow": "2_voice_mission_follow", "chase_follow": "chase_follow"}),
+               readme={"2_voice_mission_follow": "2_voice_mission_follow"}),
 }
 
 
@@ -758,11 +757,10 @@ class Demo:
         rows = [r for r in csv.DictReader(open(self.out / "rows.csv")) if t0 <= float(r["render_ms"]) <= t1]
         if not rows:
             return
-        sid = None
-        for a in ("walker_blue", "car_green"):
-            if any(r["identity"] == a for r in rows):
-                sid = a
-                break
+        from collections import Counter
+
+        ids = Counter(r["identity"] for r in rows if r["identity"])
+        sid = ids.most_common(1)[0][0] if ids else None        # the actor followed most of the time
         vis = [r for r in rows if r["visible"] == "True"]
         b = [float(r["truth_bearing"]) for r in vis if r["truth_bearing"] not in ("", None)]
         idents = [r["identity"] for r in rows if r["identity"]]
