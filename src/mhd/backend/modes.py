@@ -6,6 +6,12 @@ on loopback RTSP (scripts/lewei_bridge.py). It is accepted only with FLIGHT_MODE
 DRONE_IP, an explicit loopback X69_LG_RTSP_URL and RTSP video (the other X69 video modes send UDP).
 The backend then installs an RC adapter that has no socket at all (turbodrone_glue.CameraOnlyRcAdapter)
 and telemetry carries the CAMERA_ONLY_FLAG safety flag.
+
+MHD_BOARD=x69_lg (default) | lewei: which board the real drone has. Our X69 unit has a Lewei Wi-Fi
+board: flight control is the raw 20-byte X69 payload over UDP to 192.168.0.1:50000
+(turbodrone_glue.LeweiRcAdapter) and the video comes through scripts/lewei_bridge.py as loopback RTSP.
+lewei is accepted only with FLIGHT_MODE=real, DRONE_IP=192.168.0.1, CONTROL_PORT=50000, an explicit
+loopback X69_LG_RTSP_URL and RTSP over TCP. x69_lg keeps the 172.16.11.1 checks.
 """
 from __future__ import annotations
 
@@ -16,6 +22,9 @@ import os
 from dataclasses import dataclass
 
 REAL_DRONE_IP = "172.16.11.1"
+BOARDS = ("x69_lg", "lewei")
+LEWEI_DRONE_IP = "192.168.0.1"         # the Lewei board's address on its own Wi-Fi
+LEWEI_CONTROL_PORT = 50000             # its flight-controller UDP port (raw 20-byte X69 payload)
 # RTSP through OpenCV/FFmpeg 7: TCP, low delay, and a 2 s socket I/O timeout (microseconds) so a
 # frozen stream fails fast instead of blocking for tens of seconds.
 DEFAULT_RTSP_FFMPEG_OPTIONS = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|timeout;2000000"
@@ -38,6 +47,7 @@ class BackendEnv:
     drone_type: str           # always "x69_lg"
     drone_ip: str
     camera_only: bool = False  # MHD_CAMERA_ONLY=1: real camera over loopback RTSP, no RC packets at all
+    board: str = "x69_lg"      # MHD_BOARD: "x69_lg" | "lewei" (real mode only)
 
 
 def camera_only_requested(environ=None) -> bool:
@@ -75,6 +85,12 @@ def validate_env(environ=None) -> BackendEnv:
     if camera_only and mode != "twin":
         raise ModeError("MHD_CAMERA_ONLY=1 (real camera, no flight) runs only with FLIGHT_MODE=twin; "
                         f"refusing FLIGHT_MODE={mode}.")
+    board = (env.get("MHD_BOARD") or "x69_lg").strip().lower()
+    if board not in BOARDS:
+        raise ModeError(f"MHD_BOARD={env.get('MHD_BOARD')!r} must be one of {', '.join(BOARDS)}. Refusing to start.")
+    if board == "lewei" and (mode != "real" or camera_only):
+        raise ModeError("MHD_BOARD=lewei is the real drone's flight board: only with FLIGHT_MODE=real "
+                        f"(got FLIGHT_MODE={mode}{', MHD_CAMERA_ONLY=1' if camera_only else ''}).")
     drone_type = (env.get("DRONE_TYPE") or "x69_lg").strip().lower()
     if drone_type != "x69_lg":
         raise ModeError(f"DRONE_TYPE={drone_type!r}: the safety governor supports only x69_lg. Refusing to start.")
@@ -91,6 +107,8 @@ def validate_env(environ=None) -> BackendEnv:
         url = (env.get("X69_LG_RTSP_URL") or "").strip()
         if url and not _url_is_loopback(url):
             raise ModeError(f"FLIGHT_MODE=twin refuses a non-loopback X69_LG_RTSP_URL={url!r}.")
+    elif board == "lewei":
+        _check_real_lewei(env, ip)
     else:
         if ip != REAL_DRONE_IP:
             raise ModeError(f"FLIGHT_MODE=real requires DRONE_IP={REAL_DRONE_IP}, got {ip!r}.")
@@ -113,7 +131,29 @@ def validate_env(environ=None) -> BackendEnv:
         raise ModeError("PLUGINS_ENABLED must stay false: plugins would bypass the governor.")
     if camera_only:
         _check_camera_only(env)
-    return BackendEnv(flight_mode=mode, drone_type=drone_type, drone_ip=ip, camera_only=camera_only)
+    return BackendEnv(flight_mode=mode, drone_type=drone_type, drone_ip=ip, camera_only=camera_only, board=board)
+
+
+def _check_real_lewei(env, ip: str) -> None:
+    """FLIGHT_MODE=real with MHD_BOARD=lewei: the Lewei board's address and port exactly, and its video
+    from the loopback bridge (scripts/lewei_bridge.py), never anything else."""
+    if ip != LEWEI_DRONE_IP:
+        raise ModeError(f"MHD_BOARD=lewei requires DRONE_IP={LEWEI_DRONE_IP}, got {ip!r}.")
+    port = (env.get("CONTROL_PORT") or "").strip()
+    if not port.isdigit() or int(port) != LEWEI_CONTROL_PORT:
+        raise ModeError(f"MHD_BOARD=lewei requires CONTROL_PORT={LEWEI_CONTROL_PORT}, got {port!r}.")
+    url = (env.get("X69_LG_RTSP_URL") or "").strip()
+    if not url or not _url_is_loopback(url):
+        raise ModeError("MHD_BOARD=lewei needs the bridge's loopback X69_LG_RTSP_URL "
+                        f"(e.g. rtsp://127.0.0.1:8554/live/ch00_1), got {url!r}.")
+    video = (env.get("X69_LG_VIDEO_MODE") or "rtsp").strip().lower()
+    if video != "rtsp":
+        raise ModeError(f"MHD_BOARD=lewei needs X69_LG_VIDEO_MODE=rtsp, got {video!r}: the other video "
+                        "modes send UDP commands to the drone address.")
+    opts = (env.get("X69_LG_RTSP_FFMPEG_OPTIONS") or DEFAULT_RTSP_FFMPEG_OPTIONS).replace(" ", "").lower()
+    if "rtsp_transport;tcp" not in opts:
+        raise ModeError("MHD_BOARD=lewei needs RTSP over TCP: X69_LG_RTSP_FFMPEG_OPTIONS must contain "
+                        "rtsp_transport;tcp.")
 
 
 def _check_camera_only(env) -> None:
