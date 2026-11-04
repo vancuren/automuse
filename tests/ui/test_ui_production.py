@@ -3,6 +3,7 @@ the mock on :8602 at /ui/, driven in Chrome. Checks the worker chunk, heartbeat,
 the HTTP fallback in the minified build."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -106,5 +107,32 @@ def test_a_page_reload_keeps_the_heartbeat_gap_under_the_governor_threshold(prod
         gap = max(b["t_ms"] - a["t_ms"] for a, b in zip(hbs, hbs[1:]))
         (LOG_DIR / "reload_gap_ms.txt").write_text(f"{gap:.1f}\n")
         assert gap < 1000, f"heartbeat gap across a reload: {gap:.0f} ms"
+    finally:
+        page.close()
+
+
+def test_measure_page_cost_of_the_production_dashboard(prod_mock, browser_ctx):
+    """Main-thread busy fraction while following: 10 Hz telemetry with mask, 15 fps MJPEG."""
+    prod_mock.reset(flight_mode="twin", scenario="manual")
+    page = browser_ctx.new_page()
+    try:
+        page.goto(PROD_URL + "/ui/")
+        page.wait_for_selector('[data-testid="link-control"][data-status="open"]', timeout=15000)
+        prod_mock.control(flight_state="AIRBORNE", mission="default", autopilot_state="FOLLOW", freeze_autopilot=True)
+        page.wait_for_selector('[data-testid="subject-mask"]', timeout=5000)
+        cdp = browser_ctx.new_cdp_session(page)
+        cdp.send("Performance.enable")
+
+        def metrics() -> dict:
+            return {m["name"]: m["value"] for m in cdp.send("Performance.getMetrics")["metrics"]}
+
+        m0, t0 = metrics(), time.monotonic()
+        page.wait_for_timeout(10_000)
+        m1, dt = metrics(), time.monotonic() - t0
+        busy = {k: round((m1[k] - m0[k]) / dt * 100, 1) for k in ("TaskDuration", "ScriptDuration", "LayoutDuration", "RecalcStyleDuration")}
+        heap_mb = round(m1["JSHeapUsedSize"] / 1e6, 1)
+        (LOG_DIR / "page_cost.json").write_text(json.dumps({"percent_of_one_core": busy, "js_heap_mb": heap_mb,
+                                                            "window_s": round(dt, 1)}, indent=2))
+        assert busy["TaskDuration"] < 60, busy  # loose: the page must leave the main thread mostly idle
     finally:
         page.close()

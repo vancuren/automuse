@@ -1,6 +1,6 @@
 # Workstream ui: the operator UI
 
-Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 85 tests (plus 6 opt-in tests that run against the real patched backend).
+Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 86 tests (plus 6 opt-in tests that run against the real patched backend).
 
 Screenshots are in `media/ui_screens/` (copied to `$MHD_HOME/media/shared/ui/`):
 - `ui_twin_follow.png`
@@ -186,12 +186,12 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 
 ## Test results
 
-85 passed and 6 skipped (the opt-in gov tests) in about 110 s at 00:55 ET. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3 and again at 2587456 (00:48).
+86 passed and 6 skipped (the opt-in gov tests) in about 2 min at 00:56 ET. From the repo root, including the scaffold's contract tests: 92 passed, 6 skipped. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3 and again at 2587456 (00:48).
 
 | File | Count | Checks |
 |---|---|---|
 | `test_ui_browser.py` | 33 | See the list below. |
-| `test_ui_production.py` | 3 | The minified build (`--base /ui/`), served same-origin by the mock: worker chunk present, heartbeat 5 Hz from one socket, Esc, Space and L work, HTTP fallback works, only the configured backend URL is in the bundle, and a page reload costs under 1 s of heartbeat. |
+| `test_ui_production.py` | 4 | The minified build (`--base /ui/`), served same-origin by the mock: worker chunk present, heartbeat 5 Hz from one socket, Esc, Space and L work, HTTP fallback works, only the configured backend URL is in the bundle, a page reload costs under 1 s of heartbeat, and the dashboard's main-thread cost is measured. |
 | `test_ui_latency.py` | 1 | Measurements below, with loose regression bounds. |
 | `test_ui_screenshots.py` | 2 | Twin and real screenshots. |
 | `test_ui_mock_backend.py` | 11 | The mock validates and judges messages correctly, latches E-STOP, needs the exact ARM phrase, and its masks stay inside their boxes. |
@@ -246,6 +246,7 @@ All measurements are loopback (127.0.0.1) against the mock backend, using the vi
 | Control socket reconnect after the backend comes back | 190 to 1320 ms | | Depends on where the 2 s-capped backoff is. |
 | axes rate while a key is held | 30.5 Hz | | |
 | Heartbeat gap across a page reload (production build) | 317 ms | | Under the governor's 1.5 s neutral threshold, so a reload mid-flight is survivable. |
+| Dashboard main-thread cost (production build, following, mask overlay, 10 Hz telemetry, 15 fps MJPEG) | 3.4 % of one core | | Script 1.1 %, layout 0.3 %, JS heap 5.2 MB; load average 5.5 at the time. Image decode and compositing run off the main thread and are not counted. |
 | Production bundle | 271 kB JS (87 kB gzip), 26 kB CSS, 3 kB worker | | |
 
 ## Wire behavior (what the backend will see)
