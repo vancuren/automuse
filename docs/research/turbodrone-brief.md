@@ -1,0 +1,37 @@
+# Turbodrone integration brief
+Facts verified by reading the repo (commit 2c09cf8, 2026-06-22) at
+/private/tmp/claude-501/-Users-russellvancuren-Projects-MetaHackathonDrone/a9780c4a-b149-4e3b-98c5-8dcb0c8772ee/scratchpad/ref/turbodrone
+
+## Runtime shape
+- backend/web_server.py: FastAPI app. lifespan() reads DRONE_TYPE (s2x, wifi_uav*, cooingdv*, wifi_cam, x69_lg, debug), builds (RC model, RC protocol adapter, video adapter class + args), starts VideoReceiverService (thread; recreates the adapter on failure every 5 s) -> RAW_Q (DroppingQueue maxsize 2) -> FramePump thread -> FrameHub (GET /mjpeg multipart stream) and, if PLUGINS_ENABLED=true, a plugin frame queue (DroppingQueue 100).
+- FlightController (services/flight_controller.py): thread at CONTROL_RATE (x69_lg default 25 Hz). Each tick: model.update(dt, axes) then protocol.build_control_packet(model) -> protocol.send_control_packet(). Axes held in [-1, 1]; set_axes_from(source, throttle, yaw, pitch, roll) clamps and records the source.
+- Strategies (control/strategies.py): DirectStrategy maps normalized axes straight to raw stick range (optional expo); IncrementalStrategy ramps like keyboard keys. The existing follow plugin switches the model to DirectStrategy with expo 0 while running and restores afterwards.
+- WebSocket /ws JSON messages: {"type":"axes","mode":"abs"|"incremental"|"mouse","throttle","yaw","pitch","roll"[,"camera_tilt_direction"]}; {"type":"takeoff"}; {"type":"land"}; {"type":"estop"}; {"type":"set_speed_index","speed_index":0..2}; {"type":"set_camera_tilt","camera_tilt_direction":+1|-1|0}; {"type":"set_profile","name":...}. While any plugin runs, frontend axes are ignored entirely; takeoff/land/estop still pass through.
+- Overlays: WebSocket /ws/overlays broadcasts JSON lists such as [{"type":"rect","coords":[x1,y1,x2,y2] normalized 0..1,"color":"lime"}]; an empty list clears.
+- REST: GET /capabilities; GET /plugins {available, running}; POST /plugins/{ClassName}/start|stop (exactly one plugin may run at a time; 409 otherwise).
+- Frames: models/video_frame.py VideoFrame(frame_id, data=JPEG bytes, format="jpeg", timestamp=time.time()). Plugins decode with cv2.imdecode.
+- Plugin API (plugins/base.py, plugins/manager.py): subclass Plugin(name, flight_controller, frame_source iterator, overlay_queue); implement _on_start (spawn your own thread) and optional _on_stop; drive the drone with self.fc.set_axes_from(name, throttle, yaw, pitch, roll); draw with self.send_overlay(list). PluginManager auto-discovers every Plugin subclass under backend/plugins/ via pkgutil.walk_packages; the class name is the plugin name.
+- Existing FollowPlugin (plugins/follow/*): YOLOv10n via ultralytics, 20 fps cap, picks the largest person, bang-bang controller: yaw +/-20 % when |x_error| > 0.15, pitch +/-20 % when box width leaves [0.30, 0.80]; throttle and roll always 0; no target identity, no occlusion handling, no lost-target search, no latency compensation.
+- Debug drone type: DRONE_TYPE=debug -> DebugRcProtocolAdapter (logs packets) + DebugVideoProtocolAdapter (local webcam -> JPEG). Proves the whole stack runs without hardware and is the natural template for a sim drone type.
+- Frontend: React 19 + Vite 6 + Tailwind 4; talks to ws://localhost:8000/ws, /ws/overlays, /mjpeg, /plugins. Keyboard, gamepad, and mouse control; plugin toggle buttons; camera tilt and speed controls.
+- Python deps (backend/requirements.txt, unpinned): numpy, opencv-python, fastapi, uvicorn[standard], python-multipart, starlette, python-dotenv, ultralytics (YOLO; the only non-Meta ML dependency and only used by FollowPlugin).
+- License: Apache-2.0 with NOTICE file; a derived project must keep LICENSE and the NOTICE attribution block. Repo last commit 2026-06-22.
+
+## X69 (x69_lg) wire protocol
+- The drone is a Wi-Fi access point; drone IP 172.16.11.1; host gets a 172.16.11.x address via DHCP.
+- RC payload (20 bytes): 66 14 [roll][pitch][throttle][yaw][flags1][flags2] + 10 zero bytes + [XOR of bytes 2..17] + 99. Sticks are 0..255 with center 128 (StickRange(0,128,255)).
+- The payload is wrapped: ca 47 d5 00 + uint32 LE length (20) + payload = 28-byte datagram -> UDP 172.16.11.1:23458 at 25 Hz. Keepalive ca 47 d1 00 00 00 00 00 once per second to the same port.
+- flags1 (byte 6): takeoff 0x01, emergency stop 0x02, gyro calibrate 0x04, flip 0x08, land 0x80. One-shot: set for one packet, then cleared by the adapter. flags2 (byte 7): camera servo tilt up 0x08, tilt down 0x10, momentary while held.
+- Speed index 0/1/2 scales roll and pitch deflection by 0.55/0.75/1.0 (throttle and yaw unscaled). Default index 1.
+- Video, default mode "rtsp": OpenCV+FFmpeg opens rtsp://172.16.11.1/live/ch00_1 (HEVC 1280x720, TCP transport, nobuffer/low_delay) and re-encodes each frame to JPEG q85 at full 1280x720; reconnects after 5 s without frames.
+- Video, mode "h265": host sends OPEN_STREAM a8 8a 20 00 08 00 00 00 01 00 02 00 00 00 d2 04 (and CLOSE a8 8a 21 00 06 00 00 00 01 00 00 00 00 00, IFRAME request a8 8a 24 00 02 00 00 00 01 00) to UDP 172.16.11.1:23459 from local port 23459, re-sent every second; receives on UDP 1234 datagrams with a 32-byte header: magic c6 6c a5 5a, uint32 LE frame_len @4, frame_id @8, frame_type @17, uint16 LE total_chunks @20, chunk_index @22, uint32 LE payload_offset @24, payload_len @28, then payload. Reassembled Annex-B HEVC frames are piped to ffmpeg (-f hevc, +genpts) and come back as MJPEG 640 px wide at 15 fps (q:v 12). Low-latency ffmpeg flags broke decoding on real hardware; +genpts buffering was needed.
+- Legacy "jpeg" mode (UDP 7070/7080) is usually unavailable on current firmware.
+
+## Seams for this project
+1. Digital twin, two viable boundaries:
+   (a) Protocol-level emulator: a separate process that binds UDP 23458 (RC in), UDP 23459 (video control in), and serves RTSP /live/ch00_1 on port 554 (or UDP 1234 chunked H.265) on a loopback alias so the production path DRONE_TYPE=x69_lg runs byte-for-byte unchanged against the twin. On macOS: sudo ifconfig lo0 alias 172.16.11.1 255.255.255.0 (the sim binds that address; the backend keeps its default DRONE_IP). This exercises the real RC packet builder, checksum, keepalive, RTSP client, reconnect logic, and ffmpeg path.
+   (b) DRONE_TYPE=sim: a SimRcProtocolAdapter and SimVideoProtocolAdapter that talk to the simulator over a local socket (ZeroMQ, WebSocket, or shared memory). Simpler and lower latency, but skips the X69 protocol code.
+   Both can coexist; (b) for fast iteration, (a) for pre-flight validation.
+2. Perception + control: a new plugin class (e.g. SamTrackPlugin) replacing FollowPlugin: consumes JPEG frames, runs SAM 3.1 (text prompt -> mask/box) plus a light tracker, runs the controller, sets axes, emits overlays (rect now; mask polygons would need a small frontend overlay extension).
+3. Natural-language command interface: either new endpoints on the same FastAPI app (POST /command {"text"}; WS events for status) or a separate "mission" service that owns voice -> ASR -> LLM intent -> plugin start/stop with a target spec. The LLM must produce a structured intent (target description, action, constraints) and the plugin takes it as config.
+4. Safety: a FlightController-level guard (axis magnitude caps, slew-rate limits, dead-man timeout that zeroes sticks when the plugin stops updating, max session time, battery timer), estop via model.emergency_stop() (already wired to the 0x02 flag), operator override from the frontend/keyboard that preempts the plugin.
