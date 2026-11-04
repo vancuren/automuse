@@ -346,6 +346,7 @@ $MHD_PY scripts/apply_sysid.py --feedforward on --write        # feed-forward on
   - `wire.deadband_counts` for yaw and pitch.
 - Every changed line is tagged `[measured <time>: source]`.
 - It refuses values outside sanity ranges, unless you pass `--force`.
+- If the measured forward speed per count is above 0.015 m/s (the model is 0.012), lower `caps.autopilot.pitch` in `config/real/governor.yaml` so that cap x speed stays at or below 0.4 m/s. For example, 0.024 m/s per count means cap 16. A faster drone overshoots further toward an approaching person (safety review 3).
 - Feed-forward passed the ±30 % K robustness test in the twin tonight: bearing RMS 0.062-0.089 rad, against 0.130 for P-only.
 - Pass: it prints `wrote config/real/...`, and the next backend start loads it without error.
 - Then land, take the battery out, and send `logs/sysid-*.json` to Claude to refit the twin (`config/twin/x69.yaml`).
@@ -354,12 +355,16 @@ $MHD_PY scripts/apply_sysid.py --feedforward on --write        # feed-forward on
 
 Rules:
 - One person stays on LAND and E-STOP.
-- The subject walks at 0.3 m/s or less, beside the flight line.
-  - The forward cap is about 0.38 m/s (modeled until Session B measures it).
-  - A faster walker makes the box shrink while the drone flies forward, which latches `wrong_way:pitch`. Press Resume.
-- Keep about 5 m clear behind the drone. Under a reversed pitch sign, "forward" flies it backward until the wrong-way check stops it: within about 2 m in the closed-loop tests.
-- The autopilot never backs up and never flies toward a person. When someone walks up to it, it holds.
-- It follows forward only a subject within about 6 m (box at least 64 px wide). Farther away, it only turns.
+- The subject walks **away** from the drone only, beside the flight line, at 0.2 m/s or slower, or in walk, stop, wait steps.
+  - Never walk back toward the drone: it does not back away. Stop at least 2 m from it, or walk around it.
+  - At 0.3 m/s and faster, the box shrinks while the drone flies forward, which latches `wrong_way:pitch`. Safety review 3 saw this in 4 of 18 runs at 0.3 m/s and 0 of 18 at 0.2 m/s. Press Resume.
+  - The forward cap is about 0.38 m/s, modeled until Session B measures it.
+- Keep **at least 6 m clear behind the drone**. The operator and the safety person stand to the side, not behind it, with LAND ready.
+  - Under a reversed pitch sign, "forward" flies the drone backward. The wrong-way check stops that within about 2.4 m.
+  - But a person walking toward a reversed drone pushes it back 5-6 m before anything latches. Only the Session B sign checks protect against that: 3.3, 3.4, and sysid's `direction OK`.
+- The autopilot never backs up.
+  - It flies toward the subject only while they are farther than about 2.7 m. It follows forward only a subject within about 6 m (box at least 64 px wide); farther away, it only turns.
+  - If the subject walks toward it, it can overshoot to about 1.5 m on the 1 s video latency, then it holds. With a drone 2x faster than modeled, about 0.7 m.
 - Stop at the first surprise.
 
 If you are working solo:
@@ -470,6 +475,7 @@ Safety flags (the Safety panel):
 | `wrong_way:pitch` | the pitch sign is reversed, or the subject walked away faster than the drone can follow (about 0.38 m/s) | first forward move of the flight: land, then check sysid's `pitch direction` line and 3.3. Otherwise walk slower and press Resume |
 | FOLLOW, but it never moves forward | the subject is more than about 6 m away (gate `too_far` in the control log), or not fully in frame | walk back toward the drone |
 | The mission is gone after a landing | touchdown ends the mission | say the follow command again after takeoff |
+| A new mission is acked `"paused": true` on a later flight | a wrong-way hold from an earlier flight is still latched (on purpose) | find out what caused it (3.3), then press Resume |
 | Voice not heard | Microphone permission, or prop noise | `mic_check`; use a headset mic (`--agent-extra "--mic-rate 16000"` for Bluetooth) |
 | `run_stack: port 8000 is already in use` | an old backend is still running | `lsof -nP -iTCP:8000 -sTCP:LISTEN`; Ctrl-C it in its window |
 | A component EXITED banner in run_stack | that process died; see `logs/stack-<time>-real/<name>.log` | backend: restart it with the printed command (the drone gets no RC until then) |

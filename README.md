@@ -172,7 +172,9 @@ sticks on the wire in 0.42-0.44 s.
   - These limits came out of them:
     - the autopilot never backs up, because that is its only path toward a person under a reversed sign;
     - it flies forward only toward a subject within about 6 m, because a farther runaway is too slow to see.
-  - Result: a reversed drone never moved toward the person, and was stopped within 2.2 m.
+  - Result: a reversed drone never moved toward the person.
+  - It drifted at most about 2.4 m away at the modeled speed. It drifted farther if the drone is much faster than modeled, or if a person walks toward it.
+  - So the morning runbook requires a hand sign check before any forward follow.
 - **Caps.** First-flight autopilot caps: yaw 38 and pitch 32 wire counts out of 127, roll and throttle
   0. Forward motion only when the box is clear of the top and bottom edges, near the center,
   within about 6 m (at least 64 px wide), and confirmed by SAM within the last 1.5 s; otherwise

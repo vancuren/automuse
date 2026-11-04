@@ -124,7 +124,62 @@ the backward half of the pitch wrong-way check fired when the walker approached 
 deliberately slow back-off, so the box grew while the drone backed up (`wrong_way:pitch` in 463 of
 684 telemetry samples; bearing RMS 0.239 rad). Commit `6bb13fb` turned the backward half off by
 default; the 1 m backward-travel budget and the standoff rule bound that case, and the forward half
-(the blind runaway) stays on.
+(the blind runaway) stays on. Two later reviews reversed that (section 1e). The autopilot now never backs
+up at all, so this case cannot arise.
+
+### 1e. Three safety reviews of the tuning (03:30-05:00)
+
+The tuning in 1a-1c made following smooth in the twin. Two more adversarial reviews then tested it
+hard: a closed loop with a REAL-mode governor, the base configs, and the plant's pitch sign reversed
+(`tests/gov/closed_loop_sim.py`, probes in `logs/review2/` and `logs/review3/`).
+
+| Review | Finding | Fix |
+|---|---|---|
+| 2 (03:30) | The near-cap requirement and the 12 % threshold left the forward pitch check blind to a reversed sign when the drone has a firmware deadband or is 10-20 % slower than modeled: 11-13 m runaways in 40 s | strict thresholds restored (`a0fcad4`) |
+| 2 | With the backward half off, the standoff back-off flew a reversed drone into the person | the standoff only hovers |
+| 2 | The real-mode backend accepted `config/twin/` files | `twin_only: true` is refused in real mode, and `run_backend.sh` takes real configs only from `config/` and `config/real/` |
+| 3 (04:30) | The pitch probe added after review 2 (hold still and compare the box rate) was fooled when the subject started walking, turned, or stopped during the hold: 4-18 m runaways | probe off (`6fde0a2`) |
+| 3 | Beyond about v x 2 s / 0.06 (7-14 m), no 2 s window can see a reversed runaway: 11-23 m | forward only toward a box at least 64 px wide (a person within about 5.9 m) |
+| 3 | The open-loop backing budget let a drone 2x faster than modeled reach the person | the autopilot never backs up |
+
+**Closed loop after the fixes.** 360 runs with a reversed pitch sign:
+- **Conditions:** speed 0.5-1.5x the model; deadband 0-10 counts, compensated or not; latency 1.0 and 1.5 s; subjects starting 2-9 m away, plus one walking toward the drone.
+- **Toward the person:** the drone never moved toward them. The closest approach was 1.58 m, which is where the approaching walker stopped.
+- **Away from the person:** at worst it drifted 2.2 m before the check or the gate stopped it.
+
+**Reviewer's check of the committed code (`6fde0a2`, review 3, about 3.7 M simulated ticks).** Verdict: safe with conditions for forward-only follow.
+- **Toward the person:** 0.000 m in every reversed run (432 attack runs and 2.4 M fuzzed ticks).
+- **Backward runaway:**
+  - 2.0-2.4 m at the modeled speed;
+  - 3.2-4.1 m with a drone 2x faster and an over-compensated deadband;
+  - at most 0.13 m from far starts.
+- **The one residual:** a person walking toward a reversed drone pushes it 5.4-6.0 m backward before anything latches, because the approaching person keeps the box large. Only the Session B sign check covers this.
+- **Correct-sign closing distance:** a correct drone closing on an approaching person stops 1.45 m from them at the modeled speed (0.74 m at 2x).
+- **Conditions in docs/RUNBOOK.md section 4:**
+  - the sign check by hand and with sysid;
+  - 6 m clear behind the drone;
+  - the walker moves away only, at 0.2 m/s or slower.
+
+**With a correct sign:**
+- **Never latched:** stationary subjects, and walkers at 0.2 m/s.
+- **Sometimes latched:** a walker heading away at 0.3 m/s latched a hover in 4 of 18 runs, because the drone lags at first.
+- **Usually latched:** at 0.5 m/s, faster than the drone can fly, 16 of 18.
+
+**SAM 3.1 in the loop.** The twin configs carry the same safety values as the real ones, so these runs also test the real thresholds for false trips. The commands are the same as in 1c.
+
+| | S1 | S2 | S3 |
+|---|---|---|---|
+| Run (ET) | 04:40 `e2e-20261104-044023-s1-sam_mlx` | 04:41 `e2e-20261104-044158-s2-sam_mlx` | 04:43 `e2e-20261104-044335-s3-sam_mlx` |
+| Time in FOLLOW | 119 of 119 samples | 107 of 119 samples (5 DOUBT, 6 CONFIRM, 1 LOST) | 119 of 119 samples |
+| Bearing RMS (1c) | **0.103 rad** (0.092) | **0.124 rad** (0.103) | **0.127 rad** (0.089) |
+| Lock rate | 0.953 | 0.968 | 0.960 |
+| Frames matched to another actor | 0 | 42 of 1711 (2.5%) | 0 |
+| Identity switches / track-id changes | 0 / 0 | 12 / 1 | 0 / 0 |
+| Wrong-way hovers | 0 | 0 | 0 |
+| Samples flying forward while following | 144 | 90 | 56 |
+
+- **Why the bearing RMS is higher:** the drone no longer backs away from a subject that comes closer, and a close subject crosses the frame faster.
+- **S3 intent:** S3 used category `car` and color `green`, as the intent model returns for "follow the green car". 1c used the script's defaults, `person` and `blue`.
 
 ### 1d. The whole chain with voice (demo takes)
 
@@ -147,6 +202,9 @@ for the video; docs/ws2/demo.md has all seven.
 | Subject in frame | 100% | 94.0% (occlusions) | 100% |
 | Locked / frames on another actor | 98.9% / 0 | 100% / 18 (2.0%) | 100% / 0 |
 | Spoken land: listener decode / LANDING after the line ended | 261 ms / 0.32 s | 286 ms / 0.32 s | 248 ms / 0.26 s |
+
+These takes were recorded at 03:24-03:51, before the safety changes in 1e: the drone could still back
+up, and after the spoken land the autopilot said "I lost the subject" (now silent while landing).
 
 Every take landed through the open-mic listener, never the L key. The second S2 take (03:39) put 54
 of 916 follow frames (5.9%) on the red walker, including 1.6 s at the second crossing, which matches
@@ -459,7 +517,7 @@ The real drone's camera latency is measured in Session A with the screen counter
 
 Source: [docs/ws/gov.md](ws/gov.md).
 
-**Tests.** `tests/gov`: 185 tests, all passing on `integration` (docs/STATUS.md, 03:10 ET). At the
+**Tests.** `tests/gov`: 220 tests, all passing on `integration` at 04:56 ET (185 at 03:10). At the
 end of the review-fix pass (02:20 ET) there were 179:
 
 | Group | Tests |
@@ -521,20 +579,35 @@ the sim and the twin, not on the drone; the throttle-ramp landing fallback is bu
 Session A shows whether the land flag lands the drone; first-flight parameters are guesses until
 Sessions A and B.
 
+**Second and third adversarial reviews (03:30-05:00 ET).** These tested the twin-tuning changes and
+then the fixes, mostly in closed loop with the pitch sign reversed. Section 1e has the findings and
+the outcome; the probes are in `logs/review2/` and `logs/review3/`.
+
+What review 3 checked, with the probe on and with it off:
+- **Fuzz:** 1.2 M fuzzed ticks with commands, human input, pauses, E-stops, missions and dropouts injected. 0 exceptions and 0 invariant violations.
+- **Invariants:** a latch tick sends neutral sticks, and the probe and a hover hold never coexist.
+- **Regressions:** the new tests in `tests/gov/test_reversed_sign_closed_loop.py` turn its findings into regression tests:
+  - a reversed sign is stopped within 1.5 m (2 m with an unmeasured deadband);
+  - a far subject is never approached;
+  - the drone never moves toward the person;
+  - a correct-sign stationary subject trips nothing.
+
 ## 7. Test suites and spend
 
-Tests on `integration`, all passing (docs/STATUS.md, 03:10 ET):
+Tests on `integration`, all passing at 04:56 ET (`logs/tests-20261104-044601/`):
 
 | Suite | Tests | Run with |
 |---|---|---|
-| governor and autopilot (`tests/gov`) | 185 | `$MHD_PY -m pytest tests/gov -q -p no:logging` |
+| governor and autopilot (`tests/gov`) | 220 | `$MHD_PY -m pytest tests/gov -q -p no:logging` |
 | voice agent (`tests/agent`) | 200 (plus 2 opt-in real-API tests) | `$MHD_ML_PY -m pytest tests/agent -q` |
 | twin (`tests/twin`) | 65 | `$MHD_PY -m pytest tests/twin -q` |
-| UI (`tests/ui`) | 89 (plus 6 opt-in against the real backend) | `$MHD_PY -m pytest tests/ui` |
+| UI (`tests/ui`) | 89, plus 6 against the real governed backend (run that module on its own: `UI_GOV_TREE=$MHD_TREE $MHD_PY -m pytest tests/ui/test_ui_gov_backend.py`) | `$MHD_PY -m pytest tests/ui` |
 | perception (`tests/percep`) | 60 | `$MHD_ML_PY -m pytest tests/percep -q` |
 | training (`tests/train`) | 38 | `$MHD_PY -m pytest tests/train -q` |
-| secret scan (`tests/docs`, added by the docs workstream after 03:10) | 5 | `$MHD_PY -m pytest -q tests/docs` |
-| upstream turbodrone x69_lg | 15 | `cd turbodrone/backend && $MHD_PY -m unittest tests.test_x69_lg_protocol tests.test_x69_lg_rtsp_video_protocol tests.test_x69_lg_video_mode` |
+| morning tools (`tests/ops`) | 14, plus 3 opt-in full-stack runs against the twin (`OPS_STACK=1`) | `$MHD_PY -m pytest -q tests/ops` |
+| secret scan (`tests/docs`) | 5 | `$MHD_PY -m pytest -q tests/docs` |
+| contracts and intent spec (`tests/test_*.py`) | 6 | `$MHD_PY -m pytest -q tests/test_contracts.py tests/test_intent_spec.py` |
+| upstream turbodrone x69_lg | 20 | `cd turbodrone/backend && $MHD_PY -m pytest -q tests/test_x69_lg_protocol.py tests/test_x69_lg_rtsp_video_protocol.py tests/test_x69_lg_video_mode.py tests/test_x69_lg_jpeg_video_protocol.py` |
 
 Paid API spend overnight, from `logs/spend.jsonl` (115 entries): **$2.52** in total.
 
