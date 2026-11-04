@@ -50,7 +50,8 @@ from utils.wifi_uav_variants import (
 
 # --- MHD patch: safety governor, FLIGHT_MODE gate, capture-time estimate (src/mhd/backend) ---
 from mhd.backend.modes import apply_env_defaults, validate_env
-from mhd.backend.hub import Hub, install_routes
+from mhd.backend.hub import Hub, cors_origin_regex, install_routes
+
 from mhd.backend.capture import TimedX69RtspAdapter
 from mhd.governor.turbodrone_glue import PacedFlightController
 
@@ -541,8 +542,9 @@ app = FastAPI(title="Drone web adapter", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    # MHD patch: loopback pages only (the UI dev server is http://localhost:5173). Was "*".
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?",
+    # MHD patch: loopback pages only (the UI dev server is http://localhost:5173), plus
+    # MHD_EXTRA_ORIGIN_HOSTS. Was "*".
+    allow_origin_regex=cors_origin_regex(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
