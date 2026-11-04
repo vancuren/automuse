@@ -19,5 +19,3 @@ starlette
 # python-dotenv
 python-dotenv
 
-# YOLOv10
-ultralytics

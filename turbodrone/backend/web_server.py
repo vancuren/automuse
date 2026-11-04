@@ -48,6 +48,16 @@ from utils.wifi_uav_variants import (
     resolve_wifi_uav_variant,
 )
 
+# --- MHD patch: safety governor, FLIGHT_MODE gate, capture-time estimate (src/mhd/backend) ---
+from mhd.backend.modes import apply_env_defaults, validate_env
+from mhd.backend.hub import Hub, cors_origin_regex, install_routes
+
+from mhd.backend.capture import TimedX69RtspAdapter
+from mhd.governor.turbodrone_glue import PacedFlightController
+
+apply_env_defaults()   # RTSP 2 s socket timeout, 1 HEVC decoder thread, PLUGINS_ENABLED=false
+HUB = Hub()
+
 COOINGDV_DRONE_TYPES = {"cooingdv", "cooingdv_jieli"}
 
 
@@ -245,7 +255,9 @@ async def lifespan(app: FastAPI):
     # Startup
     global flight_controller, receiver, plugin_manager, active_drone_type, control_capabilities
 
-    drone_type = os.getenv("DRONE_TYPE", "s2x").lower()
+    # MHD patch: FLIGHT_MODE=twin|real is required; twin is loopback-only, real is 172.16.11.1 only.
+    mhd_env = validate_env()   # raises ModeError -> uvicorn refuses to start
+    drone_type = mhd_env.drone_type
     active_drone_type = drone_type
     control_capabilities = _control_capabilities_for_drone(drone_type)
     
@@ -372,8 +384,9 @@ async def lifespan(app: FastAPI):
         local_port = int(os.getenv("X69_LG_LOCAL_CONTROL_PORT", 0))
         x69_debug = os.getenv("X69_LG_VIDEO_DEBUG", "false").lower() in ("1", "true", "yes", "on")
 
-        model = X69LgRcModel()
-        rc_proto = X69LgRcProtocolAdapter(drone_ip, ctrl_port, local_port=local_port)
+        model = HUB.setup(mhd_env)   # MHD patch: X69 model with the governor as its strategy
+        # MHD patch: upstream adapter + keepalive retry and link counters for telemetry
+        rc_proto = HUB.make_rc_adapter(drone_ip, ctrl_port, local_port=local_port)
 
         if x69_video_mode == "jpeg":
             logger.info("[main] Using X69/LG JPEG video (legacy UDP 7070/7080 path).")
@@ -394,8 +407,9 @@ async def lifespan(app: FastAPI):
             logger.info("[main] Using X69/LG RTSP video.")
             default_rtsp_port = 554
             video_port = int(os.getenv("VIDEO_PORT", os.getenv("X69_LG_RTSP_PORT", default_rtsp_port)))
-            video_adapter_cls = X69LgRtspVideoProtocolAdapter
+            video_adapter_cls = TimedX69RtspAdapter   # MHD patch: capture-time estimate, 2 s read timeout
             video_adapter_args = {
+                "flight_mode": mhd_env.flight_mode,
                 "drone_ip": drone_ip,
                 "control_port": int(os.getenv("X69_LG_VIDEO_CONTROL_PORT", 23459)),
                 "video_port": video_port,
@@ -465,8 +479,15 @@ async def lifespan(app: FastAPI):
     except (TypeError, ValueError):
         control_rate = default_control_rate
 
-    flight_controller = FlightController(model, rc_proto, control_rate)
+    flight_controller = PacedFlightController(model, rc_proto, control_rate)   # MHD patch: deadline pacing
     flight_controller.start()
+    await HUB.start()
+    # MHD patch: land on the FIRST Ctrl-C / SIGTERM (uvicorn otherwise waits for /mjpeg to close
+    # before the lifespan shutdown), and end every MJPEG stream so the shutdown can proceed.
+    _loop = asyncio.get_running_loop()
+    HUB.on_shutdown(lambda: _loop.call_soon_threadsafe(
+        lambda: asyncio.ensure_future(FRAME_HUB.publish(None))))
+    HUB.install_signal_hooks()
 
     # 3. Plugins (optional)
     plugin_frame_q: Optional[queue.Queue] = None
@@ -490,7 +511,7 @@ async def lifespan(app: FastAPI):
     main_loop = asyncio.get_running_loop()
     _pump_thread = threading.Thread(
         target=_frame_pump_worker,
-        args=(RAW_Q, plugin_frame_q, FRAME_HUB, _pump_stop, main_loop),
+        args=(RAW_Q, plugin_frame_q, FRAME_HUB, _pump_stop, main_loop, HUB.on_frame),
         name="FramePump",
         daemon=True,
     )
@@ -499,6 +520,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    await HUB.shutdown()   # MHD patch: neutral sticks + land for 0.5 s while the RC thread still runs
     if overlay_broadcaster:
         overlay_broadcaster.stop()
     if plugin_manager:
@@ -511,6 +533,7 @@ async def lifespan(app: FastAPI):
         _pump_stop.set()
     if _pump_thread:
         _pump_thread.join(timeout=1.0)
+    HUB.close()
 
 # ───────────────────────────────────────────────────────────────
 # FastAPI app + permissive CORS (tighten in production!)
@@ -519,10 +542,14 @@ app = FastAPI(title="Drone web adapter", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: restrict in prod
+    # MHD patch: loopback pages only (the UI dev server is http://localhost:5173), plus
+    # MHD_EXTRA_ORIGIN_HOSTS. Was "*".
+    allow_origin_regex=cors_origin_regex(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+install_routes(app, HUB)   # MHD patch: /command /mission /state /ws/telemetry /ws/frames /ws/subject /ws/agent
 
 # ───────────────────────────────────────────────────────────────
 # Global objects (single-drone)
@@ -616,80 +643,11 @@ async def websocket_overlay_endpoint(websocket: WebSocket):
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket) -> None:
-    await websocket.accept()
-    try:
-        while True:
-            data = await websocket.receive_json()
-            if not flight_controller:
-                continue
-
-            msg_type = data.get("type")
-            if msg_type == "axes":
-                mode = data.get("mode", "abs")
-
-                # If any plugin is running, completely ignore frontend control commands
-                # Frontend should already be suppressing these, but this is a safety check
-                plugin_running = bool(plugin_manager and plugin_manager.running())
-
-                if plugin_running:
-                    # Plugin has full control - don't process frontend axes at all
-                    pass
-                else:
-                    # Switch strategy based on mode (treat "mouse" as absolute)
-                    try:
-                        if mode in ("abs", "mouse"):
-                            if not isinstance(flight_controller.model.strategy, DirectStrategy):
-                                flight_controller.model.set_strategy(DirectStrategy())
-                        else:
-                            if not isinstance(flight_controller.model.strategy, IncrementalStrategy):
-                                flight_controller.model.set_strategy(IncrementalStrategy())
-                    except Exception:
-                        pass
-
-                    throttle = float(data.get("throttle", 0))
-                    yaw      = float(data.get("yaw", 0))
-                    pitch    = float(data.get("pitch", 0))
-                    roll     = float(data.get("roll", 0))
-                    
-                    flight_controller.set_axes_from("frontend", throttle, yaw, pitch, roll)
-                    _apply_camera_tilt_command(flight_controller.model, data)
-            elif msg_type == "set_profile":
-                try:
-                    flight_controller.model.set_profile(data.get("name", "normal"))
-                except Exception:
-                    pass
-            elif msg_type in ("set_speed_index", "speed_index"):
-                try:
-                    flight_controller.model.set_speed_index(data.get("speed_index", data.get("value", 2)))
-                except Exception:
-                    pass
-            elif msg_type == "takeoff":
-                try:
-                    flight_controller.model.takeoff()
-                except Exception:
-                    pass
-            elif msg_type == "land":
-                try:
-                    flight_controller.model.land()
-                except Exception:
-                    pass
-            elif msg_type in ("estop", "emergency_stop"):
-                try:
-                    flight_controller.model.emergency_stop()
-                except Exception:
-                    try:
-                        flight_controller.model.stop_flag = True
-                    except Exception:
-                        pass
-            elif msg_type in ("set_camera_tilt", "camera_tilt"):
-                try:
-                    _apply_camera_tilt_command(flight_controller.model, data)
-                except Exception:
-                    pass
-    except WebSocketDisconnect:
-        logger.info("[WebSocket] Client disconnected")
-    except Exception as e:
-        logger.exception("[WebSocket] Error: %s", e)
+    # MHD patch: every UI message (axes, hb, cmd, legacy takeoff/land/estop/set_camera_tilt) goes to
+    # the safety governor. Nothing here calls set_strategy or writes sticks. set_profile and
+    # set_speed_index are ignored. A disconnect zeroes human input. See src/mhd/backend/hub.py.
+    # HUB.serve_ui checks the Origin header, then accepts.
+    await HUB.serve_ui(websocket)
 
 # ───────────────────────────────────────────────────────────────
 # Video streaming
@@ -701,6 +659,7 @@ def _frame_pump_worker(
     frame_hub: FrameHub,
     stop_event: threading.Event,
     loop: asyncio.AbstractEventLoop,
+    on_frame=None,   # MHD patch: HUB.on_frame (newest-frame store + governor video age)
 ):
     """
     This worker runs in a separate thread and pumps frames from the
@@ -717,6 +676,8 @@ def _frame_pump_worker(
             if frame:
                 first_frame_seen = True
                 last_frame_time = time.monotonic()
+                if on_frame is not None:
+                    on_frame(frame)
                 # Send to MJPEG/overlay pipelines immediately
                 asyncio.run_coroutine_threadsafe(frame_hub.publish(frame.data), loop)
                 if plugin_q is not None:
@@ -738,6 +699,8 @@ def _frame_pump_worker(
             if frame:
                 last_frame_time = time.monotonic()
                 timed_out = False
+                if on_frame is not None:
+                    on_frame(frame)
                 try:
                     asyncio.run_coroutine_threadsafe(frame_hub.publish(frame.data), loop)
                 except Exception:
@@ -768,8 +731,9 @@ async def mjpeg_stream():
         try:
             while True:
                 frame = await q.get()
-                if frame is None:
+                if frame is None or HUB.shutting_down:   # MHD patch: end streams on shutdown
                     break
+
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
