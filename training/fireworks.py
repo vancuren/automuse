@@ -24,6 +24,13 @@ Commands (run with $MHD_PY training/fireworks.py <cmd> ...):
   down      --deployment-id D                  scale to zero replicas (stops GPU billing)
   delete    --deployment-id D                  delete the deployment
   list                                         list deployments, deployed models, SFT jobs, datasets
+  train     [--smoke] [--output-model M]       upload train/valid, start SFT (rank 16 x 2 epochs, falling back
+                                               to the free-path defaults rank 8 x 1 epoch), wait for it
+
+Status on 2026-11-04 00:00 ET: this account gets 403/400 "dataset uploads are temporarily disabled" and
+"model creation, uploads and preparation are temporarily disabled, please contact Fireworks AI to get
+access" (code 9), so `upload`, `sft` and `train` cannot run until Fireworks enables uploads. Base-model
+deployments work (deploy --plain).
 """
 from __future__ import annotations
 
@@ -319,6 +326,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         s.add_argument("--plain", action="store_true",
                        help="deploy: base model only, min 0 / max 1, scale to zero after 10 idle minutes")
     sub.add_parser("list")
+    s = sub.add_parser("train")
+    s.add_argument("--smoke", action="store_true", help="30-row smoke job only")
+    s.add_argument("--output-model", default="glimmer-intent-v1")
     a = ap.parse_args(argv)
     fw = Fireworks()
 
@@ -374,6 +384,23 @@ def main(argv: Optional[list[str]] = None) -> None:
     elif a.cmd == "delete":
         fw.delete_deployment(a.deployment_id)
         print("deleted:", a.deployment_id)
+    elif a.cmd == "train":
+        data = ROOT / "training" / "data" / "fireworks"
+        if a.smoke:
+            fw.upload_dataset("glimmer-intent-smoke30", data / "smoke30.jsonl")
+            j = fw.create_sft("glimmer-intent-smoke-job", "glimmer-intent-smoke30", "glimmer-intent-smoke")
+            print(fw.wait_sft("glimmer-intent-smoke-job").get("state"))
+            return
+        fw.upload_dataset("glimmer-intent-train-v1", data / "train.jsonl")
+        fw.upload_dataset("glimmer-intent-valid-v1", data / "valid.jsonl")
+        job = f"{a.output_model}-job"
+        try:
+            fw.create_sft(job, "glimmer-intent-train-v1", a.output_model, epochs=2, lora_rank=16,
+                          eval_dataset="glimmer-intent-valid-v1")
+        except RuntimeError as e:
+            print(f"rank 16 x 2 epochs rejected ({str(e)[:200]}); using the free-path defaults", flush=True)
+            fw.create_sft(job, "glimmer-intent-train-v1", a.output_model, eval_dataset="glimmer-intent-valid-v1")
+        print(json.dumps(fw.wait_sft(job).get("state")))
     elif a.cmd == "list":
         allv = fw.list_all()
         for d in allv["deployments"]:

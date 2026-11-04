@@ -45,7 +45,9 @@ from training.common import DATA_DIR, LOG_DIR, log_spend, read_jsonl, spark_cost
 
 EVAL_LOG = LOG_DIR / "eval"
 DOCS = ROOT / "docs" / "eval"
-SETS = {"test": DATA_DIR / "test.jsonl", "gold": DATA_DIR / "gold.jsonl", "valid": DATA_DIR / "valid.jsonl"}
+SETS = {"test": DATA_DIR / "test.jsonl", "gold": DATA_DIR / "gold.jsonl", "valid": DATA_DIR / "valid.jsonl",
+        # gold spoken by macOS `say` (6 accents) and transcribed by Omnilingual ASR (training/gold_asr.py)
+        "gold_asr": DATA_DIR / "gold_asr.jsonl"}
 
 # ----------------------------------------------------------------------------------------------
 # Loading examples
@@ -353,7 +355,11 @@ PRETTY = {"glimmer-base-mlx": "Glimmer base (MLX 4-bit, local)",
           "glimmer-base-fireworks-schema": "Glimmer base + JSON schema (Fireworks)",
           "glimmer-lora-mlx": "Glimmer + LoRA (MLX 4-bit, local)",
           "glimmer-lora-fireworks": "Glimmer + LoRA (Fireworks)",
-          "spark-1.3": "Muse Spark 1.3 (Meta API, minimal effort)"}
+          "spark-1.3": "Muse Spark 1.3 (Meta API, minimal effort)",
+          "glimmer-base-fireworks-seq": "Glimmer base (Fireworks H200), latency run",
+          "glimmer-base-mlx-seq": "Glimmer base (MLX), latency run",
+          "glimmer-lora-mlx-seq": "Glimmer + LoRA (MLX), latency run",
+          "spark-1.3-seq": "Muse Spark 1.3, latency run"}
 
 
 def report(a: argparse.Namespace) -> dict:
@@ -384,7 +390,20 @@ def report(a: argparse.Namespace) -> dict:
 
 
 def _ordered(models: dict) -> list[str]:
-    return sorted(models, key=lambda m: (ORDER.index(m) if m in ORDER else 99, m))
+    """Quality runs in display order. '<label>-seq' runs are latency-only (one request at a time)."""
+    return sorted((m for m in models if not m.endswith("-seq")),
+                  key=lambda m: (ORDER.index(m) if m in ORDER else 99, m))
+
+
+def _latency(results: dict, m: str) -> tuple[Optional[dict], str]:
+    """Latency for a model: its sequential '-seq' run if there is one, else its own (concurrent) run."""
+    seq = results["models"].get(f"{m}-seq")
+    if seq:
+        r = next(iter(seq["sets"].values()))
+        return r["latency_ms"], f"sequential, n={r['n']}"
+    r = results["models"][m]["sets"].get("test") or results["models"][m]["sets"].get("gold")
+    conc = (r or {}).get("concurrency") or ["?"]
+    return (r or {}).get("latency_ms"), f"concurrency {conc[0]}"
 
 
 def summary_md(results: dict) -> str:
@@ -393,7 +412,9 @@ def summary_md(results: dict) -> str:
              "unseen template families (some Spark-paraphrased, ASR-noised); gold = 80 hand-written commands. "
              "Invalid replies count as wrong. Subject/category/color/distance are scored on follow examples only. "
              "Latency is client-side wall time per request.", ""]
-    for s in ("test", "gold"):
+    for s in ("test", "gold", "gold_asr"):
+        if not any(s in results["models"][m]["sets"] for m in results["models"]):
+            continue
         lines += [f"## {s} set", "",
                   "| model | n | valid JSON | action acc | subject exact | subject norm | category | color | distance |"
                   " clarify F1 | refuse F1 | refuse reason | land/hover | p50 ms | p95 ms | out tok |",
@@ -409,8 +430,18 @@ def summary_md(results: dict) -> str:
                 f"| {r['refuse']['f1']:.2f} | {_fmt(r['refuse_reason_accuracy'])} | {_fmt(r['land_hover_accuracy'])} "
                 f"| {_n(r['latency_ms']['p50'])} | {_n(r['latency_ms']['p95'])} | {_n(r['completion_tokens_mean'])} |")
         lines.append("")
-    lines += ["## Notes per model", ""]
+    lines += ["## Latency per command", "",
+              "Client-side wall time for one intent request. 'sequential' rows come from a separate run with one "
+              "request at a time (the agent's real pattern); others were measured under concurrent load.", "",
+              "| model | p50 ms | p95 ms | mean ms | measured |", "|---|---|---|---|---|"]
     for m in _ordered(results["models"]):
+        lat, how = _latency(results, m)
+        if lat:
+            lines.append(f"| {results['models'][m]['name']} | {_n(lat['p50'])} | {_n(lat['p95'])} | {_n(lat['mean'])} "
+                         f"| {how} |")
+    lines.append("")
+    lines += ["## Notes per model", ""]
+    for m in sorted(results["models"]):
         notes = results["models"][m]["notes"]
         if notes:
             lines.append(f"- **{results['models'][m]['name']}**: " + "; ".join(notes))
@@ -456,11 +487,11 @@ def chart(results: dict, path: Path) -> None:
         ax.spines[["top", "right"]].set_visible(False)
     ax = axes[2]
     for k, m in enumerate(models):
-        r = results["models"][m]["sets"].get("test") or results["models"][m]["sets"].get("gold")
-        if not r or r["latency_ms"]["p50"] is None:
+        lat, _how = _latency(results, m)
+        if not lat or lat["p50"] is None:
             continue
-        ax.bar(k - 0.2, r["latency_ms"]["p50"] / 1000, 0.38, color=palette[k % len(palette)])
-        ax.bar(k + 0.2, r["latency_ms"]["p95"] / 1000, 0.38, color=palette[k % len(palette)], alpha=0.5)
+        ax.bar(k - 0.2, lat["p50"] / 1000, 0.38, color=palette[k % len(palette)])
+        ax.bar(k + 0.2, lat["p95"] / 1000, 0.38, color=palette[k % len(palette)], alpha=0.5)
     ax.set_xticks(range(len(models)), [str(i + 1) for i in range(len(models))])
     ax.set_xlabel("model (legend order); solid p50, light p95")
     ax.set_ylabel("seconds per command")
