@@ -49,6 +49,8 @@ case "$MODE" in
 esac
 
 export DRONE_TYPE=x69_lg X69_LG_VIDEO_MODE=rtsp PLUGINS_ENABLED=false LOG_LEVEL
+# One HEVC decoder thread: frame threading adds ~0.7 s of latency (measured by the twin workstream).
+export OPENCV_FFMPEG_THREADS="${OPENCV_FFMPEG_THREADS:-1}"
 export CONTROL_PORT="${CONTROL_PORT:-23458}"
 [[ -n "$LOCAL_CONTROL_PORT" ]] && export X69_LG_LOCAL_CONTROL_PORT="$LOCAL_CONTROL_PORT"
 if [[ "$HEADLESS" == 1 ]]; then export GOVERNOR_TWIN_HEADLESS=1; else unset GOVERNOR_TWIN_HEADLESS; fi

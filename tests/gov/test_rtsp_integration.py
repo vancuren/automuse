@@ -79,6 +79,8 @@ def test_capture_estimate_timeouts_and_stall_burst(rtsp_stream, tmp_path, record
     from mhd.governor import Governor
     from mhd.governor.config import load_autopilot_config, load_governor_config
 
+    from mhd.backend.modes import apply_env_defaults
+    apply_env_defaults()                       # what web_server.py does at import
     gov = Governor(load_governor_config(), load_autopilot_config(), "twin", log_dir=tmp_path, tick_log=False)
     ad = TimedX69RtspAdapter(drone_ip="127.0.0.1", video_port=8105, rtsp_url=URL, flight_mode="real")
     ad.start()
@@ -91,6 +93,7 @@ def test_capture_estimate_timeouts_and_stall_burst(rtsp_stream, tmp_path, record
                 frames.append(f)
                 gov.note_frame(f.capture_ms, f.receive_ms)
         assert len(frames) >= 30, len(frames)
+        assert ad.decoder_threads == 1.0               # no HEVC frame threading (~0.7 s of latency)
         assert all(getattr(f, "capture_source", None) == "pts" for f in frames[5:])
         assert (frames[-1].width, frames[-1].height) == (1280, 720)
         excess = [f.receive_ms - f.capture_ms for f in frames[5:]]

@@ -27,6 +27,10 @@ class BackendEnv:
 def apply_env_defaults() -> None:
     """Call before turbodrone opens any RTSP stream."""
     os.environ.setdefault("X69_LG_RTSP_FFMPEG_OPTIONS", DEFAULT_RTSP_FFMPEG_OPTIONS)
+    # One HEVC decoder thread: OpenCV's FFmpeg backend otherwise frame-threads the decoder
+    # (16 threads here), which the twin workstream measured as ~0.7 s of added latency. A pts-based
+    # capture estimate cannot see that constant delay, so it would silently add to theta.
+    os.environ.setdefault("OPENCV_FFMPEG_THREADS", "1")
     os.environ.setdefault("PLUGINS_ENABLED", "false")
 
 

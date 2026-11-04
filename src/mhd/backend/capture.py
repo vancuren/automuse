@@ -128,6 +128,7 @@ class TimedX69RtspAdapter(_Base):
             offset_ms=float(os.getenv("MHD_CAPTURE_OFFSET_MS", "0") or 0))
         self._pending: Optional[tuple] = None
         self.capture_source_counts: dict[str, int] = {}
+        self.decoder_threads: Optional[float] = None
 
     def _open_stream(self) -> bool:
         with self._cap_lock:
@@ -142,7 +143,9 @@ class TimedX69RtspAdapter(_Base):
                 self._cap = _TimedCapture(cap, self._on_frame)
                 self.capture_clock.reset()
                 self._last_frame_time = time.time()
-                logger.info("[x69-lg-rtsp] Stream opened (timed): %s", self.rtsp_url)
+                self.decoder_threads = cap.get(cv2.CAP_PROP_N_THREADS)
+                logger.info("[x69-lg-rtsp] Stream opened (timed, %d decoder threads): %s",
+                            int(self.decoder_threads), self.rtsp_url)
                 return True
             cap.release()
             self._cap = None
