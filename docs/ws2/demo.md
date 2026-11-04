@@ -274,13 +274,13 @@ release, listener decodes 277 and 281 ms.
 
 ## For the video edit
 
-Beats in the recommended takes (video seconds; the UI and chase videos of a take start within 10 ms of each
-other, so the same times work for both):
+Beats in the recommended takes (video seconds; the UI and chase videos of a take start within about 0.1 s of
+each other, so the same times work for both):
 
 | Beat | S1 final (033642) | S2 (032802) | S3 (034231) |
 |---|---|---|---|
 | TAKEOFF click / AIRBORNE | 4.2 / 8.3 | 4.2 / 8.2 | 4.2 / 8.2 |
-| push-to-talk held (speech 11.4-13.8) | 10.9-14.2 | 10.9-14.2 | 10.9-13.5 |
+| push-to-talk held | 10.9-14.2 | 10.9-14.2 | 10.9-13.5 |
 | final transcript / mission card (glimmer-30b+lora) | 14.4 / 18.5 | 14.4 / 18.5 | 13.7 / 17.8 |
 | FOLLOW (locked) | 19.9 | 20.0 | 19.2 |
 | walkers cross (S2) | | about 29.5 and 50.5 (DOUBT 30.7; LOST and back 43.6-44.7; DOUBT 51.9) | |
