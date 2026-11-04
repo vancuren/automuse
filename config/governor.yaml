@@ -73,6 +73,11 @@ takeoff:
 
 landing:
   reassert_per_s: 5         # LANDING re-asserts the land flag (0x80) this many times per second, evenly spaced
+  throttle_ramp: false      # Fallback if Session A shows 0x80 does not land: while LANDING, also ramp the
+                            # throttle stick down (the land flag is still re-asserted). Tune in the twin,
+                            # check at low height in Session B before relying on it.
+  throttle_down: 0.35       # normalized throttle reached by the ramp (0.35 x 127 = 44 counts below center)
+  throttle_ramp_s: 1.0      # seconds from center to throttle_down
 
 estop:
   rearm_after_reset: true   # real mode: after estop_reset, ARM must be typed again before takeoff

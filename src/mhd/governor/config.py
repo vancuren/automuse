@@ -128,6 +128,9 @@ class TakeoffCfg:
 @dataclass(frozen=True)
 class LandingCfg:
     reassert_per_s: float = 5.0
+    throttle_ramp: bool = False      # PLAN 4.5 fallback if Session A shows 0x80 does not land
+    throttle_down: float = 0.35      # normalized throttle reached by the ramp (sent as -throttle_down)
+    throttle_ramp_s: float = 1.0     # time to reach it
 
 
 @dataclass(frozen=True)
@@ -208,6 +211,8 @@ class GovernorConfig:
             raise ConfigError("takeoff.hold_s >= 0 and takeoff.packets >= 1")
         if self.landing.reassert_per_s <= 0:
             raise ConfigError("landing.reassert_per_s must be > 0")
+        if not 0.0 <= self.landing.throttle_down <= 0.6 or self.landing.throttle_ramp_s <= 0:
+            raise ConfigError("landing.throttle_down must be 0..0.6 and throttle_ramp_s > 0")
         if self.human.stale_s <= 0 or self.observation.stale_min_s <= 0:
             raise ConfigError("staleness thresholds must be > 0")
         return self

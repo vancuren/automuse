@@ -29,7 +29,7 @@ from mhd.autopilot import AutopilotRun, autopilot_start, autopilot_step, autopil
 from mhd.contracts import AutopilotState, FlightState, Mission, SubjectObs, now_ms
 
 from . import logq
-from .config import AXES, AutopilotConfig, GovernorConfig, logs_dir
+from .config import AXES, AutopilotConfig, AxisInts, GovernorConfig, logs_dir
 from .flight_timer import FlightTimer
 from .stats import PeriodEstimator, SlidingMin
 from .tick_log import TickLog
@@ -573,6 +573,12 @@ class Governor:
         if source != "autopilot":
             self._slew = dict(ZERO)            # safety neutral and handover bypass the slew limiter
         wire = to_wire(sticks, cfg.wire, caps, compensate) if source in ("human", "autopilot") else neutral_wire()
+        if source == "landing" and cfg.landing.throttle_ramp:
+            # Fallback landing: throttle ramps down (other axes stay neutral). Uses the sign map, but
+            # not the human/autopilot caps, which keep throttle at 0 for the autopilot.
+            frac = min(1.0, (now - self._state_since) / (cfg.landing.throttle_ramp_s * 1000.0))
+            down = AxisInts(throttle=int(round(cfg.landing.throttle_down * cfg.wire.full_scale_counts)))
+            wire = to_wire({"throttle": -cfg.landing.throttle_down * frac}, cfg.wire, down, False)
 
         # 6. Flags.
         takeoff = land = stop = False

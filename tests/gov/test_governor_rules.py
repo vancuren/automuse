@@ -494,3 +494,25 @@ def test_tick_under_one_millisecond_while_following(rig):
     r.run(10.0)
     stats = r.g.tick_stats()
     assert stats["p99_us"] < 1000.0, stats
+
+
+def test_throttle_ramp_landing_fallback(rig):
+    r = rig(gov_overrides={"landing.throttle_ramp": True, "landing.throttle_down": 0.35,
+                           "landing.throttle_ramp_s": 1.0})
+    r.airborne()
+    r.g.command("land")
+    outs = [r.tick() for _ in range(r.ticks_for(2.0))]
+    thr = [o.wire["throttle"] - 128 for o in outs]
+    assert thr[0] == 0 and thr[12] == -round(0.35 * 127 * 12 * 0.04) and min(thr) == -44
+    assert all(b <= a for a, b in zip(thr, thr[1:]))            # monotonic ramp down
+    assert all(o.wire["yaw"] == 128 and o.wire["pitch"] == 128 for o in outs)
+    assert sum(o.land for o in outs) == 10                      # flag still re-asserted 5/s
+    r.g.command("confirm_touchdown")
+    assert r.tick().wire["throttle"] == 128
+
+
+def test_throttle_ramp_is_off_by_default(rig):
+    r = rig()
+    r.airborne()
+    r.g.command("land")
+    assert all(r.tick().wire["throttle"] == 128 for _ in range(50))

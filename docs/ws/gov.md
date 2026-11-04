@@ -20,7 +20,7 @@ Branch `ws/gov`. Built overnight 2026-11-03/04. PLAN.md sections 2, 4.1, 4.4, 4.
 | `turbodrone/backend/plugins/follow/` | Deleted, and `ultralytics` removed from `requirements.txt`. `PLUGINS_ENABLED=true` is refused. |
 | `turbodrone/backend/models/` | Restored. The root `.gitignore` rule `models/` matched it at any depth, so the import commit left the package out and the backend could not start from a clean checkout. The rule is now `/models/`, and the 15 upstream files are added byte-identical. |
 | `scripts/run_backend.sh` | Starts the patched backend from the checkout it lives in. |
-| `tests/gov/` | 104 pytest tests (see below). |
+| `tests/gov/` | 106 pytest tests (see below). |
 
 ## Run it
 
@@ -39,7 +39,7 @@ Without `--mode` it refuses to start. The server binds 127.0.0.1 and never uses 
 Tests and tools:
 
 ```bash
-$MHD_PY -m pytest tests/gov -q -p no:logging            # 104 tests, about 105 s (RTSP and live tests ~50 s)
+$MHD_PY -m pytest tests/gov -q -p no:logging            # 106 tests, about 105 s (RTSP and live tests ~50 s)
 (cd turbodrone/backend && $MHD_PY -m unittest tests.test_x69_lg_protocol tests.test_x69_lg_rtsp_video_protocol tests.test_x69_lg_video_mode)
 $MHD_PY -m mhd.autopilot.sim                             # step + S1 at total delays 0.6 / 1.0 / 1.5 s
 $MHD_PY -m mhd.autopilot.sim --ff --k-scale 0.7 1.0 1.3  # feed-forward robustness to K error
@@ -60,8 +60,8 @@ It refuses unless AIRBORNE, aborts the moment the drone isn't, and flies each am
 
 ## Test results (final run, 00:43 ET)
 
-- `tests/gov`: **104 passed, 0 failed.**
-  - 40 governor rule tests (`test_governor_rules.py`).
+- `tests/gov`: **106 passed, 0 failed.**
+  - 42 governor rule tests (`test_governor_rules.py`), including the throttle-ramp landing fallback.
   - 14 autopilot lifecycle and geometry tests.
   - 7 turbodrone glue tests.
   - 2 UDP wire tests (paced and upstream FlightController).
@@ -218,7 +218,8 @@ Closed loop (`mhd.autopilot.sim`): kinematic plant with yaw lag 0.15 s and forwa
 - **Feed-forward is off by default.** The in-process sim shows it is robust to ±30% K error and brings S1 at θ = 1.5 s to 0.104 rad, but PLAN requires a wire-level twin run first. Enable it with `yaw.feedforward.enabled: true`.
 - **P-only S1 RMS at θ = 1.5 s is 0.196 rad**, against a 0.15 target. The 0.3 rad/s "stays in frame" target fails with or without feed-forward.
 - **No RC-thread watchdog that sends packets itself.** If the RC thread stopped, telemetry shows `rc_tick_stale` and the log says so, but nothing else sends neutral or land. Session A step 6 ("stop RC packets while the keepalive continues") tells us what the drone does.
-- **Throttle-ramp landing is not implemented.** PLAN wants it only if 0x80 fails in Session A.
+- **Throttle-ramp landing is built but off** (`landing.throttle_ramp: false`). If Session A shows 0x80 does not land the drone, set it to true. While LANDING, throttle then ramps to −0.35 (44 counts) over 1 s, and the land flag is still re-asserted.
+  - It is tested only in unit tests: check it at low height in Session B before relying on it.
 - **The capture estimate re-adapts after 10 s** if the stream's timeline shifts permanently (by spec). Stall-then-burst, the realistic case, is detected.
 - **GIL contention** in the backend process can delay an RC tick by tens of ms (bench max 34 ms with 2 busy threads). The paced loop keeps the 25 Hz average, and the wire-test p99 was 48 ms.
 - **First-flight defaults are guesses** until Sessions A and B: HFOV 75°, K 0.012 rad/s per count, θ 1.0 s, reference widths, deadband 0. The forward gate (box clear of the top and bottom edges) means forward motion only happens beyond about 2.9 m at a 1.2 m hover; closer in, the autopilot is yaw-only.
