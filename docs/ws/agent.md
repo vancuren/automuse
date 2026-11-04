@@ -3,6 +3,18 @@
 Branch `ws/agent`, code in `src/mhd_ml/agent/`, tests in `tests/agent/`, settings in `config/agent.yaml`.
 Built overnight 2026-11-03/04. Every number below says what else was running.
 
+## Morning checklist (about 5 minutes, before Session B)
+
+1. System Settings > Privacy & Security > Microphone: enable the terminal app that will run the agent,
+   then restart that terminal.
+2. `$MHD_ML_PY -m mhd_ml.agent.mic_check --seconds 20`: levels should move when you talk; say "stop"
+   and "land", and each should print a SAFETY line. ALL ZEROS means step 1 did not take.
+3. With the drone hovering (Session B), run it again and note the propeller level next to your voice.
+   If they are within about 10 dB, use a headset mic (`--mic-rate 16000` for Bluetooth).
+4. With the backend up: `$MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000` (add the
+   Glimmer flags once the train workstream has a deployment). The UI's agent panel should show
+   "agent alive" with the safety listener on and the mic not silent.
+
 ## What it does
 
 ```
