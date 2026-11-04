@@ -142,10 +142,12 @@ class FakeRealtimeASR:
 class FakeBackend:
     """Agent-facing subset of the drone backend, recording everything it receives."""
 
-    def __init__(self, port: int = 8400, command_delay_s: float = 0.0, fail_http: bool = False):
+    def __init__(self, port: int = 8400, command_delay_s: float = 0.0, fail_http: bool = False,
+                 refuse_commands: Optional[str] = None):
         self.port = port
         self.command_delay_s = command_delay_s
         self.fail_http = fail_http
+        self.refuse_commands = refuse_commands   # e.g. "estopped": reply 200 {"ok": false, "reason": ...}
         self.commands: list[dict] = []        # POST /command and WS cmd messages, with "via"
         self.missions: list[dict] = []        # POST /mission and WS mission messages, with "via"
         self.agent_msgs: list[dict] = []      # everything the agent sent over the WS
@@ -193,6 +195,8 @@ class FakeBackend:
             body = await req.json()
             await asyncio.sleep(fb.command_delay_s)
             fb.commands.append(dict(body, via="http", t=time.monotonic()))
+            if fb.refuse_commands:
+                return {"ok": False, "flight_state": fb.flight_state, "reason": fb.refuse_commands}
             fb._apply(body)
             return {"ok": True, "flight_state": fb.flight_state}
 

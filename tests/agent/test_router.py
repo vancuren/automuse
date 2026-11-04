@@ -109,3 +109,11 @@ def test_late_answer_recorded_in_history(mock):
     assert res.model == "glimmer-30b+lora"
     late = [h for h in r.history if h.get("late")]
     assert late and late[0]["model"] == "muse-spark-1.3" and late[0]["valid"]
+
+
+def test_safety_word_inside_a_follow_command_goes_to_the_models(mock):
+    js = ('{"action":"follow","subject_phrase":"man at bus stop","category":"person","color":"none",'
+          '"distance":"medium","reason_code":"none"}')
+    res, dt = route(mock, {"mode": "fixed", "content": js, "delay_s": 0.2}, {"mode": "fixed", "content": js},
+                    text="follow the man at the bus stop")
+    assert res.reason != "safety_fast_path" and res.intent.action == "follow"

@@ -277,7 +277,10 @@ class AgentService:
             data = msg.get("data") or {}
             if data.get("kind") == "announce" and msg.get("text") and \
                     self.cfg.get("tts", {}).get("speak_announcements", True):
-                self.speaker.speak(msg["text"], interrupt=False)
+                if _has_hover_word(msg["text"]):
+                    log.info("not speaking announcement %r: the listener would hear a hover word", msg["text"])
+                else:
+                    self.speaker.speak(msg["text"], interrupt=False)
 
     # ---- safety -------------------------------------------------------------------------------
     def _on_safety_hit(self, hit: SafetyHit) -> None:          # listener thread
@@ -288,12 +291,13 @@ class AgentService:
         if audible is not None and self.cfg.get("safety", {}).get("ignore_own_voice", True):
             try:
                 aw = audible()
-                same_word = hit.word in aw or hit.canonical in aw
-                # "Landing now." may come back as "land in now": any land word on our side covers it.
-                # Hover is only skipped on the exact word, so an operator's "stop" is never dropped.
+                # Only land is ever skipped, and only while a line with a land word is audible
+                # ("Landing now.", possibly heard as "land in now"): we are already landing. A hover
+                # word is never skipped, so an operator's "stop" always goes through; instead the
+                # agent never speaks a hover word (see _speakable).
                 land_echo = hit.action == "land" and any(
                     (safety_action_for_word(w, fuzzy=False) or ("",))[0] == "land" for w in aw)
-                if same_word or land_echo:
+                if land_echo:
                     log.info("safety word %r ignored: it is the agent's own voice", hit.word)
                     self.safety_hits.append({"hit": hit.as_dict(), "result": {"ok": False, "via": "echo"}})
                     return
@@ -313,9 +317,15 @@ class AgentService:
 
     def _on_safety_result(self, hit: SafetyHit, result: dict) -> None:   # sender thread
         self.safety_hits.append({"hit": hit.as_dict(), "result": result})
-        if not result.get("ok") and self.loop is not None:
-            self.loop.call_soon_threadsafe(lambda: self._spawn(self.emit(
-                "error", f"Safety command {hit.command} could not reach the backend!")))
+        if self.loop is None:
+            return
+        if not result.get("ok"):
+            msg = f"Safety command {hit.command} could not reach the backend!"
+        elif result.get("accepted") is False:
+            msg = f"The governor refused {hit.command}: {result.get('reason') or 'no reason given'}"
+        else:
+            return
+        self.loop.call_soon_threadsafe(lambda: self._spawn(self.emit("error", msg)))
 
     # ---- push-to-talk -------------------------------------------------------------------------
     async def ptt_down(self) -> None:
@@ -448,15 +458,21 @@ class AgentService:
             if intent.action in ("land", "hover"):
                 # Same path as the safety listener: the governor acts on the command immediately.
                 cmd = OperatorCommand(command="land" if intent.action == "land" else "pause")
-                await self.link.deliver("/command", cmd)
+                r = await self.link.deliver("/command", cmd)
+                if not r.get("ok"):
+                    await self.emit("error", f"Command {cmd.command} could not reach the backend!")
+                elif r.get("accepted") is False:
+                    await self.emit("error", f"The governor refused {cmd.command}: {r.get('reason')}")
             mission = Mission(mission_id=mission_id, intent=intent, transcript=text,
                               model=res.model, latency_ms=round(res.latency_ms, 1), reply=reply)
             self.missions.append(mission)
             delivery = await self.link.deliver("/mission", mission)
             if not delivery.get("ok"):
                 await self.emit("error", "Mission could not reach the backend")
+            elif delivery.get("accepted") is False:
+                await self.emit("error", f"The backend refused the mission: {delivery.get('reason')}")
         await self.emit("reply", reply)
-        self.speaker.speak(reply, interrupt=not acked)     # let a short "Okay." finish first
+        self.speaker.speak(_speakable(reply, intent.action), interrupt=not acked)   # "Okay." finishes first
         rec = {"t_up_to_final_ms": round(t_final_ms - st.t_up_ms, 1), "acked": acked,
                "final_to_intent_ms": round(t_intent_ms - t_final_ms, 1),
                "t_up_to_reply_queued_ms": round(now_ms() - st.t_up_ms, 1),
@@ -508,6 +524,22 @@ class AgentService:
             await self.link.close()
         if self.speaker:
             self.speaker.close()
+
+
+def _has_hover_word(text: str) -> bool:
+    """Would the safety listener hear a hover word ("stop", "hold", ...) in this line?"""
+    from .words import words
+
+    return any((safety_action_for_word(w, fuzzy=True) or ("",))[0] == "hover" for w in words(text))
+
+
+def _speakable(reply: str, action: str) -> str:
+    """The line to say out loud. A reply like "Following the person by the stop sign." would come back
+    through the microphone as "stop" and pause the follow it just started, so say it without the
+    subject instead. (Mission.reply keeps the full text for the UI.)"""
+    if action == "follow" and _has_hover_word(reply):
+        return "Following now."
+    return reply
 
 
 def _jsonable(x):

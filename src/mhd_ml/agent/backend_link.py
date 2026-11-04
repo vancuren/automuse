@@ -142,13 +142,19 @@ class BackendLink:
         return None
 
     async def deliver(self, path: str, msg: BaseModel) -> dict:
-        """Flight-changing messages: HTTP first (acknowledged), then the WebSocket."""
+        """Flight-changing messages: HTTP first (acknowledged), then the WebSocket.
+
+        ok = delivered. accepted = the backend's own "ok" in its reply (the governor can refuse with
+        HTTP 200 and {"ok": false, "reason": ...}); None when unknown (WebSocket path)."""
         t0 = time.monotonic()
         body = await self.post(path, msg)
         if body is not None:
-            return {"ok": True, "via": "http", "reply": body, "ms": (time.monotonic() - t0) * 1000}
+            accepted = bool(body["ok"]) if isinstance(body, dict) and "ok" in body else None
+            return {"ok": True, "via": "http", "reply": body, "accepted": accepted,
+                    "reason": body.get("reason") if isinstance(body, dict) else None,
+                    "ms": (time.monotonic() - t0) * 1000}
         ok = await self.send(msg)
-        return {"ok": ok, "via": "ws" if ok else None, "ms": (time.monotonic() - t0) * 1000}
+        return {"ok": ok, "via": "ws" if ok else None, "accepted": None, "ms": (time.monotonic() - t0) * 1000}
 
     async def close(self) -> None:
         self._stop = True

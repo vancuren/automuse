@@ -358,3 +358,61 @@ def test_own_voice_is_not_a_command(backend, llm):
     sent = [c["command"] for c in backend.commands[n0:]]
     assert sent == ["pause"], sent
     assert sum(1 for h in svc.safety_hits if h["result"].get("via") == "echo") == 2
+
+
+def test_operator_stop_is_never_taken_for_echo(backend, llm):
+    asr = FakeRealtimeASR(port=ASR_PORT).start()
+    n0 = len(backend.commands)
+    sp = EchoSpeaker({"following", "the", "person", "by", "stop", "sign"})   # a reply with "stop" in it
+    try:
+        async def script(svc, hub):
+            svc._on_safety_hit(_hit("stop", "hover"))
+            assert await wait_for(lambda: len(backend.commands) > n0, 3)
+
+        asyncio.run(run_with_speaker(backend, make_cfg(asr.url), script, sp))
+    finally:
+        asr.stop()
+    assert [c["command"] for c in backend.commands[n0:]] == ["pause"]
+
+
+def test_governor_refusal_is_reported():
+    from mhd_ml.agent.fakes import FakeBackend as FB
+
+    with FB(port=8403, refuse_commands="estopped") as fb:
+        asr = FakeRealtimeASR(port=ASR_PORT).start()
+        try:
+            cfg = make_cfg(asr.url)
+            cfg["backend"] = fb.ws_base
+
+            async def script(svc, hub):
+                svc._on_safety_hit(_hit("land", "land"))
+                assert await wait_for(lambda: svc.safety_hits, 3)
+                await asyncio.sleep(0.3)
+
+            hub = MicHub(sample_rate=24000)
+
+            async def go():
+                svc = AgentService(cfg, hub=hub, start_mic=False, speaker=RecordingSpeaker())
+                await svc.start()
+                try:
+                    await script(svc, hub)
+                finally:
+                    await svc.stop()
+                return svc
+
+            svc = asyncio.run(go())
+        finally:
+            asr.stop()
+    r = svc.safety_hits[0]["result"]
+    assert r["ok"] and r["accepted"] is False and r["reason"] == "estopped"
+    assert any(e["kind"] == "error" and "refused land" in e["text"] for e in svc.events)
+
+
+def test_speakable_never_says_a_hover_word():
+    from mhd_ml.agent.service import _has_hover_word, _speakable
+
+    assert _speakable("Following the person by stop sign.", "follow") == "Following now."
+    assert _speakable("Following the person in blue shirt.", "follow") == "Following the person in blue shirt."
+    assert _speakable("Landing now.", "land") == "Landing now."
+    assert not _has_hover_word("Holding position.") and not _has_hover_word("I lost the subject. Looking around.")
+    assert _has_hover_word("Hold on, stop")

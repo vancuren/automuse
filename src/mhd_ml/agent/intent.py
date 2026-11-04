@@ -378,6 +378,22 @@ def keyword_intent(transcript: str) -> Intent:
     return _intent("clarify", reason="ambiguous")
 
 
+def mentions_subject(transcript: str) -> bool:
+    """True if the words go beyond a bare safety command: a follow verb, a color, a garment, or a
+    subject noun other than "drone"."""
+    text = normalize(transcript)
+    ws = words(text)
+    if any(_is_follow_verb(w) for w in ws) or _has_phrase(text, FOLLOW_PHRASES):
+        return True
+    for w in ws:
+        if w in COLORS or w in GARMENTS:
+            return True
+        r = _canon_noun(w)
+        if r and r[0] != "drone":
+            return True
+    return False
+
+
 class KeywordIntent:
     name = "keyword"
 
@@ -581,8 +597,10 @@ class HedgedRouter:
     async def route(self, transcript: str) -> RouteResult:
         t0 = time.monotonic()
         kw = self.keyword.infer_sync(transcript)
-        # Safety fast path: a spoken stop/land never waits for a language model.
-        if self.safety_fast_path and kw.intent.action in ("land", "hover"):
+        # Safety fast path: a plain "stop" / "land now" never waits for a language model. A sentence
+        # that also names a subject ("follow the man at the bus stop") goes to the models; the local
+        # listener has already paused on its "stop" in either case.
+        if self.safety_fast_path and kw.intent.action in ("land", "hover") and not mentions_subject(transcript):
             return self._done(kw, t0, "safety_fast_path", {"keyword": kw.summary()})
         clients = [c for c in (self.glimmer, self.spark) if c is not None]
         if not clients:

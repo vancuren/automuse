@@ -351,7 +351,8 @@ class CommandSender:
                 except queue.Empty:
                     continue
                 cmd = OperatorCommand(command=hit.command)
-                result = {"command": hit.command, "via": None, "ok": False, "ms": 0.0}
+                # ok = delivered to the backend; accepted = the governor said yes (None if unknown).
+                result = {"command": hit.command, "via": None, "ok": False, "accepted": None, "ms": 0.0}
                 t0 = time.monotonic()
                 for attempt in range(2):
                     if self.http_base:
@@ -360,6 +361,9 @@ class CommandSender:
                             result.update(via="http", ok=r.status_code == 200, status=r.status_code)
                             try:
                                 result["reply"] = r.json()
+                                if isinstance(result["reply"], dict) and "ok" in result["reply"]:
+                                    result["accepted"] = bool(result["reply"]["ok"])
+                                    result["reason"] = result["reply"].get("reason")
                             except Exception:
                                 pass
                         except Exception as e:
@@ -374,6 +378,8 @@ class CommandSender:
                 result["ms"] = (time.monotonic() - t0) * 1000.0
                 if not result["ok"]:
                     log.error("SAFETY command %s NOT delivered: %s", hit.command, result)
+                elif result["accepted"] is False:
+                    log.error("SAFETY command %s refused by the governor: %s", hit.command, result.get("reason"))
                 if self.on_result:
                     try:
                         self.on_result(hit, result)
