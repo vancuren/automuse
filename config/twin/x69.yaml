@@ -1,0 +1,85 @@
+# X69 twin dynamics (src/mhd/twin/dynamics.py). PLAN.md section 4.2.
+# Every number here is a placeholder until Session A (hover height, HFOV, link loss) and
+# Session B (deadband, yaw rate and speed per count, lags) measure the real drone.
+# Wire counts: 0..255, center 128. "Counts beyond the deadband" = |count - 128| - deadband.
+
+rate_hz: 100
+
+sticks:
+  deadband_counts: {roll: 6, pitch: 6, throttle: 10, yaw: 6}   # firmware deadband per axis
+  invert: {roll: false, pitch: false, throttle: false, yaw: false}
+
+yaw:
+  rate_per_count_dps: 0.95     # deg/s per count beyond the deadband (full stick ~115 deg/s)
+  tau_s: 0.15                  # first-order lag of the yaw rate
+
+pitch:                         # forward (+) / back (-)
+  speed_per_count_mps: 0.012   # m/s per count beyond the deadband (full stick ~1.45 m/s)
+  tau_s: 0.45                  # first-order lag of forward speed
+
+roll:                          # right (+) / left (-)
+  speed_per_count_mps: 0.010
+  tau_s: 0.45
+
+throttle:                      # climb (+) / descend (-) over an altitude hold
+  climb_per_count_mps: 0.008   # full stick ~0.9 m/s
+  tau_s: 0.25
+
+drag:
+  quadratic_per_m: 0.08        # a_drag = -k * v * |v| (limits top speed a little)
+
+attitude:
+  tau_s: 0.08                  # airframe tilt follows atan(a_thrust / g) with this lag
+  max_tilt_deg: 25
+
+altitude:
+  hover_height_m: 1.0          # takeoff climbs to this height (measure in Session A)
+  takeoff_climb_mps: 0.7
+  takeoff_spool_s: 0.6         # motors spin up before the climb starts
+  land_descent_mps: 0.45
+  ceiling_m: 3.0
+  floor_m: 0.2                 # throttle-down cannot go below this; landing needs the land flag
+
+camera:
+  hfov_deg: 75                 # measure in Session A: HFOV = 2 atan(w / 2d)
+  tilt_init_deg: -5            # servo angle at power-on (negative = looking down)
+  tilt_min_deg: -60
+  tilt_max_deg: 10
+  tilt_mode: per_press         # per_press: each rising edge of a tilt bit moves one step
+                               # while_held: moves at tilt_rate_dps while the bit is set
+  tilt_step_deg: 6
+  tilt_rate_dps: 30
+  offset_forward_m: 0.05       # camera position relative to the drone center
+  offset_up_m: -0.01
+
+headless:
+  enabled: false               # start state; POST /control {"headless": true} toggles it
+  flag1_bit: null              # unknown on the X69; set if Session A finds a headless bit
+
+drift:                         # optical-flow position hold drifts as a random walk
+  sigma_mps: 0.04              # stationary std of the drift velocity over good texture
+  tau_s: 3.0                   # correlation time of the drift velocity (Ornstein-Uhlenbeck)
+  yaw_sigma_dps: 0.6
+  low_texture_gain: 3.0        # drift multiplier at texture 0 (linear to 1.0 at texture 1)
+
+link:
+  loss_timeout_s: 1.0          # no RC control packet for this long = link lost (keepalive ignored)
+  loss_action: land            # land | hover | drop (drop = motors off)
+  resume_on_relink: false      # true: a link-loss landing is cancelled when packets return
+
+battery:
+  enabled: true
+  flight_time_s: 480           # about 8 minutes per pack (reported 8-10)
+  low_warn_s: 60
+  empty_action: land
+
+estop:
+  falls: true                  # motors cut: free fall from the current height
+
+flip:
+  duration_s: 0.6
+  altitude_loss_m: 0.25
+
+rc_stats:
+  window: 500                  # packets kept for inter-arrival statistics (20 s at 25 Hz)
+  p99_alarm_ms: 60
