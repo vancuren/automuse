@@ -85,7 +85,8 @@ if [[ "$MODE" == real ]]; then
   [[ "$TWIN_OPT" == 1 ]] && die "REAL mode refuses twin options (--twin-ports, --scenario, --latency-ms, --no-renderer, --chrome-profile)"
   [[ "$PERCEPTION" == oracle ]] && die "REAL mode refuses --perception oracle (twin ground truth)"
   case "$(cd "$CONFIG_DIR" && pwd)/" in */twin/*) die "REAL mode refuses twin configs ($CONFIG_DIR)" ;; esac
-  if grep -qiE "TWIN calibration|Never use this file for the real drone|Never for the real drone" "$GOV_CFG" "$AP_CFG"; then
+  if grep -qE '^twin_only:[[:space:]]*true' "$GOV_CFG" "$AP_CFG" || \
+     grep -qiE "TWIN calibration|Never use this file for the real drone|Never for the real drone" "$GOV_CFG" "$AP_CFG"; then
     die "REAL mode refuses $CONFIG_DIR: its YAML says it is a twin calibration"
   fi
   if pgrep -f "mhd\.twin\.server" >/dev/null 2>&1; then
@@ -241,6 +242,10 @@ B_ARGS=(--mode "$MODE" --port "$PORT" --governor-config "$GOV_CFG" --autopilot-c
 if [[ "$MODE" == twin ]]; then
   B_ARGS+=(--logs "$RUN/backend" --control-port "$T_RC" --rtsp-url "$RTSP_URL")
   [[ "$HEADLESS" == 1 ]] && B_ARGS+=(--headless)
+fi
+if [[ "$DRY" == 1 ]]; then              # the backend launcher's own checks (real: config/ or config/real/ only)
+  (cd "$TREE" && bash scripts/run_backend.sh "${B_ARGS[@]}" --dry-run) 2>&1 | sed 's/^/    /' | tee -a "$STACK_LOG" >&2
+  [[ "${PIPESTATUS[0]}" == 0 ]] || die "run_backend.sh --dry-run refused these arguments"
 fi
 start backend "$RUN/backend.log" bash scripts/run_backend.sh "${B_ARGS[@]}"
 BACKEND_PGID="$(pid_of backend)"

@@ -253,6 +253,8 @@ def main(argv=None) -> int:
     if "twin" in base_dir.resolve().parts:
         raise SystemExit("refusing a twin config as the base for the real drone")
     texts = {n: (base_dir / f"{n}.yaml").read_text() for n in ("autopilot", "governor")}
+    if any(re.search(r"(?m)^twin_only:\s*true", t) for t in texts.values()):
+        raise SystemExit(f"refusing {base_dir}: twin_only: true (a twin calibration, never for the real drone)")
     defaults = {n: (default_dir / f"{n}.yaml").read_text() for n in ("autopilot", "governor")}
     new = dict(texts)
     stamp = time.strftime("%Y-%m-%d %H:%M")
@@ -312,6 +314,9 @@ def main(argv=None) -> int:
         if fit["deadband_counts"] is not None:
             put("governor", f"wire.deadband_counts.{axis}", int(round(fit["deadband_counts"])),
                 f"{Path(path).name} firmware deadband")
+        if fit.get("direction"):               # sysid's own verdict, relative to the stick during the run
+            print(f"   sysid direction check: {fit['direction']} ({fit.get('direction_votes')} steps moved the way "
+                  "the stick asked)")
         sign, why = native_sign(fit)
         if sign is None:
             warnings.append(f"{axis}: sign undetermined ({why}); wire.sign.{axis} unchanged")
