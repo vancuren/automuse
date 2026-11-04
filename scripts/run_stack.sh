@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# One launcher for the whole stack, real drone or twin: backend (governor), perception, voice agent,
-# the operator UI (production build + vite preview), optional local Glimmer, and in twin mode the twin.
+# One launcher for the whole stack, real drone, twin or real camera: backend (governor), perception, voice
+# agent, the operator UI (production build + vite preview), optional local Glimmer, in twin mode the
+# twin, and in camera mode mediamtx plus the Lewei camera bridge.
 # Logs go to logs/stack-<time>-<mode>/. Ctrl-C stops everything: the backend first (it lands the drone
-# at once on SIGINT), then the clients, the UI, and the twin last (so the land packets reach it). More
-# Ctrl-Cs are ignored while it stops; anything still running after its timeout gets TERM, then KILL.
-# If the backend dies, press Enter in this window to restart it with the same settings.
+# at once on SIGINT), then the clients, the UI, and the twin (or the bridge and mediamtx) last (so the
+# land packets reach it). More Ctrl-Cs are ignored while it stops; anything still running after its
+# timeout gets TERM, then KILL. If the backend dies, press Enter in this window to restart it.
 #
 #   scripts/run_stack.sh --mode real [--config-dir config/real] [--glimmer local]
 #   scripts/run_stack.sh --mode real --no-perception --no-agent          # Session A / B: backend + UI
 #   scripts/run_stack.sh --mode twin [--scenario s1] [--latency-ms 500] [--perception oracle]
+#   scripts/run_stack.sh --mode camera [--bridge-extra "--low-def"]       # REAL CAMERA, NO FLIGHT
 #
 # Options (defaults in brackets):
-#   --mode real|twin           required
-#   --config-dir DIR           governor.yaml + autopilot.yaml [real: config, twin: config/twin]
+#   --mode real|twin|camera    required
+#   --config-dir DIR           governor.yaml + autopilot.yaml [real: config, twin: config/twin,
+#                              camera: config/camera]
 #   --port N                   backend HTTP port [8000]
 #   --ui-port N                UI preview port [5173]          --no-ui     no UI
 #   --perception sam_mlx|sam_api|oracle|none   [sam_mlx]       --no-perception
@@ -30,9 +33,16 @@
 #   --twin-ports HTTP,RC,RTSP  [8766,23458,8554]    --scenario s1..s6 [s1]    --latency-ms N [500]
 #   --headless                 no UI heartbeat needed (twin only)    --no-renderer   placeholder video
 #   --chrome-profile DIR       renderer Chrome profile [$MHD_HOME/.cache/chrome-twin]
+#   camera only (real camera, NO flight: the drone's Lewei camera board feeds the pipeline):
+#   --rtsp-port N              loopback mediamtx RTSP port [8554]
+#   --bridge-extra "ARGS"      extra scripts/lewei_bridge.py flags, e.g. "--low-def"
+#   --camera-wait S            seconds to wait for the bridge to publish [60]
 #
 # Real mode refuses --headless, twin configs, the oracle, and --twin-* options. It never starts the
 # twin. Run scripts/preflight.py first (the X69 may allow only one RTSP client: the backend).
+# Camera mode is twin mode with MHD_CAMERA_ONLY=1 (run_backend.sh --camera): it starts mediamtx on
+# 127.0.0.1 and scripts/lewei_bridge.py (camera -> RTSP), never the twin; the backend's RC adapter has
+# no socket, so no RC packet is sent anywhere. It refuses the oracle and the twin options.
 set -o pipefail             # no -u: bash 3.2 (macOS) treats empty arrays as unbound
 TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
@@ -43,6 +53,7 @@ die() { echo "run_stack: $*" >&2; exit 2; }
 
 MODE="" CONFIG_DIR="" PORT=8000 UI_PORT=5173 UI=1 PERCEPTION=sam_mlx AGENT=auto AGENT_EXTRA="" GLIMMER=none
 BUILD=1 LOGS="" TWIN_PORTS="" SCENARIO=s1 LATENCY=500 HEADLESS=0 RENDERER=1 CHROME_PROFILE="" TWIN_OPT=0 DRY=0
+RTSP_PORT=8554 BRIDGE_EXTRA="" CAMERA_WAIT=60 CAMERA_OPT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="$2"; shift 2 ;;
@@ -65,18 +76,41 @@ while [[ $# -gt 0 ]]; do
     --headless) HEADLESS=1; shift ;;
     --no-renderer) RENDERER=0; TWIN_OPT=1; shift ;;
     --chrome-profile) CHROME_PROFILE="$2"; TWIN_OPT=1; shift 2 ;;
+    --rtsp-port) RTSP_PORT="$2"; CAMERA_OPT=1; shift 2 ;;
+    --bridge-extra) BRIDGE_EXTRA="$2"; CAMERA_OPT=1; shift 2 ;;
+    --camera-wait) CAMERA_WAIT="$2"; CAMERA_OPT=1; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "unknown argument: $1" ;;
   esac
 done
 
 # ------------------------------------------------------------------------------- validation
-case "$MODE" in real|twin) ;; *) usage >&2; die "--mode real|twin is required" ;; esac
+case "$MODE" in real|twin|camera) ;; *) usage >&2; die "--mode real|twin|camera is required" ;; esac
 case "$PERCEPTION" in sam_mlx|sam_api|oracle|none) ;; *) die "--perception sam_mlx|sam_api|oracle|none" ;; esac
 case "$AGENT" in auto|glimmer|keyword|local|none) ;; *) die "--agent auto|glimmer|keyword|local|none" ;; esac
 [[ "$AGENT" == glimmer && "$GLIMMER" != local ]] && die "--agent glimmer needs --glimmer local"
 case "$GLIMMER" in local|none) ;; *) die "--glimmer local|none" ;; esac
-[[ -z "$CONFIG_DIR" ]] && { [[ "$MODE" == real ]] && CONFIG_DIR="config" || CONFIG_DIR="config/twin"; }
+if [[ "$MODE" == camera ]]; then
+  [[ "$PERCEPTION" == oracle ]] && die "CAMERA mode refuses --perception oracle (twin ground truth; there is no twin)"
+  [[ "$TWIN_OPT" == 1 ]] && die "CAMERA mode refuses twin options (--twin-ports, --scenario, --latency-ms, --no-renderer, --chrome-profile)"
+  [[ "$RTSP_PORT" =~ ^[0-9]+$ ]] && (( RTSP_PORT >= 1024 && RTSP_PORT <= 65535 )) || die "--rtsp-port must be 1024..65535"
+  [[ "$CAMERA_WAIT" =~ ^[0-9]+$ ]] && (( CAMERA_WAIT >= 1 )) || die "--camera-wait must be a whole number of seconds >= 1"
+  case " $BRIDGE_EXTRA " in
+    *" --rtsp-out"*|*" --no-rtsp"*) die "--bridge-extra may not change --rtsp-out or --no-rtsp (the backend reads that URL)" ;;
+  esac
+  MTX_BIN="$("$MHD_PY" -c "from mhd.twin.media import mediamtx_binary as b; print(b())" 2>/dev/null)" \
+    || die "mediamtx not found under \$MHD_TOOLS/mediamtx (the twin's loopback RTSP server)"
+  BRIDGE="$TREE/scripts/lewei_bridge.py"
+  if [[ ! -f "$BRIDGE" ]]; then
+    if [[ "$DRY" == 1 ]]; then echo "run_stack: WARNING: $BRIDGE is missing (needed for a real run)" >&2
+    else die "$BRIDGE is missing: merge the Lewei camera bridge first"; fi
+  fi
+elif [[ "$CAMERA_OPT" == 1 ]]; then
+  die "--rtsp-port, --bridge-extra and --camera-wait are camera-mode options (--mode camera)"
+fi
+if [[ -z "$CONFIG_DIR" ]]; then
+  case "$MODE" in real) CONFIG_DIR="config" ;; twin) CONFIG_DIR="config/twin" ;; camera) CONFIG_DIR="config/camera" ;; esac
+fi
 [[ "$CONFIG_DIR" = /* ]] || CONFIG_DIR="$TREE/$CONFIG_DIR"
 GOV_CFG="$CONFIG_DIR/governor.yaml"; AP_CFG="$CONFIG_DIR/autopilot.yaml"
 [[ -f "$GOV_CFG" && -f "$AP_CFG" ]] || die "missing $GOV_CFG or $AP_CFG"
@@ -93,7 +127,7 @@ if [[ "$MODE" == real ]]; then
     echo "run_stack: WARNING: a twin server is running; stop it for real flights (GPU/CPU load)" >&2
   fi
 fi
-for p in "$PORT" $([[ "$UI" == 1 ]] && echo "$UI_PORT"); do
+for p in "$PORT" $([[ "$UI" == 1 ]] && echo "$UI_PORT") $([[ "$MODE" == camera ]] && echo "$RTSP_PORT"); do
   if lsof -nP -iTCP:"$p" -sTCP:LISTEN -t >/dev/null 2>&1; then die "port $p is already in use (another stack?)"; fi
 done
 HFOV="$("$MHD_PY" -c "from mhd.governor.config import load_autopilot_config as l; print(l('$AP_CFG').camera.hfov_deg)" 2>/dev/null)" \
@@ -155,7 +189,7 @@ cleanup() {
   # a foreground child (sleep) is interrupted, which once left the twin running. The backend is
   # already landing; stop_group escalates to TERM and KILL on its own timeouts.
   trap '' INT TERM
-  log "stopping: backend first (it sends LAND on SIGINT), then the clients, the UI, the twin last"
+  log "stopping: backend first (it sends LAND on SIGINT), then the clients, the UI, the twin (camera: bridge, mediamtx) last"
   local b; b="$(pid_of backend)"
   [[ -n "$b" && "$BACKEND_SIGNALED" != 1 ]] && alive "$b" && kill -INT -- "-$b" 2>/dev/null
   local w=()
@@ -167,6 +201,8 @@ cleanup() {
   stop_group ui INT 3
   stop_group renderer INT 6
   stop_group twin INT 10
+  stop_group bridge INT 5                  # camera mode: sends stop-video to the camera, then exits
+  stop_group mediamtx INT 3
   [[ -n "${CAFF:-}" ]] && kill "$CAFF" 2>/dev/null
   log "stopped. logs: $RUN"
   exit 0
@@ -196,6 +232,7 @@ if [[ "$DRY" != 1 ]]; then caffeinate -dimsu -w $$ >/dev/null 2>&1 & CAFF=$!; fi
 } >> "$STACK_LOG"
 log "mode $MODE, configs $CONFIG_DIR (HFOV $HFOV), logs $RUN"
 [[ "$MODE" == real ]] && log "REAL DRONE: run scripts/preflight.py first; MHD_CAPTURE_OFFSET_MS=${MHD_CAPTURE_OFFSET_MS:-unset}"
+[[ "$MODE" == camera ]] && log "REAL CAMERA, NO FLIGHT: Lewei camera -> scripts/lewei_bridge.py -> mediamtx on 127.0.0.1:$RTSP_PORT; the backend sends no RC packets (MHD_CAMERA_ONLY=1)"
 
 wait_http() {               # wait_http URL SECONDS NAME
   local i
@@ -209,11 +246,47 @@ wait_http() {               # wait_http URL SECONDS NAME
   done
   log "timed out waiting for $1"; return 1
 }
+wait_listen() {             # wait_listen PORT SECONDS NAME: until something listens on 127.0.0.1:PORT
+  [[ "$DRY" == 1 ]] && return 0
+  local end=$((SECONDS + $2)) p
+  while (( SECONDS < end )); do
+    check_stop
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN -t >/dev/null 2>&1 && return 0
+    p="$(pid_of "$3")"
+    [[ -n "$p" ]] && ! alive "$p" && { log "$3 exited while starting; see $RUN/$3.log"; return 1; }
+    sleep 0.2
+  done
+  log "timed out waiting for $3 to listen on 127.0.0.1:$1"; return 1
+}
+wait_publisher() {          # wait_publisher URL SECONDS: until mediamtx has a publisher (or the bridge says so)
+  [[ "$DRY" == 1 ]] && return 0
+  local end=$((SECONDS + $2)) n p
+  log "waiting up to $2 s for the Lewei bridge to publish $1"
+  while (( SECONDS < end )); do
+    check_stop
+    if grep -qE '^\[lewei_bridge\] .*publishing rtsp://' "$RUN/bridge.log" 2>/dev/null || \
+       "$MHD_PY" -c 'import sys; from mhd.twin.media import rtsp_has_publisher as f; sys.exit(0 if f(sys.argv[1]) else 1)' \
+         "$1" >/dev/null 2>&1; then
+      log "camera video is up: $1"
+      return 0
+    fi
+    for n in mediamtx bridge; do
+      p="$(pid_of "$n")"
+      [[ -n "$p" ]] && ! alive "$p" && { log "$n exited while waiting for the camera; see $RUN/$n.log"; return 1; }
+    done
+    sleep 0.5
+  done
+  log "TIMED OUT after $2 s: the Lewei bridge did not publish $1. Is this Mac on the drone's Wi-Fi" \
+      "(camera board at 192.168.0.1)? See $RUN/bridge.log (raise the wait with --camera-wait S)"
+  return 1
+}
 
 # ------------------------------------------------------------------------------- twin
 if [[ "$MODE" == twin ]]; then
   IFS=, read -r T_HTTP T_RC T_RTSP <<< "${TWIN_PORTS:-8766,23458,8554}"
-  if [[ "$RENDERER" == 1 && ! -d "$TREE/twin/web/node_modules/three" ]]; then
+  if [[ "$RENDERER" == 1 && ! -d "$TREE/twin/web/node_modules/three" && "$DRY" == 1 ]]; then
+    log "DRY RUN: would npm ci in twin/web (first run: three.js for the renderer)"
+  elif [[ "$RENDERER" == 1 && ! -d "$TREE/twin/web/node_modules/three" ]]; then
     log "npm install in twin/web (first run: three.js for the renderer)"
     (cd "$TREE/twin/web" && { [[ -f package-lock.json ]] && npm ci --no-audit --no-fund || npm install --no-audit --no-fund; }) \
       >"$RUN/twin-npm.log" 2>&1 || { log "twin/web npm failed: $RUN/twin-npm.log"; cleanup; }
@@ -226,6 +299,25 @@ if [[ "$MODE" == twin ]]; then
       --user-data-dir "${CHROME_PROFILE:-$MHD_HOME/.cache/chrome-twin}"
   fi
   RTSP_URL="rtsp://127.0.0.1:$T_RTSP/live/ch00_1"
+fi
+
+# ------------------------------------------------------------------------------- camera (real camera, NO flight)
+# No twin and no renderer: mediamtx with the twin's loopback, TCP-only, RTSP-only config, then the Lewei
+# bridge (camera board -> H.264 with wall-clock pts -> RTSP on loopback). The backend comes after it.
+if [[ "$MODE" == camera ]]; then
+  RTSP_URL="rtsp://127.0.0.1:$RTSP_PORT/live/ch00_1"
+  MTX_CFG="$RUN/mediamtx_$RTSP_PORT.yml"
+  if [[ "$DRY" != 1 ]]; then
+    "$MHD_PY" -c 'import sys; from pathlib import Path; from mhd.twin.media import write_mediamtx_config as w; w(Path(sys.argv[1]), int(sys.argv[2]))' \
+      "$RUN" "$RTSP_PORT" || { log "cannot write $MTX_CFG"; cleanup; }
+  fi
+  start mediamtx "$RUN/mediamtx.log" "$MTX_BIN" "$MTX_CFG"
+  wait_listen "$RTSP_PORT" 10 mediamtx || cleanup
+  BR_ARGS=(--rtsp-out "$RTSP_URL" --log-dir "$RUN")
+  # shellcheck disable=SC2206
+  [[ -n "$BRIDGE_EXTRA" ]] && BR_ARGS+=($BRIDGE_EXTRA)
+  start bridge "$RUN/bridge.log" "$MHD_PY" scripts/lewei_bridge.py "${BR_ARGS[@]}"
+  wait_publisher "$RTSP_URL" "$CAMERA_WAIT" || cleanup
 fi
 
 check_stop
@@ -242,6 +334,10 @@ B_ARGS=(--mode "$MODE" --port "$PORT" --governor-config "$GOV_CFG" --autopilot-c
 if [[ "$MODE" == twin ]]; then
   B_ARGS+=(--logs "$RUN/backend" --control-port "$T_RC" --rtsp-url "$RTSP_URL")
   [[ "$HEADLESS" == 1 ]] && B_ARGS+=(--headless)
+elif [[ "$MODE" == camera ]]; then      # twin mode + MHD_CAMERA_ONLY=1: no RC socket, nothing is sent
+  B_ARGS=(--camera --port "$PORT" --governor-config "$GOV_CFG" --autopilot-config "$AP_CFG"
+          --logs "$RUN/backend" --rtsp-url "$RTSP_URL")
+  [[ "$HEADLESS" == 1 ]] && B_ARGS+=(--headless)
 fi
 if [[ "$DRY" == 1 ]]; then              # the backend launcher's own checks (real: config/ or config/real/ only)
   (cd "$TREE" && bash scripts/run_backend.sh "${B_ARGS[@]}" --dry-run) 2>&1 | sed 's/^/    /' | tee -a "$STACK_LOG" >&2
@@ -254,10 +350,12 @@ BACKEND_RESTART="scripts/run_backend.sh ${B_ARGS[*]}"
 
 check_stop
 # ------------------------------------------------------------------------------- perception
+MASK=()                                  # camera: no twin counter block to mask in the real camera's image
+[[ "$MODE" == camera ]] && MASK=(--mask-counter off)
 case "$PERCEPTION" in
   sam_mlx|sam_api)
     start perception "$RUN/perception.log" "$MHD_ML_PY" -m mhd_ml.perception.service --backend "ws://127.0.0.1:$PORT" \
-      --detector "$PERCEPTION" --tracker auto --hfov-deg "$HFOV" --obs-log "$RUN/obs.jsonl" --log-level INFO ;;
+      --detector "$PERCEPTION" --tracker auto --hfov-deg "$HFOV" "${MASK[@]}" --obs-log "$RUN/obs.jsonl" --log-level INFO ;;
   oracle)
     start perception "$RUN/perception.log" "$MHD_PY" -m mhd.twin.oracle --twin "http://127.0.0.1:$T_HTTP" \
       --backend "ws://127.0.0.1:$PORT" --latency-ms 300 --log "$RUN/obs.jsonl" ;;
@@ -311,6 +409,7 @@ fi
 echo
 log "UP: backend http://127.0.0.1:$PORT  $([[ "$UI" == 1 ]] && echo "UI http://127.0.0.1:$UI_PORT (open it in its own Chrome window)")"
 [[ "$MODE" == twin ]] && log "twin http://127.0.0.1:$T_HTTP (chase: /chase)  RTSP $RTSP_URL"
+[[ "$MODE" == camera ]] && log "REAL CAMERA, NO FLIGHT: RTSP $RTSP_URL from scripts/lewei_bridge.py; no RC packets are sent"
 log "Ctrl-C stops everything (the backend lands first). Logs: $RUN"
 while true; do
   check_stop
