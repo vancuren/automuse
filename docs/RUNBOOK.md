@@ -392,9 +392,10 @@ $MHD_PY scripts/apply_sysid.py --yaw-only off --write                     # keep
 $MHD_PY scripts/apply_sysid.py --yaw-gain-scale 1.0 --write               # only after a steady run
 ```
 Restart the stack between changes: press Ctrl-C with the drone landed, then run the same command again.
-- Pass: it closes in and backs off smoothly.
+- Pass: it closes in smoothly, and backs up slowly when the subject walks toward it.
   - It moves forward only when the whole subject is in frame.
-  - It backs off when they come closer than about 2 m.
+  - Backing up is limited to **0.5 m per flight**. A new mission or Resume does not refill it.
+  - Closer than about 2 m (box over 85 % of the frame height or 60 % of its width), it only **hovers**. It never backs away by itself (integration's 04:09 safety review). The subject steps back to make it follow again.
 
 **4.3 The full loop**, to record:
 ```bash
@@ -434,7 +435,7 @@ Safety flags (the Safety panel):
 | `heartbeat_missing` | no UI heartbeat for 1.5 s | all sticks neutral; land after 5 s |
 | `video_stale` | video lag beyond the best case is over 0.7 s | autopilot neutral; land after 2 s |
 | `obs_stale` | perception is late or dead | autopilot neutral |
-| `wrong_way`, `wrong_way:yaw`, `wrong_way:pitch`, `wrong_way:frozen_box` | the drone moved against its command, or the box froze while turning | hover, latched until **Resume** |
+| `wrong_way`, `wrong_way:yaw`, `wrong_way:pitch`, `wrong_way:frozen_box` | the drone moved against its command, or the box froze while turning. For pitch, a short probe (pitch held at 0) runs first, so a subject who simply walked away faster does not latch it. | hover, latched until **Resume**; land and check the signs (3.3) |
 | `autopilot_paused` | voice "stop" or hover, Pause, or a mission spoken before the last stop | press Resume, or say a new follow |
 | `landing:<cause>` | why it is landing: `ui_land`, `http_land`, `agent_land`, `model_land`, `heartbeat_lost`, `video_frozen`, `flight_timer`, `estop_reset` | press **Landed** after touchdown; Resume cancels |
 | `flight_timer_warn` | 5:00 on this pack | land soon |
