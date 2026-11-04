@@ -52,6 +52,12 @@ ML_PY = os.environ.get("MHD_ML_PY", "")
 DRONE_IP = "172.16.11.1"
 LEWEI_IP = "192.168.0.1"
 LEWEI_RTSP = "rtsp://127.0.0.1:8554/live/ch00_1"   # the lewei_bridge relay inside run_stack.sh
+LINK_LOSS_STEPS = ("linkloss_kill", "linkloss_wifi")
+# After a link loss the drone keeps flying its last stick command until its motors stop, and nothing we
+# send reaches it: that stop time is an UNCONTROLLED window. Longer than this (or unknown) on the real
+# drone makes the link-loss gate GO WITH CONDITIONS instead of a plain GO.
+UNCONTROLLED_MAX_S = 3.0
+LATENCY_HINT_BELOW = 5          # fewer decoded counter frames than this: print how to get more
 
 
 class Quit(Exception):
@@ -709,18 +715,33 @@ class Session:
             io.enter("press Enter to start a %.0f s measurement" % self.a.latency_s)
             res = self.measure_latency(self.a.latency_s)
             self.rec.measure(st, "result", res)
-            if res.get("decoded", 0) < 10:
-                io.warn(f"only {res.get('decoded', 0)} frames decoded")
-                io.say("fallback: film a phone stopwatch on the screen next to the UI video, read the difference")
-                v = io.num("latency from the stopwatch method", "ms", auto=None, lo=0, hi=5000)
-                self.rec.answer(st, "manual_latency_ms", v)
-            else:
-                lm = res["latency_ms"]
-                io.say(f"camera -> backend latency: p50 {lm['p50']} ms, p05 {lm['p05']} ms, p95 {lm['p95']} ms, "
-                       f"min {lm['min']} ms over {res['decoded']} frames ({res['source']})")
-                io.say(f"-> set MHD_CAPTURE_OFFSET_MS={int(lm['p05'])} for Session B (export it before starting the backend)")
+            self.report_latency(st, res)
         finally:
             self.stop_proc(srv)
+
+    def report_latency(self, st: str, res: dict) -> None:
+        io = self.io
+        n = res.get("decoded", 0)
+        if n < 10:
+            io.warn(f"only {n} frames decoded")
+            if n < LATENCY_HINT_BELOW:
+                board = " --board lewei" if self.lewei else ""
+                io.say("hint: hold the drone closer, about 40 cm from the screen; turn the screen brightness up; keep the",
+                       "      counter page full screen (Cmd-Ctrl-F) with the whole code and its 4 markers in view.",
+                       f"      To measure again: q, then $MHD_PY scripts/session_a.py{board} --only latency "
+                       f"--resume {self.rec.path}")
+            lm = res.get("latency_ms")
+            if lm:
+                io.say(f"from those {n} frame(s): p50 {lm['p50']} ms, p05 {lm['p05']} ms. One or two samples are "
+                       "acceptable: the summary carries these.")
+            io.say("fallback: film a phone stopwatch on the screen next to the UI video, read the difference")
+            v = io.num("latency from the stopwatch method", "ms", auto=None, lo=0, hi=5000)
+            self.rec.answer(st, "manual_latency_ms", v)
+        else:
+            lm = res["latency_ms"]
+            io.say(f"camera -> backend latency: p50 {lm['p50']} ms, p05 {lm['p05']} ms, p95 {lm['p95']} ms, "
+                   f"min {lm['min']} ms over {res['decoded']} frames ({res['source']})")
+            io.say(f"-> set MHD_CAPTURE_OFFSET_MS={int(lm['p05'])} for Session B (export it before starting the backend)")
 
     def measure_latency(self, seconds: float) -> dict:
         """Decode the screen counter (or, in the twin, its corner counter) on the backend's /ws/frames.
@@ -976,7 +997,8 @@ class Session:
         self.io.countdown(seconds, "watch the motors")
         behavior = self.io.choice("what did the motors do?", {"c": "kept spinning", "s": "stopped at once",
                                                                "r": "ramped down (landing)", "o": "other"})
-        when = self.io.num("after how many seconds?", "s", lo=0, hi=60) if behavior != "kept spinning" else None
+        when = (self.io.num("after how many seconds did they stop? (until then the drone flies its last stick command)",
+                            "s", lo=0, hi=60) if behavior != "kept spinning" else None)
         return behavior, when
 
     def step_linkloss_kill(self, st: str) -> None:
@@ -1060,6 +1082,14 @@ class Session:
             if not self.takeoff(st):
                 return
             self.be.wait(lambda x: x["flight_state"] == "AIRBORNE", 8)
+        elif self.lewei:
+            io.say("REAL mode allows /debug/rc_pause only while the governor is ON_GROUND (props-off bench test,",
+                   "at most 15 s), so the motors are idle here. This board has NO keepalive: the pause stops ALL packets",
+                   "to the drone. It shows whether the drone tolerates that silence (video, LEDs) and still takes off",
+                   "right after. The Safety panel shows rc_paused, then keepalive_stale after 3 s; both clear when the",
+                   "packets resume. LAND / E-STOP / TAKEOFF end the pause at once.")
+            self.ensure_ground_and_armed(st)
+            secs = min(secs, 15.0)
         else:
             io.say("REAL mode allows /debug/rc_pause only while the governor is ON_GROUND (props-off bench test,",
                    "at most 15 s), so the motors are idle here: this shows whether the drone tolerates keepalive-only",
@@ -1067,7 +1097,10 @@ class Session:
             self.ensure_ground_and_armed(st)
             secs = min(secs, 15.0)
         tw0 = self.twin.status()["rc"] if self.twin else None
-        io.enter(f"press Enter to pause RC control packets for {secs:.0f} s")
+        if self.lewei:
+            io.enter(f"press Enter to stop ALL packets to the drone for {secs:.0f} s")
+        else:
+            io.enter(f"press Enter to pause RC control packets for {secs:.0f} s")
         r = self.be.post("/debug/rc_pause", {"seconds": secs})
         self.rec.measure(st, "rc_pause_response", {k: r.get(k) for k in ("ok", "reason", "seconds", "flight_state",
                                                                           "flight_mode")})
@@ -1150,8 +1183,9 @@ class Session:
         g = lambda step, key, kind="answers": self.rec.get(step, kind, key)  # noqa: E731
         rows = []
 
-        def gate(name, ok, detail, hard=True):
-            rows.append({"gate": name, "result": "PASS" if ok is True else ("FAIL" if ok is False else "UNKNOWN"),
+        def gate(name, ok, detail, hard=True, conditional=False):
+            res = "PASS" if ok is True else ("FAIL" if ok is False else "UNKNOWN")
+            rows.append({"gate": name, "result": "CONDITIONAL" if res == "PASS" and conditional else res,
                          "detail": detail, "hard": hard})
         pf = self.rec.data["steps"].get("preflight", {}).get("measured", {})
         fails = pf.get("fails")
@@ -1168,14 +1202,25 @@ class Session:
              f"cut {g('flag_estop', 'estop_cut_motors')}, latched {g('flag_estop', 'estop_latched')}")
         gate("land on the ground is a no-op", g("flag_land_ground", "land_on_ground_noop"), "", hard=False)
         stops = []
-        for step in ("linkloss_kill", "linkloss_wifi"):
+        for step in LINK_LOSS_STEPS:
             m = g(step, "motors")
             stops.append(None if m is None else m != "kept spinning")
         remote = g("remote", "remote_stop_cut_motors")
         ll_ok = None if None in stops else all(stops)
-        gate("link loss stops the drone (kill -9, Wi-Fi off)", ll_ok,
-             f"kill: {g('linkloss_kill', 'motors')} after {g('linkloss_kill', 'after_s')} s; "
-             f"wifi: {g('linkloss_wifi', 'motors')} after {g('linkloss_wifi', 'after_s')} s")
+        # The seconds until the motors stopped are an uncontrolled window: the drone keeps flying its last stick
+        # command and nothing we send reaches it. Real drone only (the twin lands on its own 1 s link-loss timer).
+        window = self.uncontrolled_window_s()
+        ll_cond = ll_ok is True and not self.auto and (window is None or window > UNCONTROLLED_MAX_S)
+        detail = (f"kill: {g('linkloss_kill', 'motors')} after {g('linkloss_kill', 'after_s')} s; "
+                  f"wifi: {g('linkloss_wifi', 'motors')} after {g('linkloss_wifi', 'after_s')} s")
+        if ll_ok is True and not self.auto:
+            if window is None:
+                detail += "; uncontrolled window unknown (stop time not recorded): keep everyone out of its path"
+            elif ll_cond:
+                detail += f"; uncontrolled window {window:g} s (over {UNCONTROLLED_MAX_S:g} s): keep everyone out of its path"
+            else:
+                detail += f"; uncontrolled window {window:g} s"
+        gate("link loss stops the drone (kill -9, Wi-Fi off)", ll_ok, detail, conditional=ll_cond)
         gate("physical remote can stop the motors", remote, g("remote", "remote_button") or "", hard=False)
         lat = g("latency", "result", "measured") or {}
         manual = g("latency", "manual_latency_ms")
@@ -1192,6 +1237,13 @@ class Session:
             verdict = "NO-GO: " + "; ".join(r["gate"] for r in hard_fail)
         elif unknown:
             verdict = "INCOMPLETE: " + "; ".join(r["gate"] for r in unknown)
+        elif ll_cond:
+            how_long = ("an unknown time (the stop time was not recorded)" if window is None
+                        else f"up to {window:g} s (over {UNCONTROLLED_MAX_S:g} s)")
+            verdict = (f"GO WITH CONDITIONS: link loss leaves the drone uncontrolled for {how_long}: it keeps flying "
+                       "its last stick command until the motors stop; keep everyone out of its path")
+            if land is False:
+                verdict += "; with the throttle-ramp landing ON"
         else:
             verdict = "GO for Session B (props on)"
             if land is False:
@@ -1209,19 +1261,32 @@ class Session:
         for step in ("linkloss_kill", "linkloss_wifi", "linkloss_rcpause"):
             if g(step, "motors") is not None:
                 carry[f"{step}"] = f"{g(step, 'motors')} after {g(step, 'after_s')} s"
+        if ll_ok is True and not self.auto:
+            carry["link_loss_uncontrolled_window_s"] = "unknown" if window is None else window
         out = {"verdict": verdict, "gates": rows, "carry_forward": carry}
         self.rec.data["summary"] = out
         self.rec.save()
         return out
 
+    def uncontrolled_window_s(self) -> Optional[float]:
+        """The longest stop time of link-loss tests 1 and 2, or None if either is not recorded."""
+        times = [self.rec.get(step, "answers", "after_s") for step in LINK_LOSS_STEPS]
+        try:
+            return max(float(t) for t in times) if None not in times else None
+        except (TypeError, ValueError):
+            return None
+
     def print_summary(self, s: dict) -> None:
         io = self.io
         print("\n" + io._col("1;36", "=== Session A summary " + "=" * 50))
         for r in s["gates"]:
-            col = {"PASS": "32", "FAIL": "1;31", "UNKNOWN": "33"}[r["result"]]
-            print(f"  {io._col(col, r['result'].ljust(8))} {'(hard) ' if r['hard'] else '       '}{r['gate']}: {r['detail']}")
+            col = {"PASS": "32", "FAIL": "1;31", "UNKNOWN": "33", "CONDITIONAL": "1;33"}[r["result"]]
+            print(f"  {io._col(col, r['result'].ljust(11))} {'(hard) ' if r['hard'] else '       '}{r['gate']}: {r['detail']}")
         print()
-        col = "1;32" if s["verdict"].startswith("GO") else "1;31"
+        if s["verdict"].startswith("GO WITH CONDITIONS"):
+            col = "1;33"
+        else:
+            col = "1;32" if s["verdict"].startswith("GO") else "1;31"
         print("  " + io._col(col, s["verdict"]))
         if s["carry_forward"]:
             print("\n  carry into Session B:")
@@ -1256,6 +1321,8 @@ STEPS = [
     ("remote", "The physical remote", "step_remote"),
     ("weight", "Weight and the low-battery LED", "step_weight"),
 ]
+# --board lewei (real drone): this board has no keepalive, so the RC pause stops every packet.
+LEWEI_TITLES = {"linkloss_rcpause": "Link loss 3: ALL packets stop (this board has no keepalive)"}
 ALIASES = {"flags": ["flag_takeoff_land", "flag_estop", "flag_land_ground", "flag_tilt"],
            "linkloss": ["linkloss_kill", "linkloss_wifi", "linkloss_rcpause"]}
 
@@ -1299,6 +1366,8 @@ def main(argv=None) -> int:
     a.drone_ip = a.drone_ip or (LEWEI_IP if a.board == "lewei" else DRONE_IP)
     if a.list:
         for name, title, _ in STEPS:
+            if a.board == "lewei" and not a.auto_twin:
+                title = LEWEI_TITLES.get(name, title)
             print(f"{name:20s} {title}")
         print("aliases: " + "; ".join(f"{k} = {','.join(v)}" for k, v in ALIASES.items()))
         return 0
@@ -1328,6 +1397,8 @@ def main(argv=None) -> int:
     code = 0
     try:
         for i, (name, title, fn) in enumerate(todo, 1):
+            if s.lewei:
+                title = LEWEI_TITLES.get(name, title)
             prev = rec.data["steps"].get(name, {}).get("status")
             if resume and prev in ("done", "skipped"):
                 print(f"\n(step {name}: already {prev} in the resumed file)")
