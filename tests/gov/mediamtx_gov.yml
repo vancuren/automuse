@@ -1,0 +1,20 @@
+# mediamtx for gov integration tests: RTSP over TCP on 127.0.0.1:8105 only (this workstream's range).
+logLevel: warn
+logDestinations: [stdout]
+api: false
+metrics: false
+pprof: false
+playback: false
+rtsp: true
+rtspTransports: [tcp]
+rtspEncryption: "no"
+rtspAddress: 127.0.0.1:8105
+rtpAddress: 127.0.0.1:23516
+rtcpAddress: 127.0.0.1:23517
+rtmp: false
+hls: false
+webrtc: false
+srt: false
+moq: false                 # MoQ would bind :8892/:8893 and write auto.key/auto.crt into the cwd
+paths:
+  all_others:

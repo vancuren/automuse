@@ -7,7 +7,9 @@ Order of preference, per frame:
      offset = MHD_CAPTURE_OFFSET_MS (the camera-to-backend minimum latency measured in Session A;
      0 until measured). A burst of late frames after a stall keeps its old pts, so it shows up
      as old, not fresh.
-  3. receive time, only when the stream has no usable pts.
+  3. a frame without a usable pts in a stream that had them keeps the last good estimate
+     ("pts_hold"), so it can never make old video look fresh.
+  4. receive time, only when the stream has never carried a usable pts.
 
 TimedX69RtspAdapter is the upstream X69 RTSP adapter plus: OpenCV open/read timeouts of 2 s, a
 thin wrapper around cv2.VideoCapture.read() that records receive time, pts and the counter, and
@@ -41,10 +43,16 @@ class CaptureClock:
         self.offset_ms = offset_ms
         self._dq: deque[tuple[float, float]] = deque()    # (receive_ms, receive - pts), increasing
         self._last_pts: Optional[float] = None
+        self.last_capture: Optional[float] = None
 
     def reset(self) -> None:
         self._dq.clear()
         self._last_pts = None
+        self.last_capture: Optional[float] = None
+
+    @property
+    def has_history(self) -> bool:
+        return bool(self._dq)
 
     def update(self, pts_ms: float, receive_ms: float) -> float:
         if self._last_pts is not None and pts_ms < self._last_pts - 100.0:
@@ -56,7 +64,8 @@ class CaptureClock:
         self._dq.append((receive_ms, off))
         while len(self._dq) > 1 and self._dq[0][0] < receive_ms - self.window_ms:
             self._dq.popleft()
-        return pts_ms + self._dq[0][1] - self.offset_ms
+        self.last_capture = pts_ms + self._dq[0][1] - self.offset_ms
+        return self.last_capture
 
 
 def estimate(img, pts_ms: float, receive_ms: float, clock: CaptureClock, flight_mode: str,
@@ -73,7 +82,11 @@ def estimate(img, pts_ms: float, receive_ms: float, clock: CaptureClock, flight_
             return float(render_ms), int(render_id), "counter"
     if pts_ms is not None and pts_ms == pts_ms and pts_ms > 0:
         return clock.update(float(pts_ms), receive_ms), None, "pts"
-    return receive_ms, None, "receive"
+    if clock.last_capture is not None:
+        # A frame without a usable pts in a stream that had them (seen right after a read timeout):
+        # never let it look fresher than the last good estimate.
+        return clock.last_capture, None, "pts_hold"
+    return receive_ms, None, "receive"      # stream has never carried pts
 
 
 def _base_adapter():

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -21,7 +22,7 @@ from starlette.websockets import WebSocketState
 
 from mhd.contracts import (AgentEvent, Candidates, FindRequest, Mission, NextFrame, OperatorCommand,
                            Release, Select, SubjectObs, encode_frame, now_ms)
-from mhd.governor.config import AXES, load_autopilot_config, load_governor_config
+from mhd.governor.config import AXES, load_autopilot_config, load_governor_config, replace
 from mhd.governor.core import Governor
 from mhd.governor.telemetry import build_telemetry
 
@@ -56,7 +57,14 @@ class Hub:
         from mhd.governor.turbodrone_glue import install_governor
         self.__init__()                      # fresh per-run state (no stale FindRequest or sockets)
         self.env = env
-        self.gov = governor or Governor(load_governor_config(), load_autopilot_config(), env.flight_mode)
+        if governor is None:
+            cfg = load_governor_config()
+            if os.environ.get("GOVERNOR_TWIN_HEADLESS", "").strip().lower() in ("1", "true", "yes", "on"):
+                # Twin-only bypass of the UI-heartbeat checks for headless runs. The Governor itself
+                # raises GovernorError in real mode, so the backend refuses to start.
+                cfg = replace(cfg, twin_headless_bypass=True)
+            governor = Governor(cfg, load_autopilot_config(), env.flight_mode)
+        self.gov = governor
         self.frames = FrameStore(env.flight_mode, on_frame=self.gov.note_frame)
         self.model = install_governor(self.gov)
         logger.warning("[hub] governor installed: FLIGHT_MODE=%s DRONE_IP=%s (armed=%s, headless_bypass=%s)",
