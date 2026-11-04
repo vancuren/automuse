@@ -99,7 +99,9 @@ class Feeder(threading.Thread):
             self.g.note_frame(t - 120.0, t)
             if self.obs_cx is not None:
                 self._fid += 1
-                self.g.submit_obs(make_obs(self._fid, t - 200.0, cx=self.obs_cx, w=60, h=200), receive_ms=t)
+                cx = self.obs_cx + (1.0 if self._fid % 2 else -1.0)     # a real tracker's box jitters
+                self.g.submit_obs(make_obs(self._fid, t - 200.0, cx=cx, w=60, h=200), receive_ms=t)
+
                 self.last_obs_ms = t
 
     def close(self):

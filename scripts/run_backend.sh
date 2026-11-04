@@ -61,4 +61,9 @@ if [[ -n "$LOGS" ]]; then mkdir -p "$LOGS"; export MHD_LOGS="$(cd "$LOGS" && pwd
 
 echo "[run_backend] tree=$TREE logs=$MHD_LOGS mode=$FLIGHT_MODE drone=$DRONE_IP:$CONTROL_PORT rtsp=${X69_LG_RTSP_URL:-<drone default>} http=$HOST:$PORT headless=$HEADLESS" >&2
 cd "$TREE/turbodrone/backend"
-exec "$MHD_PY" -m uvicorn web_server:app --host "$HOST" --port "$PORT" --log-level "$(echo "$LOG_LEVEL" | tr '[:upper:]' '[:lower:]')"
+# --timeout-graceful-shutdown 1: on Ctrl-C the governor starts landing at once (signal hook in
+# hub.py); uvicorn then waits at most 1 s for open responses (the UI's /mjpeg) before the lifespan
+# shutdown, which keeps sending land until 0.5 s have passed and then stops the RC loop.
+exec "$MHD_PY" -m uvicorn web_server:app --host "$HOST" --port "$PORT" --timeout-graceful-shutdown 1 \
+  --log-level "$(echo "$LOG_LEVEL" | tr '[:upper:]' '[:lower:]')"
+

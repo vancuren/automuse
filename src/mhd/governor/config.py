@@ -7,6 +7,7 @@ Defaults below mirror the YAML files; the YAML files are the documented source o
 from __future__ import annotations
 
 import dataclasses
+import math
 import os
 import typing
 from dataclasses import dataclass
@@ -100,15 +101,13 @@ class HeartbeatCfg:
 class VideoCfg:
     neutral_lag_s: float = 0.7
     land_lag_s: float = 2.0
-    floor_window_s: float = 10.0
-    floor_cap_s: float = 1.5
+    floor_cap_s: float = 1.5         # the session-minimum latency floor never excuses more than this
 
 
 @dataclass(frozen=True)
 class ObservationCfg:
     stale_min_s: float = 0.4
     stale_periods: float = 2.5
-    floor_window_s: float = 10.0
     floor_cap_s: float = 2.0
 
 
@@ -147,6 +146,7 @@ class ArmingCfg:
 class FlightTimerCfg:
     warn_s: float = 300.0
     land_s: float = 390.0
+    refire_after_s: float = 20.0     # after a resume cancels the timer landing, it fires again this much later
 
 
 @dataclass(frozen=True)
@@ -154,6 +154,21 @@ class WrongWayCfg:
     enabled: bool = True
     window_thetas: float = 1.5
     min_change_rad: float = 0.15
+    # Pitch: sustained forward (or back) command while the box shrinks (or grows) by this much.
+    pitch_enabled: bool = True
+    pitch_min_cmd: float = 0.08          # mean |applied pitch| over the window (normalized)
+    pitch_min_size_change: float = 0.10  # |log(box width ratio)| over the window
+    # Frozen box: the same box (within frozen_box_px) for frozen_box_s while we turned >= frozen_box_min_turn_rad.
+    frozen_box_s: float = 2.0
+    frozen_box_px: float = 0.5
+    frozen_box_min_turn_rad: float = 0.15
+
+
+@dataclass(frozen=True)
+class MissionCfg:
+    """When may a follow Mission release a pause? (A late Mission must never undo a later "stop".)"""
+    utterance_slack_s: float = 3.0   # ASR + transport time that Mission.latency_ms does not include
+    max_latency_s: float = 30.0      # latency_ms not finite, negative or above this counts as this
 
 
 @dataclass(frozen=True)
@@ -185,10 +200,54 @@ class GovernorConfig:
     wrong_way: WrongWayCfg = WrongWayCfg()
     tilt: TiltCfg = TiltCfg()
     faults: FaultsCfg = FaultsCfg()
+    mission: MissionCfg = MissionCfg()
     twin_headless_bypass: bool = False
     tick_log: bool = True
 
     def validate(self) -> "GovernorConfig":
+        """Types are checked by the loader (every float must be finite). Here: ranges. The safety
+        timings have upper bounds too, so no config file can switch a safety check off by making
+        its threshold huge (review finding: 'heartbeat.land_after_s: 2e9')."""
+        def within(name: str, value: float, lo: float, hi: float, *, lo_open: bool = False) -> None:
+            ok = (lo < value if lo_open else lo <= value) and value <= hi
+            if not ok:
+                raise ConfigError(f"{name} must be in {'(' if lo_open else '['}{lo}, {hi}], got {value!r}")
+
+        within("rc_rate_hz", self.rc_rate_hz, 25.0, 25.0)
+        within("slew.autopilot_per_s", self.slew.autopilot_per_s, 0.0, 10.0, lo_open=True)
+        within("human.stale_s", self.human.stale_s, 0.0, 1.0, lo_open=True)
+        within("human.deadzone", self.human.deadzone, 0.0, 0.5)
+        within("human.inc_ramp_per_s", self.human.inc_ramp_per_s, 0.0, 10.0, lo_open=True)
+        within("heartbeat.neutral_after_s", self.heartbeat.neutral_after_s, 0.0, 3.0, lo_open=True)
+        within("heartbeat.land_after_s", self.heartbeat.land_after_s, 0.0, 10.0, lo_open=True)
+        within("video.neutral_lag_s", self.video.neutral_lag_s, 0.0, 1.0, lo_open=True)
+        within("video.land_lag_s", self.video.land_lag_s, 0.0, 3.0, lo_open=True)
+        within("video.floor_cap_s", self.video.floor_cap_s, 0.0, 2.0)
+        within("observation.stale_min_s", self.observation.stale_min_s, 0.0, 1.0, lo_open=True)
+        within("observation.stale_periods", self.observation.stale_periods, 0.0, 5.0, lo_open=True)
+        within("observation.floor_cap_s", self.observation.floor_cap_s, 0.0, 3.0)
+        within("autopilot.max_step_ms", self.autopilot.max_step_ms, 0.0, 40.0, lo_open=True)
+        within("autopilot.fault_neutral_s", self.autopilot.fault_neutral_s, 0.0, 10.0)
+        within("takeoff.hold_s", self.takeoff.hold_s, 0.0, 10.0)
+        within("takeoff.packets", self.takeoff.packets, 1, 25)
+        within("landing.reassert_per_s", self.landing.reassert_per_s, 0.0, 25.0, lo_open=True)
+        within("flight_timer.warn_s", self.flight_timer.warn_s, 0.0, 600.0, lo_open=True)
+        within("flight_timer.land_s", self.flight_timer.land_s, 0.0, 600.0, lo_open=True)
+        within("flight_timer.refire_after_s", self.flight_timer.refire_after_s, 1.0, 120.0)
+        within("wrong_way.window_thetas", self.wrong_way.window_thetas, 0.0, 10.0, lo_open=True)
+        within("wrong_way.min_change_rad", self.wrong_way.min_change_rad, 0.0, 1.0, lo_open=True)
+        within("wrong_way.pitch_min_cmd", self.wrong_way.pitch_min_cmd, 0.0, 1.0, lo_open=True)
+        within("wrong_way.pitch_min_size_change", self.wrong_way.pitch_min_size_change, 0.0, 1.0, lo_open=True)
+        within("wrong_way.frozen_box_s", self.wrong_way.frozen_box_s, 0.0, 10.0, lo_open=True)
+        within("wrong_way.frozen_box_px", self.wrong_way.frozen_box_px, 0.0, 20.0)
+        within("wrong_way.frozen_box_min_turn_rad", self.wrong_way.frozen_box_min_turn_rad, 0.0, 3.0, lo_open=True)
+        within("tilt.max_hold_s", self.tilt.max_hold_s, 0.0, 10.0, lo_open=True)
+        within("faults.land_after_s", self.faults.land_after_s, 0.0, 5.0, lo_open=True)
+        within("mission.utterance_slack_s", self.mission.utterance_slack_s, 0.0, 30.0)
+        within("mission.max_latency_s", self.mission.max_latency_s, 1.0, 120.0)
+        if not self.arming.phrase.strip():
+            raise ConfigError("arming.phrase must not be empty")
+
         fs = self.wire.full_scale_counts
         if not 1 <= fs <= 127:
             raise ConfigError("wire.full_scale_counts must be 1..127")
@@ -351,7 +410,10 @@ class AutopilotConfig:
             raise ConfigError("forward.cap and back_cap_ratio must be 0..1")
         if self.lifecycle.search.max_deg > 180:
             raise ConfigError("lifecycle.search.max_deg must be <= 180")
+        if not (self.camera.frame_w == 1280 and self.camera.frame_h == 720):
+            raise ConfigError("camera.frame_w/frame_h must be 1280x720 (contract pixel space)")
         return self
+
 
 
 # ----------------------------------------------------------------------------------------------
@@ -392,6 +454,9 @@ def _coerce(tp: Any, value: Any, path: str) -> Any:
     if tp is float:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ConfigError(f"{path}: expected a number, got {value!r}")
+        if not math.isfinite(float(value)):
+            # YAML .nan / .inf would make every comparison False and silently disable a check.
+            raise ConfigError(f"{path}: must be a finite number, got {value!r}")
         return float(value)
     if tp is str:
         if not isinstance(value, str):

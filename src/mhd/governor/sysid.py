@@ -8,9 +8,14 @@ measure the response on an ArUco marker, and fit K (rate per wire count), firmwa
 Safety:
 - Steps are ordinary human stick input on /ws ("abs" mode), so the governor applies the human caps,
   and LAND / E-STOP from the UI always win (they have priority over human sticks).
-- Refuses to start unless the backend reports AIRBORNE; stops the moment it is not AIRBORNE or the
-  governor stops using our sticks. Ctrl-C releases the sticks. Amplitudes above 0.5 are refused.
-- Sends no heartbeat of its own: the UI must stay open, exactly as in normal flight.
+- Refuses to start unless the backend reports AIRBORNE. Aborts the moment the backend is not
+  AIRBORNE, or (0.3 s into a step) the governor is not flying our sticks (active_source is not
+  "human"), or, in real mode, the UI heartbeat is older than 1 s. Ctrl-C releases the sticks.
+  Amplitudes above 0.5 are refused.
+- Sends no heartbeat of its own, and in real mode its axes do not count as one: only the UI
+  worker's {"type":"hb","client":"ui"} does. If the UI dies, the governor goes neutral at 1.5 s and
+  lands at 5 s as in normal flight. (In twin mode any /ws message counts, for the stock UI.)
+
 - Each amplitude is flown + then - so the drone ends near where it started.
 
 Output: $MHD_LOGS/sysid-<axis>-<time>.json with the step schedule (monotonic ms, aligned with
@@ -146,7 +151,22 @@ def fit_steps(steps: list[Step], samples: list[tuple[float, float, float]], axis
 # Live run
 
 
+def _abort_reason(s: dict, st: Step, axis: str, in_step_s: float) -> Optional[str]:
+    """Why the step must stop now (None: carry on). Records the wire count while ours."""
+    if s.get("flight_state") != "AIRBORNE":
+        return f"flight state {s.get('flight_state')}"
+    hb = (s.get("latency_ms") or {}).get("hb_age")
+    if s.get("flight_mode") == "real" and (hb is None or hb > 1000.0):
+        return f"UI heartbeat {hb} ms old: is the UI open?"
+    if s.get("active_source") == "human":
+        st.wire_count = int(s["sticks_wire"][axis]) - 128
+    elif in_step_s > 0.3:
+        return f"governor is not flying our sticks (active_source={s.get('active_source')})"
+    return None
+
+
 def run(backend: str, axis: str, amps: list[float], hold_s: float, rest_s: float, marker_size_m: float,
+
         hfov_deg: Optional[float] = None, marker_id: Optional[int] = None, measure: bool = True) -> dict:
     import httpx
     import websockets.sync.client as wsc
@@ -187,19 +207,19 @@ def run(backend: str, axis: str, amps: list[float], hold_s: float, rest_s: float
             for st in steps:
                 print(f"[sysid] {axis} {st.value:+.2f} for {st.hold_s:.1f} s")
                 st.t_start_ms = now_ms()
-                end = time.monotonic() + st.hold_s
+                began = time.monotonic()
+                end = began + st.hold_s
                 checked = 0.0
                 while time.monotonic() < end:
                     ws.send(json.dumps({"type": "axes", "mode": "abs", axis: st.value}))
                     if time.monotonic() - checked > 0.2:
                         checked = time.monotonic()
-                        s = httpx.get(base + "/state", timeout=1.0).json()
-                        if s.get("flight_state") != "AIRBORNE":
-                            aborted = f"flight state {s.get('flight_state')}"
+                        aborted = _abort_reason(httpx.get(base + "/state", timeout=1.0).json(), st, axis,
+                                                in_step_s=checked - began)
+                        if aborted:
                             break
-                        if s.get("active_source") == "human":
-                            st.wire_count = int(s["sticks_wire"][axis]) - 128
                     time.sleep(1 / 30)
+
                 ws.send(json.dumps({"type": "axes", "mode": "abs", axis: 0.0}))   # release now
                 st.t_end_ms = now_ms()
                 if aborted:

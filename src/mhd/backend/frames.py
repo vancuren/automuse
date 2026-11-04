@@ -23,6 +23,7 @@ class FrameStore:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._event: Optional[asyncio.Event] = None
         self.count = 0
+        self.capture_rise_ms: Optional[float] = None   # real-mode pts baseline rise (telemetry)
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -34,7 +35,11 @@ class FrameStore:
         capture = getattr(frame, "capture_ms", None)
         if capture is None:
             capture = receive
+        rise = getattr(frame, "capture_rise_ms", None)
+        if isinstance(rise, (int, float)):
+            self.capture_rise_ms = float(rise)
         with self._lock:
+
             self._next_id += 1
             meta = FrameMeta(frame_id=self._next_id, capture_ms=float(capture), receive_ms=float(receive),
                              width=int(getattr(frame, "width", None) or 1280),

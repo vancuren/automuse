@@ -46,20 +46,22 @@ human:
   inc_ramp_per_s: 1.0       # 'inc' (keyboard) mode: stick ramps toward +/- the human cap at this rate;
                             # release (all-zero message or staleness) is an immediate zero
 
-heartbeat:                  # UI heartbeat ({"type":"hb"} at 5 Hz from a Web Worker)
-  neutral_after_s: 1.5      # missing this long: all sticks neutral (hover)
-  land_after_s: 5.0         # missing this long while flying: safety landing
+heartbeat:                  # UI heartbeat ({"type":"hb","client":"ui"} at 5 Hz from a Web Worker). Real mode:
+                            # only that message counts. Twin: any /ws message counts (legacy UI).
+  neutral_after_s: 1.5      # missing this long: all sticks neutral (hover); max 3
+  land_after_s: 5.0         # missing this long while flying: safety landing; max 10
 
-video:                      # frame lag = (now - capture_ms) minus the 10 s floor of (receive - capture)
-  neutral_lag_s: 0.7        # autopilot neutral (the human keeps control for line-of-sight flying)
-  land_lag_s: 2.0           # safety landing
-  floor_window_s: 10.0      # sliding window for the best-case pipeline latency
-  floor_cap_s: 1.5          # the floor never excuses more than this much latency
 
-observation:                # obs lag = (now - capture_ms of the newest SubjectObs) minus its 10 s floor
-  stale_min_s: 0.4          # autopilot neutral above max(stale_min_s, stale_periods x measured period)
+video:                      # frame lag = (now - capture_ms) minus the SESSION minimum of (receive - capture)
+  neutral_lag_s: 0.7        # autopilot neutral (the human keeps control for line-of-sight flying); max 1.0
+  land_lag_s: 2.0           # safety landing; max 3.0
+  floor_cap_s: 1.5          # the floor (best-case pipeline latency since start) never excuses more than this.
+                            # It is a session minimum, so it never rises: a latency creep or a lasting rise
+                            # shows up as lag (review fix; it was a 10 s sliding minimum).
+
+observation:                # obs lag = (now - capture_ms of the newest SubjectObs) minus its session minimum
+  stale_min_s: 0.4          # autopilot neutral above max(stale_min_s, stale_periods x measured period); max 1.0
   stale_periods: 2.5
-  floor_window_s: 10.0
   floor_cap_s: 2.0
 
 autopilot:
@@ -69,7 +71,8 @@ autopilot:
 takeoff:
   hold_s: 4.0               # TAKING_OFF holds neutral sticks at least this long before AIRBORNE
   packets: 1                # takeoff flag (0x01) is sent in this many consecutive packets
-  require_heartbeat: true   # takeoff refused unless the UI heartbeat is fresh (bypass: twin_headless_bypass)
+  require_heartbeat: true   # takeoff refused unless the UI heartbeat is fresh (bypass: twin_headless_bypass).
+                            # false is refused in real mode.
 
 landing:
   reassert_per_s: 5         # LANDING re-asserts the land flag (0x80) this many times per second, evenly spaced
@@ -87,12 +90,24 @@ arming:
 
 flight_timer:               # per battery pack, persisted to $MHD_LOGS/flight_timer.json
   warn_s: 300               # 5:00: warning flag and event
-  land_s: 390               # 6:30: automatic landing (fires once per flight; an explicit resume can cancel it)
+  land_s: 390               # 6:30: automatic landing (max 600)
+  refire_after_s: 20        # an explicit resume cancels the timer landing; it fires again 20 s of flight later
 
-wrong_way:                  # PLAN 4.5 step 5
-  enabled: true
+wrong_way:                  # PLAN 4.5 step 5, plus pitch and frozen-box checks (review fixes). All latch a
+  enabled: true             # hover ("wrong_way" flag) until the operator presses Resume.
   window_thetas: 1.5        # compare bearing change over 1.5 x theta (theta from config/autopilot.yaml)
   min_change_rad: 0.15      # both observed and predicted change must exceed this, with opposite signs
+  pitch_enabled: true       # forward commanded over the window but the box shrank (or back and it grew)
+  pitch_min_cmd: 0.08       # ... when the mean |applied pitch| over the window is at least this (10 counts)
+  pitch_min_size_change: 0.10   # ... and |log(width ratio)| is at least this (10 %)
+  frozen_box_s: 2.0         # the very same box (within frozen_box_px) for this long while we turned at
+  frozen_box_px: 0.5        # least frozen_box_min_turn_rad: stuck tracker or repeating camera frame
+  frozen_box_min_turn_rad: 0.15
+
+mission:                    # A follow Mission releases a pause only if it was spoken after the last
+                            # pause / land / E-stop / takeoff: spoken_at = arrival - latency_ms - slack.
+  utterance_slack_s: 3.0    # ASR and transport time that Mission.latency_ms does not include
+  max_latency_s: 30.0       # a latency_ms that is not finite, negative or above this counts as this
 
 tilt:
   max_hold_s: 3.0           # a tilt_up/tilt_down command stops by itself after this long (UI may die mid-press)
@@ -101,6 +116,7 @@ faults:
   land_after_s: 2.0         # tick exceptions for this long in a row: the fallback also re-asserts land
 
 twin_headless_bypass: false # TWIN ONLY: skip UI-heartbeat checks for headless test runs.
-                            # The governor refuses to start in real mode when this is true.
+                            # The governor refuses to start in real mode when this is true, and also
+                            # when takeoff.require_heartbeat is false.
 
 tick_log: true              # per-tick JSON lines in $MHD_LOGS/control-*.jsonl (written off the RC thread)

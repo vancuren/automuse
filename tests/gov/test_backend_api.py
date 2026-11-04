@@ -98,9 +98,13 @@ def _wait(pred, timeout=3.0):
 def _airborne(client, hub, ws):
     ws.send_text(json.dumps({"type": "hb"}))
     assert _wait(lambda: hub.frames.count > 3)
+    # Takeoff needs /ws (review fix: POST /command is LAND / E-STOP / pause / estop_reset only).
     r = client.post("/command", json={"type": "cmd", "command": "takeoff"}).json()
-    assert r["ok"], r
+    assert r == {"ok": False, "flight_state": "ON_GROUND", "reason": "not_allowed_over_http"}
+    ws.send_text(json.dumps({"type": "cmd", "command": "takeoff"}))
+    assert _wait(lambda: hub.gov.state.value == "TAKING_OFF")
     end = time.monotonic() + 5.0
+
     while hub.gov.state.value != "AIRBORNE" and time.monotonic() < end:
         ws.send_text(json.dumps({"type": "hb"}))
         time.sleep(0.1)
@@ -149,7 +153,12 @@ def test_post_command_estop_and_state(backend):
     bad = client.post("/command", json={"type": "cmd", "command": "selfdestruct"})
     assert bad.status_code == 422
     r = client.post("/command", json={"type": "cmd", "command": "takeoff"}).json()
-    assert r == {"ok": False, "flight_state": "ESTOPPED", "reason": "estopped"}
+    assert r == {"ok": False, "flight_state": "ESTOPPED", "reason": "not_allowed_over_http"}
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps({"type": "cmd", "command": "takeoff"}))
+        ws.send_text(json.dumps({"type": "hb"}))
+    assert hub.gov.state.value == "ESTOPPED"
+
 
 
 def test_telemetry_stream_at_10_hz(backend):

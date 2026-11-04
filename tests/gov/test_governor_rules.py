@@ -134,8 +134,12 @@ def test_estop_is_latched_until_reset(rig):
         assert not r.g.command(cmd).ok
         assert r.tick().stop
     assert r.g.command("estop_reset").ok
-    assert not r.tick().stop and r.g.state == FlightState.on_ground
+    # Review fix: reset goes to LANDING (if 0x02 did not cut the motors, the drone still lands).
+    out = r.tick()
+    assert not out.stop and out.land and r.g.state == FlightState.landing
+    assert r.g.command("resume").ok and r.g.state == FlightState.on_ground   # never back to AIRBORNE
     assert r.g.command("takeoff").reason == "not_armed"     # real mode: ARM again after an E-stop
+
 
 
 def test_land_reasserted_five_per_second_until_touchdown(rig):
@@ -343,14 +347,20 @@ def test_flight_timer_warns_then_lands_and_persists(rig, tmp_path):
     assert r.g.command("pack_swap", pack_id="2").ok and r.g.flight_timer.flight_s() == 0.0
 
 
-def test_resume_cancels_timer_landing_once(rig):
-    r = rig(gov_overrides={"flight_timer.warn_s": 3.0, "flight_timer.land_s": 5.0})
+def test_resume_postpones_timer_landing_it_does_not_cancel_it(rig):
+    # Review fix: one resume used to cancel the timer landing for good (152 s flown with land_s 30).
+    r = rig(gov_overrides={"flight_timer.warn_s": 3.0, "flight_timer.land_s": 5.0,
+                           "flight_timer.refire_after_s": 3.0})
     r.airborne()
     r.run(1.0)
     assert r.g.state == FlightState.landing
     assert r.g.command("resume").ok and r.g.state == FlightState.airborne
     r.run(2.0)
-    assert r.g.state == FlightState.airborne       # timer landing fires once per flight
+    assert r.g.state == FlightState.airborne       # grace period: refire_after_s of flight time
+    r.run(1.2)
+    assert r.g.state == FlightState.landing        # and then it lands again
+    assert "landing:flight_timer" in r.g.snapshot().safety_flags
+
 
 
 def test_resume_cannot_beat_a_persisting_safety_cause(rig):

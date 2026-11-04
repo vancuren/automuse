@@ -123,8 +123,15 @@ def test_live_sysid_plumbing(marker_stream, tmp_path, monkeypatch):
             time.sleep(0.2)
         with pytest.raises(SystemExit):
             run(base, "yaw", [0.1], 0.5, 0.3, 0.15)           # ON_GROUND: refused
-        assert httpx.post(base + "/command", json={"type": "cmd", "command": "takeoff"}).json()["ok"]
+        # Takeoff goes over /ws (POST /command refuses it since the review fixes).
+        assert not httpx.post(base + "/command", json={"type": "cmd", "command": "takeoff"}).json()["ok"]
+        import websockets.sync.client as wsc
+        with wsc.connect("ws://127.0.0.1:8100/ws") as ws:
+            ws.send(json.dumps({"type": "cmd", "command": "takeoff"}))
+            time.sleep(0.2)
+        assert httpx.get(base + "/state").json()["flight_state"] == "TAKING_OFF"
         time.sleep(4.4)
+
         res = run(base, "yaw", [0.10, 0.20], 0.6, 0.4, 0.15)
         assert res["aborted"] is None
         counts = [s["wire_count"] for s in res["schedule"]]

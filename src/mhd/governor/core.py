@@ -26,12 +26,12 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from mhd.autopilot import AutopilotRun, autopilot_start, autopilot_step, autopilot_stop, bearing_rad
-from mhd.contracts import AutopilotState, FlightState, Mission, SubjectObs, now_ms
+from mhd.contracts import FRAME_H, FRAME_W, AutopilotState, FlightState, Mission, SubjectObs, now_ms
 
 from . import logq
 from .config import AXES, AutopilotConfig, AxisInts, GovernorConfig, logs_dir
 from .flight_timer import FlightTimer
-from .stats import PeriodEstimator, SlidingMin
+from .stats import PeriodEstimator, SessionMin
 from .tick_log import TickLog
 from .wire import CENTER, neutral_wire, to_wire
 
@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 
 ZERO = {"throttle": 0.0, "yaw": 0.0, "pitch": 0.0, "roll": 0.0}
 INF = math.inf
+BOX_MARGIN_X = 0.05 * FRAME_W     # a box may stick out of the 1280x720 frame by 5 % at most
+BOX_MARGIN_Y = 0.05 * FRAME_H
 AGENT_COMMANDS = frozenset({"pause", "land"})     # voice/LLM side: never takeoff, never E-stop
 ALL_COMMANDS = frozenset({
     "takeoff", "land", "estop", "estop_reset", "pause", "resume", "confirm_touchdown",
@@ -99,6 +101,37 @@ def _finite(x: float) -> Optional[float]:
     return None if x is None or x == INF or x != x else round(float(x), 1)
 
 
+def _is_num(x) -> bool:
+    """A real, finite number (bool excluded). NaN and +-inf are never accepted from other processes."""
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def obs_problem(obs: SubjectObs, receive_ms: float) -> Optional[str]:
+    """Why an observation must be refused, or None. Every number must be finite (a NaN capture_ms
+    used to defeat both the staleness check and the autopilot's 'new evidence' test), and the box
+    must lie in the 1280x720 frame (5 % margin)."""
+    if not _is_num(obs.capture_ms):
+        return "capture_ms_not_finite"
+    if obs.capture_ms > receive_ms + 50.0:
+        return "capture_ms_in_future"              # clock mismatch: never trust a future frame
+    if not (_is_num(obs.confirm_age_ms) and obs.confirm_age_ms >= -50.0):
+        return "confirm_age_ms_invalid"
+    if not (_is_num(obs.tracker_score) and -1e-6 <= obs.tracker_score <= 1.0 + 1e-6):
+        return "tracker_score_invalid"
+    if not _is_num(obs.confidence):
+        return "confidence_not_finite"
+    if obs.detector_latency_ms is not None and not (_is_num(obs.detector_latency_ms) and obs.detector_latency_ms >= 0):
+        return "detector_latency_invalid"
+    b = obs.box
+    if b is not None:
+        if not all(_is_num(v) for v in (b.x1, b.y1, b.x2, b.y2)):
+            return "box_not_finite"
+        if (min(b.x1, b.x2) < -BOX_MARGIN_X or max(b.x1, b.x2) > FRAME_W + BOX_MARGIN_X
+                or min(b.y1, b.y2) < -BOX_MARGIN_Y or max(b.y1, b.y2) > FRAME_H + BOX_MARGIN_Y):
+            return "box_outside_frame"
+    return None
+
+
 class Governor:
     def __init__(self, cfg: GovernorConfig, ap_params: AutopilotConfig, flight_mode: str, *,
                  clock: Callable[[], float] = now_ms, log_dir: Optional[Path] = None,
@@ -107,6 +140,10 @@ class Governor:
             raise GovernorError(f"flight_mode must be 'twin' or 'real', got {flight_mode!r}")
         if flight_mode == "real" and cfg.twin_headless_bypass:
             raise GovernorError("twin_headless_bypass is set: refusing to run in real mode")
+        if flight_mode == "real" and not cfg.takeoff.require_heartbeat:
+            raise GovernorError("takeoff.require_heartbeat is false: refusing to run in real mode")
+        cfg.validate()                          # also for configs built in code (replace() skips the loader)
+        ap_params.validate()
         logq.install()                          # governor log calls never do I/O on the RC thread
         self.cfg = cfg
         self.ap_params = ap_params
@@ -127,7 +164,8 @@ class Governor:
         self._land_cause: Optional[str] = None
         self._land_is_safety = False
         self._land_next_ms = -INF               # land flag schedule: fixed grid, 1/reassert_per_s
-        self._timer_land_fired = False
+        self._land_from = FlightState.on_ground  # state a landing started from: where resume returns
+        self._timer_land_next_s = cfg.flight_timer.land_s   # flight time at which the timer lands next
         self._timer_warned = False
         self._shutdown = False
 
@@ -135,6 +173,7 @@ class Governor:
         self._human_target = dict(ZERO)
         self._human_mode = "abs"
         self._human_last_ms: Optional[float] = None
+        self._human_owner = None                # connection that sent the input; only its zero releases it
         self._human_ramp = dict(ZERO)
         self._hb_last_ms: Optional[float] = None
         self._tilt_dir = 0
@@ -142,28 +181,36 @@ class Governor:
 
         # Video frames
         self._frame_capture_ms: Optional[float] = None
-        self._frame_floor = SlidingMin(cfg.video.floor_window_s * 1000.0)
+        self._frame_floor = SessionMin()        # best-case latency since start: never re-baselines upward
+        self.frames_rejected = 0
 
         # Observations
         self._obs: Optional[SubjectObs] = None
-        self._obs_floor = SlidingMin(cfg.observation.floor_window_s * 1000.0)
+        self._obs_floor = SessionMin()
         self._obs_period = PeriodEstimator()
-        self._obs_hist: deque = deque(maxlen=200)       # (capture_ms, bearing) for the wrong-way check
+        self._obs_hist: deque = deque(maxlen=200)       # (capture_ms, bearing, log width) for wrong-way checks
         self._obs_hist_frame = -1
+        self._frozen_box: Optional[tuple] = None        # (x1, y1, x2, y2) of the current "same box" run
+        self._frozen_since: Optional[float] = None      # capture_ms when that run started
+        self.obs_rejected: dict = {}                    # reason -> count (telemetry / logs)
 
         # Mission and autopilot
         self._mission: Optional[Mission] = None
         self._ap = AutopilotRun()
         self._ap_paused = False
+        self._hold_ms = -INF                    # last pause / land / E-stop / takeoff: older missions cannot unpause
         self._ap_fault_until = -INF
         self._ap_fault_count = 0
         self._ap_fault_logged_ms = -INF
         self._ap_last_sticks = dict(ZERO)
         self._ap_step_ms = 0.0
         self._wrong_way_hold = False
+        self._wrong_way_reason: Optional[str] = None
         self._slew = dict(ZERO)
         self._applied = dict(ZERO)                       # normalized, effective, last tick
         self._yaw_hist: deque = deque(maxlen=150)        # (t_ms, yaw rate rad/s) actually commanded (6 s)
+        self._pitch_hist: deque = deque(maxlen=150)      # (t_ms, applied pitch, normalized)
+
         self.events: deque = deque(maxlen=200)           # autopilot/safety events for the hub to relay
 
         # Tick bookkeeping
@@ -185,11 +232,14 @@ class Governor:
         with self._lock:
             self._hb_last_ms = self._clock() if now is None else now
 
-    def submit_human(self, axes: dict, mode: str = "abs", now: Optional[float] = None) -> bool:
+    def submit_human(self, axes: dict, mode: str = "abs", now: Optional[float] = None, owner=None) -> bool:
         """Operator sticks. Returns True if this counted as input (nonzero after the deadzone).
 
-        An all-zero message is not input: it releases the sticks immediately but never claims
-        control, so an idle UI streaming zeros cannot block the autopilot.
+        An all-zero message is not input: it never claims control, so an idle UI streaming zeros
+        cannot block the autopilot. It releases the sticks immediately, but only when it comes from
+        the connection (`owner`) that sent the input: an idle second tab streaming zeros must not
+        break the operator's override (review finding). owner=None (in-process callers) always
+        matches.
         """
         now = self._clock() if now is None else now
         dz = self.cfg.human.deadzone
@@ -206,7 +256,8 @@ class Governor:
         nonzero = any(vals[a] != 0.0 for a in AXES)
         with self._lock:
             if not nonzero:
-                self._release_human()
+                if owner is None or self._human_owner is None or owner == self._human_owner:
+                    self._release_human()
                 return False
             if mode in ("inc", "incremental"):
                 mode = "inc"
@@ -217,12 +268,14 @@ class Governor:
             self._human_target = vals
             self._human_mode = mode
             self._human_last_ms = now
+            self._human_owner = owner
             return True
 
-    def ui_disconnected(self) -> None:
-        """The /ws socket closed: human input and tilt go to zero now."""
+    def ui_disconnected(self, owner=None) -> None:
+        """A /ws socket closed: tilt stops now, and human input goes to zero if that socket owned it."""
         with self._lock:
-            self._release_human()
+            if owner is None or self._human_owner is None or owner == self._human_owner:
+                self._release_human()
             self._tilt_dir = 0
             self._tilt_until_ms = -INF
 
@@ -235,51 +288,88 @@ class Governor:
             hold = self.cfg.tilt.max_hold_s if hold_s is None else hold_s
             self._tilt_until_ms = now + hold * 1000.0 if d else -INF
 
-    def note_frame(self, capture_ms: float, receive_ms: Optional[float] = None) -> None:
-        """A decoded video frame reached the backend (for video-age checks)."""
+    def note_frame(self, capture_ms: float, receive_ms: Optional[float] = None) -> bool:
+        """A decoded video frame reached the backend (for video-age checks). A capture time that is
+        not finite or lies in the future is refused: it would make frozen video look fresh."""
         receive_ms = self._clock() if receive_ms is None else receive_ms
+        if not (_is_num(capture_ms) and _is_num(receive_ms)) or capture_ms > receive_ms + 50.0:
+            self.frames_rejected += 1
+            return False
         with self._lock:
             if self._frame_capture_ms is None or capture_ms >= self._frame_capture_ms:
                 self._frame_capture_ms = capture_ms
             self._frame_floor.add(receive_ms, max(0.0, receive_ms - capture_ms))
+        return True
 
     def submit_obs(self, obs: SubjectObs, receive_ms: Optional[float] = None) -> bool:
-        """Newest SubjectObs from perception. Out-of-order, foreign-mission or future obs are dropped."""
+        """Newest SubjectObs from perception. Invalid (non-finite, box outside the frame), future,
+        out-of-order and foreign-mission observations are dropped."""
         receive_ms = self._clock() if receive_ms is None else receive_ms
+        why = obs_problem(obs, receive_ms)
         with self._lock:
             mid = self._mission.mission_id if self._mission else None
-            if obs.mission_id is not None and mid is not None and obs.mission_id != mid:
+            if why is None and obs.mission_id is not None and mid is not None and obs.mission_id != mid:
+                why = "foreign_mission"
+            if why is None and self._obs is not None and obs.capture_ms < self._obs.capture_ms:
+                why = "out_of_order"
+            if why is not None:
+                self.obs_rejected[why] = self.obs_rejected.get(why, 0) + 1
                 return False
-            if obs.capture_ms > receive_ms + 50.0:
-                return False                     # clock mismatch: never trust a future frame
-            if self._obs is not None and obs.capture_ms < self._obs.capture_ms:
-                return False                     # out of order
             self._obs = obs
             self._obs_floor.add(receive_ms, max(0.0, receive_ms - obs.capture_ms))
             self._obs_period.add(obs.capture_ms)
-            if obs.box is not None and obs.frame_id != self._obs_hist_frame:
+            b = obs.box
+            if b is not None and b.w > 1.0 and obs.frame_id != self._obs_hist_frame:
                 self._obs_hist_frame = obs.frame_id
-                self._obs_hist.append((obs.capture_ms, bearing_rad(obs.box.cx, self.ap_params)))
+                self._obs_hist.append((obs.capture_ms, bearing_rad(b.cx, self.ap_params), math.log(b.w)))
+                box = (b.x1, b.y1, b.x2, b.y2)
+                px = self.cfg.wrong_way.frozen_box_px
+                if self._frozen_box is None or any(abs(p - q) > px for p, q in zip(box, self._frozen_box)):
+                    self._frozen_box, self._frozen_since = box, obs.capture_ms
             return True
 
     def set_mission(self, mission: Mission, now: Optional[float] = None) -> dict:
-        """Apply an agent Mission. follow starts the autopilot (FIND); hover pauses; land lands."""
+        """Apply an agent Mission. follow starts the autopilot (FIND); hover pauses; land lands.
+
+        A follow Mission is slow (the LLM takes seconds), and safety words travel separately, so a
+        "stop" said after "follow X" can arrive before X's Mission. Rules (review finding 3):
+          - refused while E-stopped (E-stop drops the mission);
+          - it never clears a wrong-way hold (only the operator's Resume does);
+          - it releases a pause only if it was spoken after the last pause / land / E-stop /
+            takeoff: spoken_at = arrival - latency_ms - mission.utterance_slack_s. Otherwise it is
+            accepted (FIND runs and can lock on) but stays paused until Resume.
+        """
         now = self._clock() if now is None else now
         action = mission.intent.action
         with self._lock:
             if action == "follow":
+                if self._state == FlightState.estopped:
+                    return {"ok": False, "action": "follow", "reason": "estopped"}
                 self._mission = mission
                 self._ap = autopilot_start(self._ap, mission.mission_id, now,
                                            distance=mission.intent.distance,
                                            category=mission.intent.category)
-                self._ap_paused = False
-                self._wrong_way_hold = False
                 self._obs = None
                 self._obs_hist.clear()
-                return {"ok": True, "action": "follow", "find": True}
+                self._frozen_box = self._frozen_since = None
+                spoken = self._spoken_at(mission, now)
+                released = spoken > self._hold_ms
+                if released:
+                    self._ap_paused = False
+                res = {"ok": True, "action": "follow", "find": True,
+                       "paused": self._ap_paused or self._wrong_way_hold}
+                if self._ap_paused:
+                    res["reason"] = "paused_after_utterance" if not released else "paused"
+                    self.events.append({"kind": "safety", "ts_ms": now,
+                                        "text": "follow mission received, but the autopilot stays paused: "
+                                                "a stop, land or takeoff came after it. Press Resume."})
+                elif self._wrong_way_hold:
+                    res["reason"] = "wrong_way_hold"
+                return res
             if action == "hover":
-                self._ap_paused = True
+                self._hold(now)
                 return {"ok": True, "action": "hover"}
+
         if action == "land":
             r = self.command("land", source="agent", now=now)
             return {"ok": r.ok, "action": "land", "flight_state": r.flight_state}
@@ -325,13 +415,18 @@ class Governor:
             self._estop_latched = True
             self._set_state(FlightState.estopped, now)
             self._ap = autopilot_stop(self._ap, now)
-            self._ap_paused = True
+            self._mission = None                  # E-stop ends the mission: nothing resumes it later
+            self._hold(now)
             return ok()
         if cmd == "estop_reset":
             if st != FlightState.estopped:
                 return no("not_estopped")
             self._estop_latched = False
+            # Reset goes to LANDING, not ON_GROUND: if 0x02 did not cut the motors, the drone is
+            # still flying and must land. The operator confirms touchdown as after any landing.
+            # A resume from this landing returns to ON_GROUND, never to AIRBORNE.
             self._set_state(FlightState.on_ground, now)
+            self._begin_landing("estop_reset", safety=False, now=now)
             if self.flight_mode == "real" and self.cfg.estop.rearm_after_reset:
                 self._armed = False
             return ok()
@@ -355,26 +450,39 @@ class Governor:
                 return no("no_video")
             self._set_state(FlightState.taking_off, now)
             self._takeoff_left = self.cfg.takeoff.packets
-            self._timer_land_fired = False
+            self._timer_land_next_s = self.cfg.flight_timer.land_s
             self._timer_warned = False
+            self._hold(now)                       # a takeoff never starts following by itself
             return ok()
         if cmd == "confirm_touchdown":
-            if st in (FlightState.landing, FlightState.taking_off, FlightState.airborne):
+            # Only after a landing. A lost takeoff (0x01 never arrived) is cleared with LAND, then
+            # Landed: confirm_touchdown while AIRBORNE used to silence every safety landing.
+            if st == FlightState.landing:
                 self._set_state(FlightState.on_ground, now)
                 return ok()
-            return no("not_flying")
+            return no("not_landing")
         if cmd == "pause":
-            self._ap_paused = True
+            self._hold(now)
             return ok()
         if cmd == "resume":
             if st == FlightState.landing:
-                # Explicit cancel of a (safety or human) landing. The autopilot stays paused; a second
-                # resume restarts it. A landing cause that still holds re-triggers on the next tick.
-                self._set_state(FlightState.airborne, now)
-                self._ap_paused = True
+                # Explicit cancel of a (safety or human) landing: back to the state the landing
+                # started from (a LAND pressed on the ground resumes to ON_GROUND, so resume can
+                # never bypass ARM or "ON_GROUND: neutral only"). TAKING_OFF restarts its neutral
+                # hold without a second takeoff flag. The autopilot stays paused; a second resume
+                # restarts it. A cause that still holds lands again on the next tick, and a
+                # cancelled flight-timer landing fires again after flight_timer.refire_after_s.
+                back = self._land_from
+                if self._land_cause == "flight_timer":
+                    self._timer_land_next_s = self.flight_timer.flight_s() + self.cfg.flight_timer.refire_after_s
+                self._set_state(back, now)
+                self._hold(now)
                 return ok()
+
             self._ap_paused = False
             self._wrong_way_hold = False
+            self._wrong_way_reason = None
+            self._frozen_box = self._frozen_since = None
             if self._ap.mode == AutopilotState.give_up and self._mission is not None:
                 self._ap = autopilot_start(self._ap, self._mission.mission_id, now,
                                            distance=self._mission.intent.distance,
@@ -418,13 +526,28 @@ class Governor:
         self._land_cause = cause
         self._land_is_safety = safety
         if self._state != FlightState.landing:
+            self._land_from = self._state            # where an explicit resume returns to
             self._land_next_ms = now                # first land flag goes out on the next tick
             self._set_state(FlightState.landing, now)
             self._land_cause = cause
             self._land_is_safety = safety
-        self._ap_paused = True
+        self._hold(now)
         if safety:
             logger.warning("[governor] SAFETY LANDING: %s", cause)
+
+    def _hold(self, now: float) -> None:
+        """Pause the autopilot. Missions spoken before `now` can no longer release the pause."""
+        self._ap_paused = True
+        self._hold_ms = max(self._hold_ms, now)
+
+    def _spoken_at(self, mission: Mission, now: float) -> float:
+        """Earliest time the Mission's words could have been spoken (see set_mission)."""
+        mc = self.cfg.mission
+        lat = mission.latency_ms
+        if not _is_num(lat) or lat < 0 or lat > mc.max_latency_s * 1000.0:
+            lat = mc.max_latency_s * 1000.0
+        return now - lat - mc.utterance_slack_s * 1000.0
+
 
     def _release_human(self) -> None:
         self._human_target = dict(ZERO)
@@ -527,8 +650,9 @@ class Governor:
                 cause = "heartbeat_lost"
             elif video_land:
                 cause = "video_frozen"
-            elif flight_s >= cfg.flight_timer.land_s and not self._timer_land_fired:
-                self._timer_land_fired = True
+            elif flight_s >= self._timer_land_next_s:
+                # Fires again refire_after_s of flight time after a resume cancelled it.
+                self._timer_land_next_s = flight_s + cfg.flight_timer.refire_after_s
                 cause = "flight_timer"
             if cause:
                 self._begin_landing(cause, safety=True, now=now)
@@ -543,12 +667,16 @@ class Governor:
         if self._ap.mode != AutopilotState.idle and now >= self._ap_fault_until:
             ap_sticks = self._step_autopilot(now, ap_allowed, flags)
             if self._ap.mode == AutopilotState.follow and cfg.wrong_way.enabled and not self._wrong_way_hold:
-                if self._wrong_way_check():
+                why = self._wrong_way_check()
+                if why:
                     self._wrong_way_hold = True
-                    self.events.append({"kind": "safety", "text": "wrong-way: hovering", "ts_ms": now})
-                    logger.error("[governor] WRONG-WAY detector fired: hovering")
+                    self._wrong_way_reason = why
+                    self.events.append({"kind": "safety", "text": f"wrong-way ({why}): hovering", "ts_ms": now})
+                    logger.error("[governor] WRONG-WAY detector fired (%s): hovering", why)
         if self._wrong_way_hold:
             flags.append("wrong_way")
+            if self._wrong_way_reason:
+                flags.append(f"wrong_way:{self._wrong_way_reason}")
         if self._ap_paused and self._ap.mode != AutopilotState.idle:
             flags.append("autopilot_paused")
         if now < self._ap_fault_until:
@@ -606,6 +734,8 @@ class Governor:
         # Bookkeeping for dead reckoning and the wrong-way check: what was actually sent.
         self._applied = self._effective_normalized(wire)
         self._yaw_hist.append((now, self._applied["yaw"] * self.ap_params.plant.yaw_rate_per_count * 127.0))
+        self._pitch_hist.append((now, self._applied["pitch"]))
+
 
         out = TickOutput(wire=wire, takeoff=takeoff, land=land, stop=stop, tilt_state=tilt,
                          flight_state=st, source=source, safety_flags=tuple(flags))
@@ -712,38 +842,69 @@ class Governor:
             out[a] = eff / float(w.full_scale_counts)
         return out
 
-    def _wrong_way_check(self) -> bool:
-        """PLAN 4.5 step 5: observed bearing change over 1.5 theta vs. the change predicted from
-        the yaw we actually commanded (turning right moves the subject left: d(beta) = -yaw_rate dt).
-        Fires when both exceed min_change_rad with opposite signs."""
-        if len(self._obs_hist) < 2:
-            return False
-        ww = self.cfg.wrong_way
-        theta_ms = self.ap_params.delay.theta_s * 1000.0
-        t2, b2 = self._obs_hist[-1]
-        t1_target = t2 - ww.window_thetas * theta_ms
-        first = None
-        for t, b in self._obs_hist:
-            if t <= t1_target:
-                first = (t, b)
-            else:
-                break
-        if first is None:
-            return False
-        t1, b1 = first
-        observed = b2 - b1
-        lag = self.ap_params.plant.yaw_lag_s * 1000.0
-        a, b = t1 - lag, t2 - lag
-        predicted = 0.0
-        prev_t = prev_rate = None
-        for t, rate in self._yaw_hist:              # the rate sent at prev_t holds until t
+    @staticmethod
+    def _integral(hist, a: float, b: float) -> tuple[float, float]:
+        """(integral in value*s, covered seconds) of a piecewise-constant history over [a, b]:
+        the value sent at one tick holds until the next tick."""
+        total = covered = 0.0
+        prev_t = prev_v = None
+        for t, v in hist:
             if prev_t is not None and t > a and prev_t < b:
                 seg = (min(t, b) - max(prev_t, a)) / 1000.0
                 if seg > 0:
-                    predicted -= prev_rate * seg
-            prev_t, prev_rate = t, rate
-        return (abs(observed) > ww.min_change_rad and abs(predicted) > ww.min_change_rad
-                and observed * predicted < 0)
+                    total += prev_v * seg
+                    covered += seg
+            prev_t, prev_v = t, v
+        return total, covered
+
+    def _wrong_way_check(self) -> Optional[str]:
+        """Returns why the drone is moving the wrong way (a reason string), or None.
+
+        yaw (PLAN 4.5 step 5): observed bearing change over 1.5 theta vs. the change predicted from
+            the yaw we actually commanded (turning right moves the subject left: d(beta) =
+            -yaw_rate dt). Fires when both exceed min_change_rad with opposite signs.
+        pitch (review fix): forward commanded over the window (mean >= pitch_min_cmd) but the box
+            shrank by pitch_min_size_change, or backward and it grew. A subject that outruns the
+            drone also trips it; the result is a hover, which is safe.
+        frozen_box (review fix): the very same box for frozen_box_s while we turned at least
+            frozen_box_min_turn_rad: a stuck tracker or a repeating camera frame.
+        """
+        if len(self._obs_hist) < 2:
+            return None
+        ww = self.cfg.wrong_way
+        lag = self.ap_params.plant.yaw_lag_s * 1000.0
+        t2, b2, s2 = self._obs_hist[-1]
+        if self._frozen_since is not None and t2 - self._frozen_since >= ww.frozen_box_s * 1000.0:
+            turned, _ = self._integral(self._yaw_hist, self._frozen_since - lag, t2 - lag)
+            if abs(turned) >= ww.frozen_box_min_turn_rad:
+                return "frozen_box"
+        theta_ms = self.ap_params.delay.theta_s * 1000.0
+        t1_target = t2 - ww.window_thetas * theta_ms
+        first = None
+        for entry in self._obs_hist:
+            if entry[0] <= t1_target:
+                first = entry
+            else:
+                break
+        if first is None:
+            return None
+        t1, b1, s1 = first
+        a, b = t1 - lag, t2 - lag
+        observed = b2 - b1
+        turned, _ = self._integral(self._yaw_hist, a, b)
+        predicted = -turned
+        if (abs(observed) > ww.min_change_rad and abs(predicted) > ww.min_change_rad
+                and observed * predicted < 0):
+            return "yaw"
+        if ww.pitch_enabled:
+            moved, covered = self._integral(self._pitch_hist, a, b)
+            if covered > 0.5 * (b - a) / 1000.0:
+                mean = moved / covered
+                grew = s2 - s1                       # log width ratio: + closer, - farther
+                if abs(mean) >= ww.pitch_min_cmd and grew * math.copysign(1.0, mean) <= -ww.pitch_min_size_change:
+                    return "pitch"
+        return None
+
 
     # ==========================================================================================
     # Read-only views (any thread)

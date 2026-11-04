@@ -11,19 +11,25 @@ Endpoints installed by install_routes(app, hub):
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import os
-from typing import Any, Optional
+import signal
+import threading
+import time
+from typing import Any, Callable, Optional
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+
 from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
-from mhd.contracts import (AgentEvent, Candidates, FindRequest, Mission, NextFrame, OperatorCommand,
-                           Release, Select, SubjectObs, encode_frame, now_ms)
+from mhd.contracts import (AgentEvent, Candidates, FindRequest, Heartbeat, Mission, NextFrame, OperatorCommand,
+                           OperatorInput, Release, Select, SubjectObs, encode_frame, now_ms)
 from mhd.governor.config import AXES, load_autopilot_config, load_governor_config, replace
-from mhd.governor.core import Governor
+from mhd.governor.core import AGENT_COMMANDS, Governor
 from mhd.governor.telemetry import build_telemetry
 
 from .frames import FrameStore
@@ -32,6 +38,33 @@ from .modes import BackendEnv
 logger = logging.getLogger(__name__)
 
 LEGACY_TILT_HOLD_S = 0.3        # legacy UI repeats camera_tilt_direction at 30 Hz inside 'axes'
+# POST /command is the UI's HTTP fallback (PLAN 4.8: LAND and E-STOP) plus what the agent's safety
+# words need (pause). Everything that starts motion (takeoff, arm, resume, ...) needs /ws. With
+# ?role=agent the agent whitelist applies (pause, land). Review finding: HTTP used to have full rights.
+HTTP_COMMANDS = frozenset({"land", "estop", "estop_reset", "pause"})
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _no_constants(name: str):
+    raise ValueError(f"{name} is not valid JSON here")
+
+
+def loads_strict(text: str) -> Any:
+    """json.loads that refuses NaN / Infinity / -Infinity (Python's json accepts them by default,
+    and pydantic floats accept NaN: a NaN capture_ms used to defeat the staleness checks)."""
+    return json.loads(text, parse_constant=_no_constants)
+
+
+def origin_allowed(origin: Optional[str]) -> bool:
+    """No Origin (a local process) or a loopback page. Any other web page open in the operator's
+    browser must not be able to command the drone (WebSockets are not covered by CORS)."""
+    if not origin:
+        return True
+    try:
+        host = (urlparse(origin).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in _LOOPBACK_HOSTS
 
 
 class Hub:
@@ -47,7 +80,14 @@ class Hub:
         self.agent_uis: set[WebSocket] = set()
         self.find_request: Optional[FindRequest] = None
         self._relay_task: Optional[asyncio.Task] = None
-        self.counters = {"obs": 0, "obs_rejected": 0, "ui_msgs": 0, "bad_msgs": 0}
+        self.counters = {"obs": 0, "obs_rejected": 0, "ui_msgs": 0, "bad_msgs": 0, "legacy_axes_refused": 0,
+                         "origin_refused": 0}
+        self.rc_adapter = None                     # GovernedX69LgRcAdapter (link stats for telemetry)
+        self.shutting_down = False
+        self._shutdown_t: Optional[float] = None
+        self._shutdown_callbacks: list[Callable[[], None]] = []
+        self._conn_ids = itertools.count(1)
+        self._legacy_warned = False
 
     # ==========================================================================================
     # Lifecycle (called from web_server.lifespan)
@@ -76,15 +116,73 @@ class Hub:
         self.frames.bind_loop(self.loop)
         self._relay_task = asyncio.create_task(self._relay_events())
 
+    def make_rc_adapter(self, drone_ip: str, control_port: int, local_port: int = 0):
+        """The X69 RC adapter with keepalive retry and link counters (see turbodrone_glue)."""
+        from mhd.governor.turbodrone_glue import GovernedX69LgRcAdapter
+        self.rc_adapter = GovernedX69LgRcAdapter(drone_ip, control_port, local_port=local_port)
+        return self.rc_adapter
+
+    def on_shutdown(self, callback: Callable[[], None]) -> None:
+        """Run `callback` (no arguments, must not block) when the shutdown begins, e.g. end MJPEG."""
+        self._shutdown_callbacks.append(callback)
+
+    def begin_shutdown(self, why: str = "shutdown") -> None:
+        """Start landing NOW: every following RC packet is neutral sticks plus land (a latched
+        E-stop stays E-stop). Idempotent; safe to call from a signal handler."""
+        if self.shutting_down:
+            return
+        self.shutting_down = True
+        self._shutdown_t = time.monotonic()
+        if self.gov is not None:
+            self.gov.begin_shutdown()
+        logger.warning("[hub] %s: neutral + land from now on", why)
+        for cb in list(self._shutdown_callbacks):
+            try:
+                cb()
+            except Exception:  # noqa: BLE001
+                logger.exception("[hub] shutdown callback failed")
+
+    def install_signal_hooks(self, min_land_s: float = 0.5) -> bool:
+        """Begin the landing on the FIRST SIGINT/SIGTERM, before uvicorn waits for open responses.
+
+        uvicorn runs the lifespan shutdown (our 0.5 s land) only after every open HTTP response has
+        finished, and skips it after a second Ctrl-C. The UI keeps /mjpeg open, so Ctrl-C used to
+        keep flying the last decision and never landed (review finding). This wraps uvicorn's
+        handlers: the first signal starts the landing at once; a force-quit (second Ctrl-C) first
+        lets the RC thread send land for at least min_land_s. Only possible in the main thread
+        (not under TestClient); returns whether the hooks were installed.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            return False
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            prev = signal.getsignal(sig)
+
+            def handler(signum, frame, _prev=prev):
+                first = not self.shutting_down
+                self.begin_shutdown(f"signal {signal.Signals(signum).name}")
+                if not first and self._shutdown_t is not None:
+                    left = min_land_s - (time.monotonic() - self._shutdown_t)
+                    if left > 0:
+                        time.sleep(left)          # the RC thread keeps sending land meanwhile
+                if callable(_prev):
+                    _prev(signum, frame)
+                elif _prev == signal.SIG_DFL and signum == signal.SIGINT:
+                    raise KeyboardInterrupt
+            signal.signal(sig, handler)
+        return True
+
     async def shutdown(self) -> None:
         """Graceful stop: neutral sticks plus land for 0.5 s, before the RC thread is stopped."""
         if self.gov is None:
             return
-        logger.warning("[hub] shutdown: neutral + land for 0.5 s")
-        self.gov.begin_shutdown()
-        await asyncio.sleep(0.5)
+        self.begin_shutdown()
+        left = 0.5 - (time.monotonic() - (self._shutdown_t or time.monotonic()))
+        logger.warning("[hub] shutdown: neutral + land for %.1f s more", max(0.0, left))
+        if left > 0:
+            await asyncio.sleep(left)
         if self._relay_task:
             self._relay_task.cancel()
+
 
     def close(self) -> None:
         if self.gov is not None:
@@ -107,18 +205,26 @@ class Hub:
     # UI (/ws)
 
     async def serve_ui(self, ws: WebSocket) -> None:
-        """Patched /ws: every message goes to the governor. A disconnect zeroes human input."""
+        """Patched /ws: every message goes to the governor. A disconnect zeroes human input
+        that this socket owned."""
+        if not origin_allowed(ws.headers.get("origin")):
+            self.counters["origin_refused"] += 1
+            logger.warning("[hub] refused /ws from origin %r", ws.headers.get("origin"))
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        conn = next(self._conn_ids)
         self.ui_sockets.add(ws)
         try:
             while True:
                 text = await ws.receive_text()
                 try:
-                    data = json.loads(text)
+                    data = loads_strict(text)
                 except ValueError:
                     self.counters["bad_msgs"] += 1
                     continue
                 if isinstance(data, dict):
-                    self.handle_ui_message(data)
+                    self.handle_ui_message(data, conn=conn)
         except WebSocketDisconnect:
             logger.info("[hub] UI /ws disconnected")
         except Exception as exc:  # noqa: BLE001
@@ -126,21 +232,50 @@ class Hub:
         finally:
             self.ui_sockets.discard(ws)
             if self.gov is not None:
-                self.gov.ui_disconnected()
+                self.gov.ui_disconnected(owner=conn)
 
-    def handle_ui_message(self, data: dict) -> Optional[dict]:
+    def _counts_as_heartbeat(self, data: dict) -> bool:
+        """Real mode: only the UI worker's {"type":"hb","client":"ui"} proves the operator's UI is
+        alive (a tool such as sysid streaming axes must not mask a dead UI). Twin mode: any /ws
+        message counts, so the stock upstream UI still works against the twin."""
+        if self.gov is not None and self.gov.flight_mode == "twin":
+            return True
+        if data.get("type") != "hb":
+            return False
+        try:
+            return Heartbeat.model_validate(data).client == "ui"
+        except ValidationError:
+            return False
+
+    def handle_ui_message(self, data: dict, conn=None) -> Optional[dict]:
         gov = self.gov
         if gov is None:
             return None
         self.counters["ui_msgs"] += 1
-        gov.heartbeat()                          # any message on /ws proves the UI is alive
+        if self._counts_as_heartbeat(data):
+            gov.heartbeat()
         t = data.get("type")
         if t == "hb":
             return None
         if t == "axes":
-            # New UI: OperatorInput, sent only while nonzero. Legacy upstream UI: 30 Hz with mode
-            # "inc" | "abs" | "mouse" and camera_tilt_direction. Both go to the governor.
-            gov.submit_human({a: data.get(a, 0.0) for a in AXES}, str(data.get("mode", "abs")))
+            if gov.flight_mode == "real":
+                # Real mode: only the contract's OperatorInput (new UI: sent while nonzero, zeroed on
+                # blur). The legacy upstream UI streams held keys at 30 Hz with camera_tilt_direction
+                # and has no blur handler, so a key stuck after focus loss never went stale.
+                try:
+                    inp = OperatorInput.model_validate(data)
+                except ValidationError:
+                    self.counters["legacy_axes_refused"] += 1
+                    if not self._legacy_warned:
+                        self._legacy_warned = True
+                        logger.error("[hub] real mode: refusing non-contract 'axes' (legacy UI?): %s",
+                                     {k: data[k] for k in list(data)[:8]})
+                    return {"ok": False, "reason": "axes_not_operator_input"}
+                gov.submit_human({a: getattr(inp, a) for a in AXES}, inp.mode, owner=conn)
+                return None
+            # Twin: new UI (OperatorInput) and legacy upstream UI (30 Hz, mode "inc" | "abs" |
+            # "mouse", camera_tilt_direction). Both go to the governor.
+            gov.submit_human({a: data.get(a, 0.0) for a in AXES}, str(data.get("mode", "abs")), owner=conn)
             if "camera_tilt_direction" in data:
                 d = _num(data.get("camera_tilt_direction"))
                 gov.set_tilt(int(_sign(d)), hold_s=LEGACY_TILT_HOLD_S)
@@ -157,7 +292,10 @@ class Hub:
         if t in ("estop", "emergency_stop"):
             return self.command(OperatorCommand(command="estop"), source="ui")
         if t in ("set_camera_tilt", "camera_tilt"):
+            if gov.flight_mode == "real":
+                return None                       # real mode: tilt only via cmd tilt_up / tilt_down
             if "camera_tilt_direction" in data:
+
                 d = _sign(_num(data.get("camera_tilt_direction")))
             else:
                 d = {2: 1, 1: -1}.get(int(_num(data.get("camera_tilt", 0))), 0)
@@ -173,16 +311,22 @@ class Hub:
     def command(self, cmd: OperatorCommand, source: str) -> dict:
         if self.gov is None:
             raise HTTPException(503, "governor not running")
+        if source == "http" and cmd.command not in HTTP_COMMANDS:
+            # Logged by the governor's event list like any refused command.
+            return {"ok": False, "flight_state": self.gov.state.value, "reason": "not_allowed_over_http"}
         res = self.gov.command(cmd.command, arm_phrase=cmd.arm_phrase, pack_id=cmd.pack_id, source=source)
         if res.ok and cmd.command == "estop" and self.find_request is not None:
+            # E-stop ends the mission (the governor dropped it): perception lets go, and a
+            # perception client that reconnects later gets no stale FindRequest.
             self._send_perception(Release(mission_id=self.find_request.mission_id))
+            self.find_request = None
         return res.as_dict()
 
     def apply_mission(self, mission: Mission) -> dict:
         if self.gov is None:
             raise HTTPException(503, "governor not running")
         res = self.gov.set_mission(mission)
-        if mission.intent.action == "follow":
+        if mission.intent.action == "follow" and res.get("ok"):
             if self.find_request is not None and self.find_request.mission_id != mission.mission_id:
                 self._send_perception(Release(mission_id=self.find_request.mission_id))
             i = mission.intent
@@ -201,7 +345,11 @@ class Hub:
             if self.find_request is not None:
                 await ws.send_text(self.find_request.model_dump_json())
             while True:
-                data = json.loads(await ws.receive_text())
+                try:
+                    data = loads_strict(await ws.receive_text())
+                except ValueError:                 # bad JSON, or NaN / Infinity: drop the message
+                    self.counters["bad_msgs"] += 1
+                    continue
                 self.handle_perception_message(data)
         except (WebSocketDisconnect, RuntimeError):
             pass
@@ -238,7 +386,11 @@ class Hub:
         group.add(ws)
         try:
             while True:
-                data = json.loads(await ws.receive_text())
+                try:
+                    data = loads_strict(await ws.receive_text())
+                except ValueError:
+                    self.counters["bad_msgs"] += 1
+                    continue
                 if isinstance(data, dict):
                     await self.handle_agent_message(data, role, ws)
         except (WebSocketDisconnect, RuntimeError):
@@ -274,11 +426,37 @@ class Hub:
     # ==========================================================================================
     # Telemetry and event relay
 
+    def link_flags_and_stats(self) -> tuple[list, dict]:
+        """RC link health from the governed adapter (review finding: send errors were silent)."""
+        flags: list[str] = []
+        extra: dict = {}
+        ad = self.rc_adapter
+        if ad is not None and hasattr(ad, "link_stats"):
+            s = ad.link_stats()
+            extra.update({"rc_send_errors": s["rc_errors"], "keepalive_age": s["keepalive_age_ms"],
+                          "keepalive_errors": s["keepalive_errors"]})
+            if s["rc_errors"]:
+                flags.append("rc_send_errors")
+            if not s["keepalive_alive"] or s["keepalive_age_ms"] > 3000.0:
+                flags.append("keepalive_stale")
+        return flags, extra
+
     def telemetry_json(self) -> str:
         if self.gov is None:
             raise HTTPException(503, "governor not running")
-        extra = {"frames_received": self.frames.count, "obs_accepted": self.counters["obs"]}
-        return build_telemetry(self.gov, alarm=self.strategy_alarm(), extra_latency=extra).model_dump_json()
+        extra = {"frames_received": self.frames.count, "obs_accepted": self.counters["obs"],
+                 "frames_rejected": self.gov.frames_rejected,
+                 "obs_invalid": sum(self.gov.obs_rejected.values())}
+        if self.frames.capture_rise_ms is not None:
+            extra["capture_rise"] = round(self.frames.capture_rise_ms, 1)
+        link_flags, link_extra = self.link_flags_and_stats()
+        extra.update(link_extra)
+        flags = list(link_flags)
+        if self.counters["legacy_axes_refused"]:
+            flags.append("legacy_axes_refused")
+        return build_telemetry(self.gov, alarm=self.strategy_alarm(), extra_flags=flags,
+                               extra_latency=extra).model_dump_json()
+
 
     async def serve_telemetry(self, ws: WebSocket) -> None:
         try:
@@ -354,14 +532,38 @@ def _sign(x: float) -> float:
 # Routes
 
 
+def _check_origin(request: Request, hub: Hub) -> None:
+    if not origin_allowed(request.headers.get("origin")):
+        hub.counters["origin_refused"] += 1
+        raise HTTPException(403, "origin not allowed")
+
+
+async def _accept_if_origin_ok(ws: WebSocket, hub: Hub) -> bool:
+    if not origin_allowed(ws.headers.get("origin")):
+        hub.counters["origin_refused"] += 1
+        logger.warning("[hub] refused %s from origin %r", ws.url.path, ws.headers.get("origin"))
+        await ws.close(code=1008)
+        return False
+    await ws.accept()
+    return True
+
+
 def install_routes(app: FastAPI, hub: Hub) -> None:
     @app.post("/command")
-    async def post_command(cmd: OperatorCommand):
-        # HTTP fallback for LAND and E-STOP. Does not refresh the UI heartbeat on purpose.
-        return hub.command(cmd, source="http")
+    async def post_command(cmd: OperatorCommand, request: Request, role: Optional[str] = None):
+        # The UI's HTTP fallback (LAND, E-STOP; also pause and estop_reset): HTTP_COMMANDS only.
+        # ?role=agent: the agent whitelist (pause, land). Does not refresh the UI heartbeat.
+        _check_origin(request, hub)
+        if role not in (None, "", "ui", "agent"):
+            raise HTTPException(422, "role must be ui or agent")
+        if role == "agent" and cmd.command not in AGENT_COMMANDS:
+            return {"ok": False, "flight_state": hub.gov.state.value if hub.gov else "unknown",
+                    "reason": "not_allowed_from_agent"}
+        return hub.command(cmd, source="agent" if role == "agent" else "http")
 
     @app.post("/mission")
-    async def post_mission(mission: Mission):
+    async def post_mission(mission: Mission, request: Request):
+        _check_origin(request, hub)
         return hub.apply_mission(mission)
 
     @app.get("/state")
@@ -392,13 +594,13 @@ def install_routes(app: FastAPI, hub: Hub) -> None:
 
     @app.websocket("/ws/subject")
     async def ws_subject(ws: WebSocket):
-        await ws.accept()
-        await hub.serve_perception(ws)
+        if await _accept_if_origin_ok(ws, hub):
+            await hub.serve_perception(ws)
 
     @app.websocket("/ws/agent")
     async def ws_agent(ws: WebSocket, role: str = "agent"):
         if role not in ("agent", "ui"):
             await ws.close(code=1008)
             return
-        await ws.accept()
-        await hub.serve_agent(ws, role)
+        if await _accept_if_origin_ok(ws, hub):
+            await hub.serve_agent(ws, role)

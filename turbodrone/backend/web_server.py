@@ -384,7 +384,8 @@ async def lifespan(app: FastAPI):
         x69_debug = os.getenv("X69_LG_VIDEO_DEBUG", "false").lower() in ("1", "true", "yes", "on")
 
         model = HUB.setup(mhd_env)   # MHD patch: X69 model with the governor as its strategy
-        rc_proto = X69LgRcProtocolAdapter(drone_ip, ctrl_port, local_port=local_port)
+        # MHD patch: upstream adapter + keepalive retry and link counters for telemetry
+        rc_proto = HUB.make_rc_adapter(drone_ip, ctrl_port, local_port=local_port)
 
         if x69_video_mode == "jpeg":
             logger.info("[main] Using X69/LG JPEG video (legacy UDP 7070/7080 path).")
@@ -480,6 +481,12 @@ async def lifespan(app: FastAPI):
     flight_controller = PacedFlightController(model, rc_proto, control_rate)   # MHD patch: deadline pacing
     flight_controller.start()
     await HUB.start()
+    # MHD patch: land on the FIRST Ctrl-C / SIGTERM (uvicorn otherwise waits for /mjpeg to close
+    # before the lifespan shutdown), and end every MJPEG stream so the shutdown can proceed.
+    _loop = asyncio.get_running_loop()
+    HUB.on_shutdown(lambda: _loop.call_soon_threadsafe(
+        lambda: asyncio.ensure_future(FRAME_HUB.publish(None))))
+    HUB.install_signal_hooks()
 
     # 3. Plugins (optional)
     plugin_frame_q: Optional[queue.Queue] = None
@@ -534,7 +541,8 @@ app = FastAPI(title="Drone web adapter", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: restrict in prod
+    # MHD patch: loopback pages only (the UI dev server is http://localhost:5173). Was "*".
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -636,7 +644,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
     # MHD patch: every UI message (axes, hb, cmd, legacy takeoff/land/estop/set_camera_tilt) goes to
     # the safety governor. Nothing here calls set_strategy or writes sticks. set_profile and
     # set_speed_index are ignored. A disconnect zeroes human input. See src/mhd/backend/hub.py.
-    await websocket.accept()
+    # HUB.serve_ui checks the Origin header, then accepts.
     await HUB.serve_ui(websocket)
 
 # ───────────────────────────────────────────────────────────────
@@ -721,8 +729,9 @@ async def mjpeg_stream():
         try:
             while True:
                 frame = await q.get()
-                if frame is None:
+                if frame is None or HUB.shutting_down:   # MHD patch: end streams on shutdown
                     break
+
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"

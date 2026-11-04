@@ -83,12 +83,19 @@ class Rig:
         self.run(4.2)
         assert self.g.state.value == "AIRBORNE"
 
-    def steady_obs(self, **kw) -> None:
-        """Perception sends a confirmed observation every tick, captured obs_latency ago."""
+    def steady_obs(self, jitter_px: float = 1.0, **kw) -> None:
+        """Perception sends a confirmed observation every tick, captured obs_latency ago.
+
+        The box center alternates by +-jitter_px, like a real tracker's box. jitter_px=0 gives the
+        very same box every frame (a stuck tracker), which the frozen-box check catches.
+        """
         def fn(t):
             self._fid += 1
-            return make_obs(self._fid, t - self.obs_latency, **kw)
+            args = dict(kw)
+            args["cx"] = args.get("cx", 640.0) + (jitter_px if self._fid % 2 else -jitter_px)
+            return make_obs(self._fid, t - self.obs_latency, **args)
         self.obs_fn = fn
+
 
     def following(self, **kw):
         self.airborne()

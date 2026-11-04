@@ -13,7 +13,10 @@ tests call ensure_turbodrone_on_path()).
 from __future__ import annotations
 
 import logging
+import math
 import sys
+
+import threading
 import time
 from pathlib import Path
 
@@ -33,7 +36,10 @@ ensure_turbodrone_on_path()
 
 from control.strategies import ControlStrategy  # noqa: E402  (turbodrone)
 from models.x69_lg_rc import X69LgRcModel  # noqa: E402  (turbodrone)
+from protocols.x69_lg_rc_protocol_adapter import X69LgRcProtocolAdapter  # noqa: E402  (turbodrone)
 from services.flight_controller import FlightController  # noqa: E402  (turbodrone)
+
+from mhd.contracts import FlightState  # noqa: E402
 
 from .core import Governor  # noqa: E402
 
@@ -86,6 +92,11 @@ class GovernorStrategy(ControlStrategy):
                 land = self.governor.note_fault()
             except Exception:  # noqa: BLE001
                 land = True
+            # Already LANDING (or shutting down): keep landing now, not after faults.land_after_s.
+            # Read without the lock, like _estop_latched: the tick that holds it may be the fault.
+            if getattr(self.governor, "_state", None) == FlightState.landing or getattr(self.governor, "_shutdown", False):
+                land = True
+
             self._land_toggle = (self._land_toggle + 1) % 5   # every 5th packet: 5 Hz at 25 Hz
             model.land_flag = bool(land and not estop and self._land_toggle == 0)
             now = time.monotonic()
@@ -160,8 +171,12 @@ class PacedFlightController(FlightController):
     After a stall it resynchronizes instead of bursting. Packet building is unchanged upstream code.
     """
 
+    def __init__(self, drone_model, protocol_adapter, update_rate=25.0):
+        super().__init__(drone_model, protocol_adapter, validate_control_rate(update_rate))
+
     def _control_loop(self):
         period = self.update_interval
+
         prev = time.monotonic()
         deadline = prev
         while self.running:
@@ -189,3 +204,80 @@ class PacedFlightController(FlightController):
                 delay = 0.0
             if delay > 0:
                 time.sleep(delay)
+
+
+def validate_control_rate(rate) -> float:
+    """The X69 RC loop runs at 25 Hz. NaN, negative or absurd rates used to make it spin flat out."""
+    try:
+        r = float(rate)
+    except (TypeError, ValueError):
+        raise ValueError(f"CONTROL_RATE={rate!r} is not a number") from None
+    if not (math.isfinite(r) and 10.0 <= r <= 50.0):
+        raise ValueError(f"CONTROL_RATE={rate!r} must be within 10..50 Hz (X69: 25)")
+    return r
+
+
+class GovernedX69LgRcAdapter(X69LgRcProtocolAdapter):
+    """Upstream X69 RC adapter plus visibility into the UDP link (review finding).
+
+    Upstream's 1 Hz D1 keepalive thread returned on the first OSError (ENOBUFS / EHOSTUNREACH in a
+    Wi-Fi blip), ending keepalives for the whole session, and RC sends swallowed OSError silently.
+    Here the keepalive logs and keeps going, and both paths count errors and successes for
+    telemetry (link_stats()). Packet bytes are unchanged upstream code.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self._stats_lock = threading.Lock()
+        self.rc_sent = 0
+        self.rc_errors = 0
+        self.rc_last_error: str = ""
+        self.keepalive_sent = 0
+        self.keepalive_errors = 0
+        self.keepalive_last_ok: float = time.monotonic()
+        self._ka_last_log = -1e9
+        self._rc_last_log = -1e9
+        super().__init__(*args, **kwargs)        # starts the keepalive thread (our _keepalive_loop)
+
+    def send_control_packet(self, packet: bytes) -> None:
+        try:
+            self.sock.sendto(packet, (self.drone_ip, self.control_port))
+        except OSError as exc:
+            with self._stats_lock:
+                self.rc_errors += 1
+                self.rc_last_error = f"{type(exc).__name__}({exc.errno})"
+            now = time.monotonic()
+            if now - self._rc_last_log >= 5.0:      # RC thread: rate-limited, through the log queue
+                self._rc_last_log = now
+                logger.error("[rc] RC packet send failed (%d so far): %r", self.rc_errors, exc)
+            return
+        with self._stats_lock:
+            self.rc_sent += 1
+        if self.debug_packets:
+            self.packet_counter += 1
+            logger.debug("[x69-lg-rc] #%05d %s", self.packet_counter, packet.hex(" "))
+
+    def _keepalive_loop(self) -> None:
+        while not self._keepalive_stop.wait(1.0):
+            try:
+                self.sock.sendto(self.D1_KEEPALIVE, (self.drone_ip, self.control_port))
+            except OSError as exc:
+                if self._keepalive_stop.is_set():
+                    return                            # socket closed by stop()
+                with self._stats_lock:
+                    self.keepalive_errors += 1
+                now = time.monotonic()
+                if now - self._ka_last_log >= 5.0:
+                    self._ka_last_log = now
+                    logger.error("[rc] D1 keepalive send failed (%d so far), retrying: %r",
+                                 self.keepalive_errors, exc)
+                continue
+            with self._stats_lock:
+                self.keepalive_sent += 1
+                self.keepalive_last_ok = time.monotonic()
+
+    def link_stats(self) -> dict:
+        with self._stats_lock:
+            return {"rc_sent": self.rc_sent, "rc_errors": self.rc_errors,
+                    "keepalive_sent": self.keepalive_sent, "keepalive_errors": self.keepalive_errors,
+                    "keepalive_age_ms": round((time.monotonic() - self.keepalive_last_ok) * 1000.0, 1),
+                    "keepalive_alive": self._keepalive_thread.is_alive()}
