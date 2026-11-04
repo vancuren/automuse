@@ -10,7 +10,7 @@ ADAPTER_DIR="${ADAPTER:-$MHD_MODELS/adapters/glimmer-intent-v1}"
 if ! grep -q '"ok": true' "$ADAPTER_DIR/train_summary.json" 2>/dev/null; then
   echo "training did not finish cleanly; evaluating the newest checkpoint is up to a human" >&2; exit 1
 fi
-NOTE_BASE="MLX 4-bit on M5 Pro 48 GB, mlx_lm.server :8580, nothing else heavy on the GPU"
+NOTE_BASE="MLX 4-bit on M5 Pro 48 GB, mlx_lm.server :8580, other workstreams may have shared the GPU (twin Chrome/WebGL renderer seen 00:25)"
 echo "[$(date +%H:%M:%S)] lora quality run"
 training/eval_mlx.sh lora --sets test,gold,gold_asr --concurrency 4 --max-tokens 200 --fresh \
   --note "$NOTE_BASE; client concurrency 4 (batched decode)"

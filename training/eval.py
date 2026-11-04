@@ -481,8 +481,8 @@ def chart(results: dict, path: Path) -> None:
     surface, ink, ink2, grid = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
     palette = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
     color = {m: palette[k % len(palette)] for k, m in enumerate(models)}     # follows the model, not its rank
-    shown = [("valid_json_rate", "valid JSON"), ("action_accuracy", "action"), ("subject_normalized", "subject"),
-             ("clarify", "clarify F1"), ("refuse", "refuse F1")]
+    shown = [("valid_json_rate", "JSON"), ("action_accuracy", "action"), ("subject_normalized", "subject"),
+             ("clarify", "clarify"), ("refuse", "refuse")]
     sets = [s for s in ("test", "gold", "gold_asr") if any(s in results["models"][m]["sets"] for m in models)]
     titles = {"test": "Held-out test (300, unseen phrasings)", "gold": "Gold (80 hand-written)",
               "gold_asr": "Gold spoken + Omnilingual ASR (80)"}
@@ -490,8 +490,8 @@ def chart(results: dict, path: Path) -> None:
                          "ytick.color": ink2, "axes.edgecolor": grid, "figure.facecolor": surface,
                          "axes.facecolor": surface, "savefig.facecolor": surface})
     n_panels = len(sets) + 1
-    fig, axes = plt.subplots(1, n_panels, figsize=(4.6 * n_panels, 5.0),
-                             gridspec_kw={"width_ratios": [3] * len(sets) + [2]})
+    fig, axes = plt.subplots(1, n_panels, figsize=(5.0 * n_panels + 1.5, 5.2),
+                             gridspec_kw={"width_ratios": [3] * len(sets) + [2.6]})
     width = min(0.8 / len(models), 0.18)
     for ax, s in zip(axes[:-1], sets):
         for k, m in enumerate(models):
@@ -525,7 +525,10 @@ def chart(results: dict, path: Path) -> None:
         ax.plot(lat["p95"] / 1000, len(names), marker="|", markersize=10, color=ink2)
         ax.text(lat["p95"] / 1000 + 0.15, len(names), f"{lat['p50'] / 1000:.1f} s / {lat['p95'] / 1000:.1f} s",
                 va="center", fontsize=8, color=ink2)
-        names.append(f"{results['models'][m]['name'].split(' (')[0]}\n({how})")
+        short = {"glimmer-base-mlx": "Glimmer base, MLX local", "glimmer-base-fireworks": "Glimmer base, Fireworks",
+                 "glimmer-base-fireworks-schema": "Glimmer base + schema, Fireworks",
+                 "glimmer-lora-mlx": "Glimmer + LoRA, MLX local", "spark-1.3": "Muse Spark 1.3, Meta API"}
+        names.append(f"{short.get(m, results['models'][m]['name'])}\n({how})")
     ax.set_yticks(range(len(names)), names, fontsize=7.5)
     ax.invert_yaxis()
     ax.set_xlabel("s per command (bar p50, whisker p95)")
@@ -537,10 +540,14 @@ def chart(results: dict, path: Path) -> None:
     xmax = max([1.0] + [(_latency(results, m)[0] or {}).get("p95") or 0 for m in models]) / 1000
     ax.set_xlim(0, xmax * 1.6)
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=min(3, len(labels)), frameon=False, fontsize=9)
+    fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.06), ncol=min(3, len(labels)),
+               frameon=False, fontsize=9)
     fig.suptitle("Spoken command to drone mission: Muse Glimmer + LoRA vs base Glimmer vs Muse Spark 1.3",
                  fontsize=13, color=ink, x=0.01, ha="left")
-    fig.tight_layout(rect=(0, 0.12, 1, 0.95))
+    fig.text(0.01, 0.015, "JSON = valid intent JSON; action = action accuracy; subject = normalized subject-phrase "
+             "match on follow commands; clarify / refuse = F1. Table view: docs/eval/summary.md.",
+             fontsize=8.5, color=ink2)
+    fig.tight_layout(rect=(0, 0.18, 1, 0.95))
     fig.savefig(path, dpi=130)
     plt.close(fig)
 

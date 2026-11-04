@@ -1,0 +1,1389 @@
+{
+  "generated": "2026-11-04 02:14 EST",
+  "models": {
+    "glimmer-base-fireworks-schema": {
+      "name": "Glimmer base + JSON schema (Fireworks)",
+      "notes": [
+        "Fireworks H200 BF16 on-demand, 1 replica, client concurrency 12, home Wi-Fi; strict JSON schema response_format"
+      ],
+      "sets": {
+        "gold": {
+          "n": 80,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.95,
+          "subject_exact": 0.4545,
+          "subject_normalized": 0.8409,
+          "category_accuracy": 0.9545,
+          "color_accuracy": 1.0,
+          "distance_accuracy": 0.8864,
+          "n_follow": 44,
+          "confusion": {
+            "follow": {
+              "follow": 43,
+              "hover": 0,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 8,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 8,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 9,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 3,
+              "refuse": 8,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.6923,
+            "recall": 1.0,
+            "f1": 0.8182,
+            "support": 9
+          },
+          "refuse": {
+            "precision": 1.0,
+            "recall": 0.7273,
+            "f1": 0.8421,
+            "support": 11
+          },
+          "refuse_reason_accuracy": 0.7273,
+          "land_hover_accuracy": 1.0,
+          "latency_ms": {
+            "p50": 1503.1,
+            "p95": 2397.6,
+            "mean": 1619.4
+          },
+          "completion_tokens_mean": 139.2,
+          "errors": 0,
+          "concurrency": [
+            12
+          ]
+        },
+        "test": {
+          "n": 300,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.94,
+          "subject_exact": 0.4083,
+          "subject_normalized": 0.8817,
+          "category_accuracy": 0.9763,
+          "color_accuracy": 0.929,
+          "distance_accuracy": 0.8935,
+          "n_follow": 169,
+          "confusion": {
+            "follow": {
+              "follow": 167,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 2,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 27,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 21,
+              "clarify": 3,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 5,
+              "hover": 0,
+              "land": 0,
+              "clarify": 35,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 4,
+              "hover": 0,
+              "land": 0,
+              "clarify": 4,
+              "refuse": 32,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.8333,
+            "recall": 0.875,
+            "f1": 0.8537,
+            "support": 40
+          },
+          "refuse": {
+            "precision": 0.9412,
+            "recall": 0.8,
+            "f1": 0.8649,
+            "support": 40
+          },
+          "refuse_reason_accuracy": 0.8,
+          "land_hover_accuracy": 0.9412,
+          "latency_ms": {
+            "p50": 1426.2,
+            "p95": 2562.9,
+            "mean": 1571.0
+          },
+          "completion_tokens_mean": 137.7,
+          "errors": 0,
+          "concurrency": [
+            12
+          ]
+        }
+      }
+    },
+    "glimmer-base-fireworks-seq": {
+      "name": "Glimmer base (Fireworks H200), latency run",
+      "notes": [
+        "latency run: sequential (concurrency 1), Fireworks H200, home Wi-Fi, local MLX training running on the Mac"
+      ],
+      "sets": {
+        "gold": {
+          "n": 40,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.975,
+          "subject_exact": 0.525,
+          "subject_normalized": 0.85,
+          "category_accuracy": 0.95,
+          "color_accuracy": 1.0,
+          "distance_accuracy": 0.9,
+          "n_follow": 40,
+          "confusion": {
+            "follow": {
+              "follow": 39,
+              "hover": 0,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 0
+          },
+          "refuse": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 0
+          },
+          "refuse_reason_accuracy": null,
+          "land_hover_accuracy": null,
+          "latency_ms": {
+            "p50": 828.0,
+            "p95": 1250.4,
+            "mean": 913.0
+          },
+          "completion_tokens_mean": 131.4,
+          "errors": 0,
+          "concurrency": [
+            1
+          ]
+        }
+      }
+    },
+    "glimmer-base-fireworks": {
+      "name": "Glimmer base (Fireworks H200)",
+      "notes": [
+        "Fireworks H200 BF16 on-demand, 1 replica, client concurrency 12, home Wi-Fi; prompt GLIMMER_SYSTEM_PROMPT, no schema"
+      ],
+      "sets": {
+        "gold": {
+          "n": 80,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.9375,
+          "subject_exact": 0.4773,
+          "subject_normalized": 0.8636,
+          "category_accuracy": 0.9318,
+          "color_accuracy": 0.9773,
+          "distance_accuracy": 0.8864,
+          "n_follow": 44,
+          "confusion": {
+            "follow": {
+              "follow": 42,
+              "hover": 0,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 1,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 8,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 8,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 9,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 3,
+              "refuse": 8,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.6923,
+            "recall": 1.0,
+            "f1": 0.8182,
+            "support": 9
+          },
+          "refuse": {
+            "precision": 0.8889,
+            "recall": 0.7273,
+            "f1": 0.8,
+            "support": 11
+          },
+          "refuse_reason_accuracy": 0.7273,
+          "land_hover_accuracy": 1.0,
+          "latency_ms": {
+            "p50": 1529.2,
+            "p95": 2523.9,
+            "mean": 1580.3
+          },
+          "completion_tokens_mean": 139.9,
+          "errors": 0,
+          "concurrency": [
+            12
+          ]
+        },
+        "test": {
+          "n": 300,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.9367,
+          "subject_exact": 0.4142,
+          "subject_normalized": 0.8817,
+          "category_accuracy": 0.9763,
+          "color_accuracy": 0.929,
+          "distance_accuracy": 0.8876,
+          "n_follow": 169,
+          "confusion": {
+            "follow": {
+              "follow": 167,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 2,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 27,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 21,
+              "clarify": 3,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 5,
+              "hover": 0,
+              "land": 0,
+              "clarify": 35,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 4,
+              "hover": 0,
+              "land": 0,
+              "clarify": 5,
+              "refuse": 31,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.814,
+            "recall": 0.875,
+            "f1": 0.8434,
+            "support": 40
+          },
+          "refuse": {
+            "precision": 0.9394,
+            "recall": 0.775,
+            "f1": 0.8493,
+            "support": 40
+          },
+          "refuse_reason_accuracy": 0.775,
+          "land_hover_accuracy": 0.9412,
+          "latency_ms": {
+            "p50": 1488.0,
+            "p95": 2688.7,
+            "mean": 1623.4
+          },
+          "completion_tokens_mean": 136.6,
+          "errors": 0,
+          "concurrency": [
+            12
+          ]
+        }
+      }
+    },
+    "glimmer-base-mlx-seq": {
+      "name": "Glimmer base (MLX), latency run",
+      "notes": [
+        "MLX 4-bit on M5 Pro 48 GB, mlx_lm.server :8580, other workstreams may have shared the GPU (twin Chrome/WebGL renderer seen 00:25); sequential latency run"
+      ],
+      "sets": {
+        "gold": {
+          "n": 20,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 1.0,
+          "subject_exact": 0.4,
+          "subject_normalized": 0.85,
+          "category_accuracy": 1.0,
+          "color_accuracy": 1.0,
+          "distance_accuracy": 0.95,
+          "n_follow": 20,
+          "confusion": {
+            "follow": {
+              "follow": 20,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 0
+          },
+          "refuse": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 0
+          },
+          "refuse_reason_accuracy": null,
+          "land_hover_accuracy": null,
+          "latency_ms": {
+            "p50": 17579.9,
+            "p95": 25525.3,
+            "mean": 17467.4
+          },
+          "completion_tokens_mean": 297.1,
+          "errors": 0,
+          "concurrency": [
+            1
+          ]
+        }
+      }
+    },
+    "glimmer-base-mlx": {
+      "name": "Glimmer base (MLX 4-bit, local)",
+      "notes": [
+        "MLX 4-bit on M5 Pro 48 GB, mlx_lm.server :8580, other workstreams may have shared the GPU (twin Chrome/WebGL renderer seen 00:25); client concurrency 8 (batched decode); template defaults, no schema",
+        "MLX 4-bit on M5 Pro, mlx_lm.server :8580, client concurrency 8-12 (batched decode); template defaults, no schema; test = first 100 examples only (time box)"
+      ],
+      "sets": {
+        "gold": {
+          "n": 80,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.9125,
+          "subject_exact": 0.5,
+          "subject_normalized": 0.8636,
+          "category_accuracy": 0.9545,
+          "color_accuracy": 0.9773,
+          "distance_accuracy": 0.9318,
+          "n_follow": 44,
+          "confusion": {
+            "follow": {
+              "follow": 42,
+              "hover": 0,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 1,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 8,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 7,
+              "clarify": 1,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 8,
+              "refuse": 1,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 3,
+              "refuse": 8,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.6154,
+            "recall": 0.8889,
+            "f1": 0.7273,
+            "support": 9
+          },
+          "refuse": {
+            "precision": 0.8,
+            "recall": 0.7273,
+            "f1": 0.7619,
+            "support": 11
+          },
+          "refuse_reason_accuracy": 0.7273,
+          "land_hover_accuracy": 0.9375,
+          "latency_ms": {
+            "p50": 58697.2,
+            "p95": 128143.7,
+            "mean": 65072.3
+          },
+          "completion_tokens_mean": 328.3,
+          "errors": 0,
+          "concurrency": [
+            12
+          ]
+        },
+        "gold_asr": {
+          "n": 80,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.875,
+          "subject_exact": 0.3864,
+          "subject_normalized": 0.7045,
+          "category_accuracy": 0.8409,
+          "color_accuracy": 0.9773,
+          "distance_accuracy": 0.9545,
+          "n_follow": 44,
+          "confusion": {
+            "follow": {
+              "follow": 41,
+              "hover": 0,
+              "land": 0,
+              "clarify": 3,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 6,
+              "land": 0,
+              "clarify": 2,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 6,
+              "clarify": 2,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 1,
+              "hover": 0,
+              "land": 0,
+              "clarify": 7,
+              "refuse": 1,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 1,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 10,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.5,
+            "recall": 0.7778,
+            "f1": 0.6087,
+            "support": 9
+          },
+          "refuse": {
+            "precision": 0.9091,
+            "recall": 0.9091,
+            "f1": 0.9091,
+            "support": 11
+          },
+          "refuse_reason_accuracy": 0.9091,
+          "land_hover_accuracy": 0.75,
+          "latency_ms": {
+            "p50": 69153.8,
+            "p95": 128640.9,
+            "mean": 75767.1
+          },
+          "completion_tokens_mean": 397.6,
+          "errors": 0,
+          "concurrency": [
+            12
+          ]
+        },
+        "test": {
+          "n": 100,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.95,
+          "subject_exact": 0.3529,
+          "subject_normalized": 0.902,
+          "category_accuracy": 0.9804,
+          "color_accuracy": 0.9216,
+          "distance_accuracy": 0.9412,
+          "n_follow": 51,
+          "confusion": {
+            "follow": {
+              "follow": 50,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 1,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 13,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 7,
+              "clarify": 2,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 2,
+              "hover": 0,
+              "land": 0,
+              "clarify": 11,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 14,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.8462,
+            "recall": 0.8462,
+            "f1": 0.8462,
+            "support": 13
+          },
+          "refuse": {
+            "precision": 0.9333,
+            "recall": 1.0,
+            "f1": 0.9655,
+            "support": 14
+          },
+          "refuse_reason_accuracy": 1.0,
+          "land_hover_accuracy": 0.9091,
+          "latency_ms": {
+            "p50": 52931.6,
+            "p95": 105355.7,
+            "mean": 58422.6
+          },
+          "completion_tokens_mean": 340.5,
+          "errors": 0,
+          "concurrency": [
+            8,
+            12
+          ]
+        }
+      }
+    },
+    "glimmer-lora-mlx-seq": {
+      "name": "Glimmer + LoRA (MLX), latency run",
+      "notes": [
+        "MLX 4-bit on M5 Pro 48 GB, mlx_lm.server :8580, other workstreams may have shared the GPU (twin Chrome/WebGL renderer seen 00:25); sequential latency run"
+      ],
+      "sets": {
+        "gold": {
+          "n": 40,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 1.0,
+          "subject_exact": 0.95,
+          "subject_normalized": 0.95,
+          "category_accuracy": 1.0,
+          "color_accuracy": 0.975,
+          "distance_accuracy": 1.0,
+          "n_follow": 40,
+          "confusion": {
+            "follow": {
+              "follow": 40,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 0
+          },
+          "refuse": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 0
+          },
+          "refuse_reason_accuracy": null,
+          "land_hover_accuracy": null,
+          "latency_ms": {
+            "p50": 3605.8,
+            "p95": 4017.4,
+            "mean": 3615.1
+          },
+          "completion_tokens_mean": 49.0,
+          "errors": 0,
+          "concurrency": [
+            1
+          ]
+        }
+      }
+    },
+    "glimmer-lora-mlx": {
+      "name": "Glimmer + LoRA (MLX 4-bit, local)",
+      "notes": [
+        "MLX 4-bit on M5 Pro 48 GB, mlx_lm.server :8580, other workstreams may have shared the GPU (twin Chrome/WebGL renderer seen 00:25); client concurrency 4 (batched decode)"
+      ],
+      "sets": {
+        "gold": {
+          "n": 80,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 1.0,
+          "subject_exact": 0.9318,
+          "subject_normalized": 0.9545,
+          "category_accuracy": 1.0,
+          "color_accuracy": 0.9545,
+          "distance_accuracy": 1.0,
+          "n_follow": 44,
+          "confusion": {
+            "follow": {
+              "follow": 44,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 8,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 8,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 9,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 11,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "support": 9
+          },
+          "refuse": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "support": 11
+          },
+          "refuse_reason_accuracy": 1.0,
+          "land_hover_accuracy": 1.0,
+          "latency_ms": {
+            "p50": 5150.6,
+            "p95": 5884.5,
+            "mean": 5182.0
+          },
+          "completion_tokens_mean": 47.1,
+          "errors": 0,
+          "concurrency": [
+            4
+          ]
+        },
+        "gold_asr": {
+          "n": 80,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.8875,
+          "subject_exact": 0.7727,
+          "subject_normalized": 0.7955,
+          "category_accuracy": 0.8409,
+          "color_accuracy": 0.8864,
+          "distance_accuracy": 1.0,
+          "n_follow": 44,
+          "confusion": {
+            "follow": {
+              "follow": 41,
+              "hover": 0,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 2,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 7,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 8,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 1,
+              "hover": 0,
+              "land": 0,
+              "clarify": 5,
+              "refuse": 3,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 1,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 10,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.7143,
+            "recall": 0.5556,
+            "f1": 0.625,
+            "support": 9
+          },
+          "refuse": {
+            "precision": 0.6667,
+            "recall": 0.9091,
+            "f1": 0.7692,
+            "support": 11
+          },
+          "refuse_reason_accuracy": 0.9091,
+          "land_hover_accuracy": 0.9375,
+          "latency_ms": {
+            "p50": 5049.6,
+            "p95": 5727.6,
+            "mean": 5039.2
+          },
+          "completion_tokens_mean": 47.1,
+          "errors": 0,
+          "concurrency": [
+            4
+          ]
+        },
+        "test": {
+          "n": 300,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.98,
+          "subject_exact": 0.929,
+          "subject_normalized": 0.929,
+          "category_accuracy": 0.9882,
+          "color_accuracy": 0.9349,
+          "distance_accuracy": 0.9527,
+          "n_follow": 169,
+          "confusion": {
+            "follow": {
+              "follow": 167,
+              "hover": 1,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 27,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 23,
+              "clarify": 1,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 2,
+              "hover": 0,
+              "land": 0,
+              "clarify": 38,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 1,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 39,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.95,
+            "recall": 0.95,
+            "f1": 0.95,
+            "support": 40
+          },
+          "refuse": {
+            "precision": 1.0,
+            "recall": 0.975,
+            "f1": 0.9873,
+            "support": 40
+          },
+          "refuse_reason_accuracy": 0.975,
+          "land_hover_accuracy": 0.9804,
+          "latency_ms": {
+            "p50": 5429.1,
+            "p95": 6059.9,
+            "mean": 5387.4
+          },
+          "completion_tokens_mean": 47.2,
+          "errors": 0,
+          "concurrency": [
+            4
+          ]
+        }
+      }
+    },
+    "spark-1.3-seq": {
+      "name": "Muse Spark 1.3, latency run",
+      "notes": [
+        "latency run: sequential, Meta API from home Wi-Fi, local MLX training running on the Mac"
+      ],
+      "sets": {
+        "gold": {
+          "n": 40,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.925,
+          "subject_exact": 0.5,
+          "subject_normalized": 0.85,
+          "category_accuracy": 0.925,
+          "color_accuracy": 0.95,
+          "distance_accuracy": 0.975,
+          "n_follow": 40,
+          "confusion": {
+            "follow": {
+              "follow": 37,
+              "hover": 0,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 2,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 0
+          },
+          "refuse": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 0
+          },
+          "refuse_reason_accuracy": null,
+          "land_hover_accuracy": null,
+          "latency_ms": {
+            "p50": 1870.9,
+            "p95": 3402.7,
+            "mean": 2475.0
+          },
+          "completion_tokens_mean": 180.2,
+          "errors": 0,
+          "concurrency": [
+            1
+          ]
+        }
+      }
+    },
+    "spark-1.3": {
+      "name": "Muse Spark 1.3 (Meta API, minimal effort)",
+      "notes": [
+        "Meta API from home Wi-Fi; other workstreams active on this Mac; concurrency 6",
+        "gold_asr run at 00:22, Meta API from home Wi-Fi, local MLX training running"
+      ],
+      "sets": {
+        "gold": {
+          "n": 80,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.95,
+          "subject_exact": 0.5227,
+          "subject_normalized": 0.8636,
+          "category_accuracy": 0.9545,
+          "color_accuracy": 0.9773,
+          "distance_accuracy": 1.0,
+          "n_follow": 44,
+          "confusion": {
+            "follow": {
+              "follow": 42,
+              "hover": 0,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 1,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 8,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 8,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 9,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 2,
+              "refuse": 9,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.75,
+            "recall": 1.0,
+            "f1": 0.8571,
+            "support": 9
+          },
+          "refuse": {
+            "precision": 0.9,
+            "recall": 0.8182,
+            "f1": 0.8571,
+            "support": 11
+          },
+          "refuse_reason_accuracy": 0.8182,
+          "land_hover_accuracy": 1.0,
+          "latency_ms": {
+            "p50": 1970.5,
+            "p95": 3605.5,
+            "mean": 2097.5
+          },
+          "completion_tokens_mean": 199.9,
+          "errors": 0,
+          "concurrency": [
+            6
+          ]
+        },
+        "gold_asr": {
+          "n": 80,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.9,
+          "subject_exact": 0.3864,
+          "subject_normalized": 0.7273,
+          "category_accuracy": 0.8182,
+          "color_accuracy": 0.9545,
+          "distance_accuracy": 1.0,
+          "n_follow": 44,
+          "confusion": {
+            "follow": {
+              "follow": 40,
+              "hover": 0,
+              "land": 0,
+              "clarify": 4,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 6,
+              "land": 0,
+              "clarify": 2,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 8,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 9,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 1,
+              "hover": 0,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 9,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.5625,
+            "recall": 1.0,
+            "f1": 0.72,
+            "support": 9
+          },
+          "refuse": {
+            "precision": 1.0,
+            "recall": 0.8182,
+            "f1": 0.9,
+            "support": 11
+          },
+          "refuse_reason_accuracy": 0.8182,
+          "land_hover_accuracy": 0.875,
+          "latency_ms": {
+            "p50": 1996.8,
+            "p95": 3097.0,
+            "mean": 2097.5
+          },
+          "completion_tokens_mean": 207.0,
+          "errors": 0,
+          "concurrency": [
+            6
+          ]
+        },
+        "test": {
+          "n": 300,
+          "valid_json_rate": 1.0,
+          "action_accuracy": 0.9533,
+          "subject_exact": 0.5266,
+          "subject_normalized": 0.9172,
+          "category_accuracy": 0.9704,
+          "color_accuracy": 0.929,
+          "distance_accuracy": 0.9822,
+          "n_follow": 169,
+          "confusion": {
+            "follow": {
+              "follow": 166,
+              "hover": 0,
+              "land": 0,
+              "clarify": 1,
+              "refuse": 2,
+              "invalid": 0
+            },
+            "hover": {
+              "follow": 0,
+              "hover": 27,
+              "land": 0,
+              "clarify": 0,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "land": {
+              "follow": 0,
+              "hover": 0,
+              "land": 22,
+              "clarify": 2,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "clarify": {
+              "follow": 3,
+              "hover": 0,
+              "land": 0,
+              "clarify": 37,
+              "refuse": 0,
+              "invalid": 0
+            },
+            "refuse": {
+              "follow": 0,
+              "hover": 0,
+              "land": 0,
+              "clarify": 6,
+              "refuse": 34,
+              "invalid": 0
+            }
+          },
+          "clarify": {
+            "precision": 0.8043,
+            "recall": 0.925,
+            "f1": 0.8605,
+            "support": 40
+          },
+          "refuse": {
+            "precision": 0.9444,
+            "recall": 0.85,
+            "f1": 0.8947,
+            "support": 40
+          },
+          "refuse_reason_accuracy": 0.85,
+          "land_hover_accuracy": 0.9608,
+          "latency_ms": {
+            "p50": 1885.5,
+            "p95": 3146.1,
+            "mean": 1994.2
+          },
+          "completion_tokens_mean": 192.5,
+          "errors": 0,
+          "concurrency": [
+            6
+          ]
+        }
+      }
+    }
+  }
+}

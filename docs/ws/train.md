@@ -13,8 +13,12 @@ Branch `ws/train`. Overnight, 2026-11-03 23:35 to 2026-11-04 (times ET). PLAN.md
   access` (models). So no SFT job could start. Base-Glimmer deployments do work: I created one H200
   deployment, evaluated base Glimmer on it, and deleted it after 8.3 GPU-minutes (about $1.10).
 - **The LoRA was trained locally with MLX** (QLoRA on `Muse-Glimmer-30B-4bit`, last 16 layers, rank 16),
-  saved to `$MHD_MODELS/adapters/glimmer-intent-v1/`, and evaluated locally. Results: see
-  [Results](#results) and `docs/eval/summary.md`.
+  and saved to `$MHD_MODELS/adapters/glimmer-intent-v1/`: 2,600 iterations in 77 minutes, 17.7 GB peak.
+  **Action accuracy: 98.0% on held-out test (base Glimmer 93.7% on Fireworks, Spark 1.3 95.3%), and 100% on
+  the 80 hand-written gold commands (base 91.2 to 93.8%, Spark 95.0%), with 100% valid JSON.** Exact subject
+  match is 93% vs 41% for base. On the Mac it answers in 3.6 s p50 / 4.0 s p95, vs 17.6 s for base Glimmer,
+  because it emits 47 tokens instead of about 230. It is weaker on real ASR noise (spoken gold 88.8% vs
+  Spark's 90.0%). See [Results](#results), `docs/eval/summary.md` and `docs/eval/intent_eval.png`.
 - **Edge mode is ready**: `scripts/serve_glimmer.sh` serves Glimmer + LoRA on `http://127.0.0.1:8080/v1`.
 - **Cloud mode**: once Fireworks enables uploads, run `training/fireworks.py train` and then
   `training/fireworks.py morning` (about 10 minutes plus training time). Until then cloud mode can only
@@ -31,6 +35,10 @@ Branch `ws/train`. Overnight, 2026-11-03 23:35 to 2026-11-04 (times ET). PLAN.md
 | `training/fireworks.py` | Fireworks REST client and CLI: upload, sft, job, deploy, load-lora, warmup, morning, down, delete, list, train |
 | `training/train_mlx.sh`, `training/train_mlx.py`, `training/mlx_lora*.yaml` | Local QLoRA training (smoke and full) with recorded wall time and peak memory |
 | `training/eval.py`, `training/eval_mlx.sh` | Evaluation (Spark, Fireworks, mlx_lm backends) and report: `docs/eval/results.json`, `summary.md`, `intent_eval.png` |
+| `training/gold_asr.py` | Spoken gold set: `say` (6 English accents) to Omnilingual ASR (sherpa-onnx, CPU) to `training/data/gold_asr.jsonl` |
+| `training/run_local_evals.sh` | Waits for training, then runs LoRA and base evals on :8580 (quality plus sequential latency), one server at a time |
+| `training/select_checkpoint.sh`, `training/finalize_checkpoint.py` | Checkpoint selection on the valid set, and promoting a checkpoint (not needed tonight: validation stayed flat) |
+| `training/doc_tables.py`, `training/publish_shared.py` | Doc tables from `results.json`; copies the endpoints, metrics and chart to `$MHD_HOME/media/shared/train/` |
 | `scripts/serve_glimmer.sh` | Edge-mode server: mlx_lm.server on port 8080 with the adapter |
 | `src/mhd_ml/glimmer_client.py` | Small client the agent can call for edge (`GlimmerClient.edge()`) or cloud (`GlimmerClient.cloud()`) |
 | `tests/train/` | 38 pytest tests (generator, eval metrics, Fireworks client with mocked HTTP, Glimmer client) |
@@ -107,7 +115,7 @@ What I verified with the REST API (key from env, never printed):
   `{"code": 9, "message": "dataset uploads are temporarily disabled, please contact Fireworks AI to get access"}`.
 - `POST models` (HF_PEFT_ADDON) gives 400 `model creation, uploads and preparation are temporarily disabled,
   please contact Fireworks AI to get access`. So uploading our MLX adapter is blocked too.
-- Re-checked the dataset upload at 00:27, 01:00 and 01:37: still 403 each time. Each failed attempt's
+- Re-checked the dataset upload at 00:27, 01:00, 01:37 and 02:00: still 403 each time. Each failed attempt's
   placeholder dataset was deleted.
 - The Serverless Training API needs the `fireworks` Python SDK (`fireworks.training.sdk`), which is not
   installed. Installing is outside the rules, so I did not try it.
@@ -178,7 +186,45 @@ follow by default: exact subject match on test is 93% for the LoRA vs 41% (base)
 LoRA emits about 47 output tokens per command; base Glimmer emits about 140 (Fireworks) to 230 (MLX),
 and Spark about 200 including reasoning.
 
-RESULTS_TABLES
+**Held-out test (300)**
+
+| model | n | valid JSON | action | subject (norm.) | clarify F1 | refuse F1 | land/hover |
+|---|---|---|---|---|---|---|---|
+| Glimmer base (MLX 4-bit, local) | 100 | 100.0% | 95.0% | 90.2% | 0.85 | 0.97 | 90.9% |
+| Glimmer + LoRA (MLX 4-bit, local) | 300 | 100.0% | 98.0% | 92.9% | 0.95 | 0.99 | 98.0% |
+| Glimmer base (Fireworks H200) | 300 | 100.0% | 93.7% | 88.2% | 0.84 | 0.85 | 94.1% |
+| Glimmer base + JSON schema (Fireworks) | 300 | 100.0% | 94.0% | 88.2% | 0.85 | 0.86 | 94.1% |
+| Muse Spark 1.3 (Meta API, minimal effort) | 300 | 100.0% | 95.3% | 91.7% | 0.86 | 0.89 | 96.1% |
+
+**Gold, hand-written (80)**
+
+| model | n | valid JSON | action | subject (norm.) | clarify F1 | refuse F1 | land/hover |
+|---|---|---|---|---|---|---|---|
+| Glimmer base (MLX 4-bit, local) | 80 | 100.0% | 91.2% | 86.4% | 0.73 | 0.76 | 93.8% |
+| Glimmer + LoRA (MLX 4-bit, local) | 80 | 100.0% | 100.0% | 95.5% | 1.00 | 1.00 | 100.0% |
+| Glimmer base (Fireworks H200) | 80 | 100.0% | 93.8% | 86.4% | 0.82 | 0.80 | 100.0% |
+| Glimmer base + JSON schema (Fireworks) | 80 | 100.0% | 95.0% | 84.1% | 0.82 | 0.84 | 100.0% |
+| Muse Spark 1.3 (Meta API, minimal effort) | 80 | 100.0% | 95.0% | 86.4% | 0.86 | 0.86 | 100.0% |
+
+**Gold spoken by `say` + Omnilingual ASR (80)**
+
+| model | n | valid JSON | action | subject (norm.) | clarify F1 | refuse F1 | land/hover |
+|---|---|---|---|---|---|---|---|
+| Glimmer base (MLX 4-bit, local) | 80 | 100.0% | 87.5% | 70.5% | 0.61 | 0.91 | 75.0% |
+| Glimmer + LoRA (MLX 4-bit, local) | 80 | 100.0% | 88.8% | 79.5% | 0.62 | 0.77 | 93.8% |
+| Muse Spark 1.3 (Meta API, minimal effort) | 80 | 100.0% | 90.0% | 72.7% | 0.72 | 0.90 | 87.5% |
+
+**Latency per command, one request at a time** (client wall time)
+
+| model | p50 | p95 | n | conditions |
+|---|---|---|---|---|
+| Glimmer base (MLX 4-bit, local) | 17580 ms | 25525 ms | 20 (gold) | MLX 4-bit on M5 Pro 48 GB, mlx_lm.server :8580, other workstreams may have shared the GPU (twin Chrome/WebGL renderer seen 00:25); sequential latency run |
+| Glimmer + LoRA (MLX 4-bit, local) | 3606 ms | 4017 ms | 40 (gold) | MLX 4-bit on M5 Pro 48 GB, mlx_lm.server :8580, other workstreams may have shared the GPU (twin Chrome/WebGL renderer seen 00:25); sequential latency run |
+| Glimmer base (Fireworks H200) | 828 ms | 1250 ms | 40 (gold) | latency run: sequential (concurrency 1), Fireworks H200, home Wi-Fi, local MLX training running on the Mac |
+| Muse Spark 1.3 (Meta API, minimal effort) | 1871 ms | 3403 ms | 40 (gold) | latency run: sequential, Meta API from home Wi-Fi, local MLX training running on the Mac |
+
+On the **same first 100 test rows**, base Glimmer on MLX scored 95.0% action accuracy and the LoRA 97.0%. The LoRA is the best of all models on land/hover under real ASR noise: 93.8% vs 75.0% (base) and 87.5% (Spark). Edge-mode check: `scripts/serve_glimmer.sh --port 8580` plus `GlimmerClient.edge()` answered 5 of 5 sample commands correctly in 2.8 to 4.6 s, including the demo command, a neighbor-identity refusal, land, `green toy car`, and a surveillance refusal.
+
 
 Conditions: MLX runs used `mlx_lm.server` on :8580 on the M5 Pro (48 GB), with the twin workstream's
 Chrome/WebGL renderer sharing the GPU. Quality runs used client concurrency 4 (LoRA) and 8 to 12 (base,
@@ -283,4 +329,9 @@ scripts/serve_glimmer.sh                           # edge mode on :8080 (use --p
 
 ## Spend (this workstream)
 
-SPEND
+- `fireworks:h200-on-demand`: $1.10
+- `meta:muse-spark-1.3`: $0.63
+- total: $1.73 (caps: Meta API $10, Fireworks GPU 1.5 hours / about $12)
+- Fireworks GPU time: 8.3 minutes (one H200 deployment, deleted). No deployment, deployed model, SFT job, or dataset of ours is left on the account.
+- Meta API: Spark paraphrases ($0.12), the Spark baseline on test, gold and spoken gold, two probes, and a sequential latency run. Every paid batch is in `$MHD_HOME/logs/spend.jsonl` with `"ws": "train"`.
+
