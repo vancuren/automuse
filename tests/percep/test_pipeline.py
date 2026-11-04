@@ -165,8 +165,8 @@ def test_reseed_rejected_when_replay_disagrees():
         x1, y1, x2, y2 = boxes[0]
         dx = 0.45 * ((x2 - x1) * (y2 - y1)) ** 0.5
         return [Detection(box=(x1 + dx, y1, x2 + dx, y2), score=0.9)]
-    run(core, scene, 25, start=20, det_fn=shifted)
-    assert core.stats["reseed_rejected"] >= 1
+    run(core, scene, 40, start=20, det_fn=shifted)
+    assert core.stats["reseed_rejected"] >= 2
     assert core.stats["tracks_started"] > started             # restarted after the streak
 
 

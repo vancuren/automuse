@@ -253,8 +253,11 @@ class PerceptionCore:
     # ----- detector scheduling --------------------------------------------------------------
     def detector_period_ms(self) -> float:
         tr = self.track
+        # Following = a confirmed, healthy track whose last detection agreed. Any doubt (weak
+        # tracker score, a rejected re-seed, a detection that missed the subject) -> 2 Hz.
         following = (tr is not None and not tr.lost and tr.n_confirms >= self.cfg.confirm_needed
-                     and tr.last_score >= self.cfg.doubt_score)
+                     and tr.last_score >= self.cfg.doubt_score
+                     and tr.reject_streak == 0 and tr.det_misses == 0)
         return self.cfg.follow_period_ms if following else self.cfg.find_period_ms
 
     def detection_due(self, now_ms: float) -> Optional[DetJob]:
