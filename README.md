@@ -258,6 +258,22 @@ workstream). In short:
 The video captions say the same: "UI shell and X69 driver: turbodrone (Apache-2.0). Everything else
 built Nov 3-4."
 
+## Where things are
+
+| Path | What |
+|---|---|
+| `src/mhd/governor/`, `src/mhd/autopilot/` | the safety governor (the only path to the sticks) and the pure-function autopilot |
+| `src/mhd/backend/`, `turbodrone/backend/web_server.py` | the backend hub and the patched turbodrone server |
+| `src/mhd/contracts/`, `docs/interfaces.md`, `docs/conventions.md` | the messages between processes, units and sign conventions |
+| `src/mhd/twin/`, `twin/web/`, `config/twin/` | the wire-level digital twin: RC decoder, dynamics, Three.js renderer, video path, metrics, scenarios |
+| `src/mhd_ml/perception/` | SAM 3.1 (MLX and API), trackers, the Kalman filter, the perception service |
+| `src/mhd_ml/agent/` | safety listener, Voice Transcribe clients, intent router, MMS-TTS, the agent service |
+| `training/` | intent data generator, gold sets, Glimmer LoRA training, evaluation |
+| `turbodrone/frontend/` | the operator UI and its mock backend |
+| `config/` | real-drone settings for the governor, autopilot and agent (first-flight values) |
+| `scripts/` | run scripts, the end-to-end twin test, the environment doctor, the secret scan |
+| `tests/` | one suite per component |
+
 ## More documents
 
 | Document | What is in it |
