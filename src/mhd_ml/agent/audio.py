@@ -134,6 +134,7 @@ class MicHub:
         self._ring: collections.deque[np.ndarray] = collections.deque(
             maxlen=max(1, int(preroll_s * 1000 / chunk_ms)))
         self._stream = None
+        self.capture_rate = sample_rate
         self._zero_run_s = 0.0
         self.suspect_no_permission = False
         self.overflows = 0
@@ -141,12 +142,25 @@ class MicHub:
     def start(self) -> None:
         import sounddevice as sd  # lazy: only the live mic path touches audio hardware
 
-        self._stream = sd.RawInputStream(
-            samplerate=self.sample_rate, channels=1, dtype="int16",
-            blocksize=chunk_samples(self.sample_rate, self.chunk_ms),
-            device=self.device, callback=self._callback)
+        self.capture_rate = self.sample_rate
+        try:
+            self._stream = sd.RawInputStream(
+                samplerate=self.sample_rate, channels=1, dtype="int16",
+                blocksize=chunk_samples(self.sample_rate, self.chunk_ms),
+                device=self.device, callback=self._callback)
+        except Exception as e:
+            # Some devices refuse 16/24 kHz; capture at the device's own rate and resample in software.
+            info = sd.query_devices(self.device, kind="input")
+            self.capture_rate = int(info["default_samplerate"])
+            log.warning("mic refused %d Hz (%s); capturing at %d Hz and resampling", self.sample_rate, e,
+                        self.capture_rate)
+            self._stream = sd.RawInputStream(
+                samplerate=self.capture_rate, channels=1, dtype="int16",
+                blocksize=chunk_samples(self.capture_rate, self.chunk_ms),
+                device=self.device, callback=self._callback)
         self._stream.start()
-        log.info("mic open: %d Hz, %d ms chunks, device=%s", self.sample_rate, self.chunk_ms, self.device)
+        log.info("mic open: %d Hz (captured at %d Hz), %d ms chunks, device=%s", self.sample_rate,
+                 self.capture_rate, self.chunk_ms, self.device)
 
     def stop(self) -> None:
         if self._stream is not None:
@@ -160,6 +174,8 @@ class MicHub:
         if status:
             self.overflows += 1
         x = pcm16_to_float(bytes(indata))
+        if self.capture_rate != self.sample_rate:
+            x = resample(x, self.capture_rate, self.sample_rate)
         # Exact zeros for 2 s almost always means macOS denied the Microphone permission.
         if not np.any(x):
             self._zero_run_s += len(x) / self.sample_rate
