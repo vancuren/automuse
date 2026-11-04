@@ -34,9 +34,9 @@ check.
 > talks back. The language models choose missions; they never touch the sticks. The governor
 > latches E-stop, re-asserts land, and goes neutral when video or perception goes stale. A
 > wire-level digital twin speaks the drone's exact protocol (UDP control packets, HEVC over RTSP),
-> so the same build was tested end to end before it flew: it followed a walker for 60 s with the
-> subject in frame the whole time. It follows by appearance only, never identity, and films only
-> people who agreed.
+> so the same build was tested end to end, from a spoken command to the packets, before it flew:
+> it followed a walker for 60 s with the subject in frame the whole time. It follows by appearance
+> only, never identity, and films only people who agreed.
 
 Before pasting: if Session C produced a real follow, add one sentence about it; if not, keep "before
 it flew" only if the drone has flown at all, otherwise write "before its first flight".
