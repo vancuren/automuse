@@ -58,7 +58,7 @@ Branch `ws/train`. Overnight, 2026-11-03 23:35 to 2026-11-04 (times ET). PLAN.md
   photos, and non-drone requests.
 
 ### Construction
-- 69 template families in 11 groups. Whole families are held out: 55 train, 11 valid, 11 test
+- 77 template families in 11 groups. Whole families are held out: 55 train, 11 valid, 11 test
   (`training/data/stats.json`). Test therefore measures unseen phrasings, not memorized templates.
 - Slots: 11 colors (plus silver for vehicles, and shades like "light blue" that the label drops), 17
   garments and accessories, 16 people nouns, 10 vehicle types, 12 animals, 10 objects, 36 names, 20
@@ -175,7 +175,8 @@ scripts/serve_glimmer.sh                           # edge mode on :8080
 - **Agent, edge mode**: start `scripts/serve_glimmer.sh` (port 8080; refuses to start if another Glimmer
   process is running). Call `POST http://127.0.0.1:8080/v1/chat/completions` with
   `[{"role":"system","content":GLIMMER_SYSTEM_PROMPT},{"role":"user","content":transcript}]`,
-  `temperature 0`, `max_tokens` about 200, and no `chat_template_kwargs`. Parse `choices[0].message.content`
+  `"model": "default_model"` (any other name makes mlx_lm.server try to load that path), `temperature 0`,
+  `max_tokens` about 200, and no `chat_template_kwargs`. Parse `choices[0].message.content`
   with `mhd.intent_spec.parse_intent`. Or use `mhd_ml.glimmer_client.GlimmerClient.edge().intent(text)`.
   `Mission.model = "glimmer-30b+lora"`.
 - **Agent, cloud mode**: `POST https://api.fireworks.ai/inference/v1/chat/completions`, Bearer
@@ -193,7 +194,33 @@ scripts/serve_glimmer.sh                           # edge mode on :8080
 
 ## Known gaps and risks
 
-KNOWN_GAPS
+1. **No LoRA on Fireworks yet.** Dataset and model uploads are disabled for this account (exact errors
+   above), so the "trained Glimmer live on Fireworks" goal needs the owner to get uploads enabled, then
+   about 10 minutes of commands plus training time (runbook above). The hot-reload LoRA load
+   (`deployedModels?replaceMergedAddon=true`) and the live-merge fallback (`morning --merged`) are
+   implemented and unit-tested against a mock, but have not run against the real API.
+2. The local LoRA is a QLoRA trained on the 4-bit MLX base. If uploads open up, retrain on Fireworks from the
+   same data (`fireworks.py train`, BF16) rather than converting this adapter. No MLX-to-PEFT converter
+   was written. For the record, the adapter covers layers 36 to 51, 8 linear modules each, with lora_a
+   `[in, 16]` and lora_b `[16, out]`. PEFT wants both transposed, with `lora_alpha = 32` (scale 2 x
+   rank 16). The HF module prefix of Glimmer's text tower was not verified.
+3. The template appends `Reasoning strength: high.` after `GLIMMER_SYSTEM_PROMPT`'s own
+   `Reasoning strength: low`. Training and serving are consistent, so the LoRA is unaffected. For a v2, the
+   integrator could drop the line from the frozen prompt, or pass `reasoning_strength` in both training
+   and serving.
+4. Base Glimmer on Fireworks was scored on test and gold only (the spoken set was built after the
+   deployment was deleted). Local base Glimmer covers all three sets.
+5. Small evaluation sets: 80 gold commands give about plus or minus 5 points of noise on accuracy. Test
+   comes from held-out template families and paraphrases, so it is closer to the training distribution
+   than gold is.
+6. The spoken gold set uses macOS TTS voices, not people. Omnilingual (no language hint) turned 3 of 80
+   very short clips into non-Latin script; they are kept because that is what the recognizer did.
+7. The edge-mode LoRA takes several seconds per command (see latency). That is above the 2.5 s
+   hedged-routing budget written for the cloud path. Use it as the offline path, or give it its own budget.
+8. The dev.meta.ai terms on training with model outputs were not conclusively verified (see Terms check).
+9. Baseten was not tried: there is no `BASETEN_API_KEY` in `.env`. The Fireworks Serverless Training API
+   was not tried: it needs the `fireworks` SDK, which is not installed, and it would still hit the
+   model-creation block when promoting the result.
 
 ## Spend (this workstream)
 

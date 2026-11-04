@@ -367,6 +367,8 @@ def report(a: argparse.Namespace) -> dict:
     results: dict[str, Any] = {"generated": time.strftime("%Y-%m-%d %H:%M %Z"), "models": {}}
     for fp in files:
         label = fp.stem
+        if label.startswith("select-"):      # checkpoint selection runs on valid (training/select_checkpoint.sh)
+            continue
         if a.only and label not in a.only.split(","):
             continue
         recs = read_jsonl(fp)
