@@ -1,0 +1,11 @@
+# Full local run: same adapter shape as the smoke test, plus warmup and cosine decay.
+# Scheduler steps are optimizer updates: 2600 iterations / 4 accumulation = 650 updates.
+lora_parameters:
+  rank: 16
+  scale: 2.0
+  dropout: 0.05
+lr_schedule:
+  name: cosine_decay
+  warmup: 25
+  warmup_init: 1.0e-6
+  arguments: [1.0e-4, 625, 1.0e-5]

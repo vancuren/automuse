@@ -147,13 +147,16 @@ class Fireworks:
     # ---------------- deployments ----------------
     def create_deployment(self, deployment_id: str, *, replicas: int = 1, hot_reload: bool = True,
                           base_model: str = BASE_MODEL, shape: Optional[str] = H200_SHAPE) -> dict:
+        """hot_reload=True: min=max=replicas (required by Fireworks), a LoRA can be merged in later.
+        hot_reload=False: a plain base deployment with min 0 / max 1 that scales to zero after 10 idle
+        minutes, so a crashed client can never leave a GPU billing for long."""
         body: dict[str, Any] = {
             "baseModel": base_model,
             "displayName": deployment_id,
             "description": "Muse Glimmer intent LoRA (MetaHackathonDrone, train workstream)",
-            "minReplicaCount": replicas,
-            "maxReplicaCount": replicas,
-            "autoscalingPolicy": {"scaleToZeroWindow": "900s"},
+            "minReplicaCount": replicas if hot_reload else 0,
+            "maxReplicaCount": replicas if hot_reload else 1,
+            "autoscalingPolicy": {"scaleToZeroWindow": "900s" if hot_reload else "600s"},
         }
         if shape:
             body["deploymentShape"] = shape
@@ -313,6 +316,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         s = sub.add_parser(name)
         s.add_argument("--deployment-id", default=DEFAULT_DEPLOYMENT)
         s.add_argument("--lora", help="LoRA model id (accounts/.../models/<id> or just <id>)")
+        s.add_argument("--plain", action="store_true",
+                       help="deploy: base model only, min 0 / max 1, scale to zero after 10 idle minutes")
     sub.add_parser("list")
     a = ap.parse_args(argv)
     fw = Fireworks()
@@ -332,7 +337,11 @@ def main(argv: Optional[list[str]] = None) -> None:
                                                 "learningRate", "outputModel", "createTime", "completedTime",
                                                 "estimatedCost")}, indent=1))
     elif a.cmd == "deploy":
-        fw.create_deployment(a.deployment_id)
+        fw.create_deployment(a.deployment_id, hot_reload=not a.plain)
+        if a.plain:
+            # min 0: the first request wakes it up; warmup() retries through the 503 DEPLOYMENT_SCALING_UP
+            time.sleep(10)
+            warmup(fw, a.deployment_id, None, tries=120)
         fw.wait_deployment(a.deployment_id)
         if a.lora:
             fw.load_lora(a.deployment_id, a.lora)
