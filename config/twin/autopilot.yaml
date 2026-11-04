@@ -1,0 +1,77 @@
+# TWIN calibration of config/autopilot.yaml: identical except the values marked TWIN. Never for the real drone.
+# Autopilot parameters (loaded by mhd.governor.config.load_autopilot_config). PLAN.md section 4.4.
+#
+# The autopilot is a pure function called every RC tick. It outputs normalized sticks; the governor
+# applies sign, deadband compensation, caps (config/governor.yaml), slew and rounding.
+# Values marked [Session A] / [Session B] are guesses until measured. Unknown keys are an error.
+
+camera:
+  hfov_deg: 75.0            # horizontal field of view [Session A: 2*atan(w/2d) at d = 1.00 m]
+  frame_w: 1280             # contract pixel space (mhd.contracts.FRAME_W x FRAME_H)
+  frame_h: 720
+
+plant:                      # system identification [Session B]
+  yaw_rate_per_count: 0.0166 # TWIN: 0.95 deg/s per count beyond the deadband (config/twin/x69.yaml)
+  forward_speed_per_count: 0.012   # m/s per pitch count; only used for the backward-travel budget
+  yaw_lag_s: 0.2            # command-to-motion lag, used by the wrong-way detector
+
+delay:
+  theta_s: 1.0              # total loop delay: camera->backend + perception p50 + half obs period
+                            # + half RC period + yaw lag. Expect 0.85-1.2 s. [Session A/B]
+
+yaw:
+  loop_gain: 0.4            # Kp*K*theta. P-only. Never above 0.7 without feed-forward (enforced).
+  bearing_deadband_rad: 0.03   # |bearing| below this gives zero yaw (no hunting around center)
+  feedforward:              # off until a twin run with +/-30% error in K shows no ringing
+    enabled: false
+    gain: 0.6               # <= 0.6 (enforced)
+    lowpass_s: 0.6          # low-pass time constant on the subject's own angular rate
+
+forward:
+  size_deadband: 0.08       # deadband on e_s = ln(w_ref / w)
+  kp: 0.6                   # normalized pitch per unit of deadbanded e_s
+  cap: 0.40                 # TWIN: forward cap (normalized); the governor caps again in counts (51)
+  back_cap_ratio: 0.5       # backward speed is at most half the forward cap
+  backward_budget_m: 1.0    # net backward travel allowed per mission (forward travel does not bank credit)
+  gate:                     # forward motion only when ALL hold; otherwise yaw-only
+    edge_margin_frac: 0.02  # box at least 2% of H from the top and bottom edges
+    max_box_h_frac: 0.8     # box height under 0.8 H
+    max_abs_bearing_rad: 0.4
+    max_confirm_age_s: 1.5  # last detector confirmation under 1.5 s old
+  standoff:                 # too close: hover, then back off slowly
+    max_box_h_frac: 0.85
+    max_box_w_frac: 0.6
+    hover_s: 0.5
+    back_off_pitch: 0.08
+  ref_width_frac:           # desired box width as a fraction of frame width, by mission distance.
+                            # Person ~0.45 m wide, HFOV 75 deg (f = 834 px): w/W = 0.45*834/(1280*d).
+                            # Full body in frame (box h < 0.8 H, feet inside the 2% edge margin at a
+                            # ~1.2 m hover) needs d >= ~2.9 m, so medium = 0.10 (~2.9 m).
+    close: 0.13             # ~2.25 m
+    medium: 0.10            # ~2.9 m
+    far: 0.075              # ~3.9 m
+  category_scale:           # smaller subjects get proportionally smaller reference widths
+    person: 1.0
+    car: 0.8
+    animal: 0.7
+    object: 0.6
+    none: 1.0
+
+lifecycle:
+  confirm_s: 1.0            # CONFIRM needs this long of consistent lock before FOLLOW
+  confirm_min_score: 0.5    # tracker score needed for "consistent lock"
+  confirm_max_jump_frac: 0.15  # box center may move at most this fraction of W between obs in CONFIRM
+  follow_min_score: 0.4     # FOLLOW -> DOUBT below this tracker score
+  jump_frac: 0.25           # FOLLOW -> DOUBT if the box center jumps more than this fraction of W ...
+  jump_size_ratio: 1.6      # ... or the box width changes by more than this ratio between obs
+  detector_p95_default_s: 1.5  # until perception reports detector_latency_ms
+  detector_period_default_s: 1.0   # detector runs at 1 Hz while following
+  doubt_extra_s: 0.5        # DOUBT -> LOST no sooner than detector p95 + this
+  lost_confirm_age_min_s: 2.5  # LOST when confirmation age > max(this, 2 x detector period + detector p95)
+  find_timeout_s: 25.0      # FIND without any candidate this long: GIVE_UP
+  give_up_s: 25.0           # LOST/SEARCH this long: GIVE_UP (hover and announce)
+  search:                   # stop-and-stare, within +/- max_deg of the last-seen bearing
+    step_deg: 30.0
+    max_deg: 90.0
+    yaw: 0.2                # normalized yaw while stepping (0.2 x 127 = 25 counts)
+    stare_extra_s: 0.5      # stare for detector p95 + this after each step

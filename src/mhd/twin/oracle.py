@@ -80,7 +80,11 @@ class Oracle:
         actor = pick_actor(truth, self.find.subject_phrase)
         visible = actor is not None and actor.get("box") and actor.get("visible_frac", 0) >= a.min_visible
         dropped = self.rng.random() < a.dropout
-        if not visible or dropped:
+        if visible and dropped:
+            # A random dropout is a frame the tracker missed: real perception keeps its track and
+            # simply sends nothing for it (it reports "lost" only after several failed frames).
+            return None
+        if not visible:
             lost = self.confirmed and self.last_seen_ms is not None and t - self.last_seen_ms > 1000
             state = SubjectState.lost if lost else SubjectState.searching
             if lost:

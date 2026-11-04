@@ -157,7 +157,21 @@ class WrongWayCfg:
     # Pitch: sustained forward (or back) command while the box shrinks (or grows) by this much.
     pitch_enabled: bool = True
     pitch_min_cmd: float = 0.08          # mean |applied pitch| over the window (normalized)
-    pitch_min_size_change: float = 0.10  # |log(box width ratio)| over the window
+    pitch_min_size_change: float = 0.12  # |log(box width ratio)| over the window
+    # Robustness (integration, 2026-11-04): a walking subject's box width swings with its gait, so
+    # the pitch check compares the MEDIAN log width around each window end, over a longer window,
+    # and the condition must persist before it latches a hover. A reversed pitch sign still fires
+    # within about 3 s (test_pitch_wrong_way_hovers).
+    pitch_window_thetas: float = 2.0     # pitch check window, in units of theta
+    pitch_median_s: float = 0.3          # half-width of the median window at each end
+    pitch_persist_s: float = 0.5         # the condition must hold this long before it fires
+    # ... and only while the forward (or back) command is near its cap. A reversed pitch sign drives
+    # the command to the cap as the box keeps shrinking; a correct drone that is merely falling
+    # behind a walker stays below it (integration finding in the twin, 2026-11-04).
+    pitch_min_cap_frac: float = 0.7
+    # Yaw: the observed bearing change must also be at least this fraction of the predicted one,
+    # so a subject that briefly outpaces a correct turn does not look like a reversed yaw sign.
+    yaw_min_ratio: float = 0.8
     # Frozen box: the same box (within frozen_box_px) for frozen_box_s while we turned >= frozen_box_min_turn_rad.
     frozen_box_s: float = 2.0
     frozen_box_px: float = 0.5
@@ -239,6 +253,11 @@ class GovernorConfig:
         within("wrong_way.pitch_min_cmd", self.wrong_way.pitch_min_cmd, 0.0, 1.0, lo_open=True)
         within("wrong_way.pitch_min_size_change", self.wrong_way.pitch_min_size_change, 0.0, 1.0, lo_open=True)
         within("wrong_way.frozen_box_s", self.wrong_way.frozen_box_s, 0.0, 10.0, lo_open=True)
+        within("wrong_way.pitch_window_thetas", self.wrong_way.pitch_window_thetas, 0.5, 4.0)
+        within("wrong_way.pitch_median_s", self.wrong_way.pitch_median_s, 0.0, 1.0)
+        within("wrong_way.pitch_persist_s", self.wrong_way.pitch_persist_s, 0.0, 2.0)
+        within("wrong_way.pitch_min_cap_frac", self.wrong_way.pitch_min_cap_frac, 0.0, 1.0)
+        within("wrong_way.yaw_min_ratio", self.wrong_way.yaw_min_ratio, 0.0, 2.0)
         within("wrong_way.frozen_box_px", self.wrong_way.frozen_box_px, 0.0, 20.0)
         within("wrong_way.frozen_box_min_turn_rad", self.wrong_way.frozen_box_min_turn_rad, 0.0, 3.0, lo_open=True)
         within("tilt.max_hold_s", self.tilt.max_hold_s, 0.0, 10.0, lo_open=True)
@@ -349,6 +368,7 @@ class CategoryScaleCfg:
 @dataclass(frozen=True)
 class ForwardCfg:
     size_deadband: float = 0.08
+    size_lowpass_s: float = 0.6     # low-pass the box width before the size error (gait swings it); 0 = off
     kp: float = 0.6
     cap: float = 0.25
     back_cap_ratio: float = 0.5
@@ -378,6 +398,7 @@ class LifecycleCfg:
     detector_p95_default_s: float = 1.5
     detector_period_default_s: float = 1.0
     doubt_extra_s: float = 0.5
+    doubt_debounce_obs: int = 2     # consecutive doubtful observations before DOUBT ("lost" acts at once)
     lost_confirm_age_min_s: float = 2.5
     find_timeout_s: float = 25.0
     give_up_s: float = 25.0
@@ -408,6 +429,10 @@ class AutopilotConfig:
             raise ConfigError("yaw.feedforward.gain must be <= 0.6 (PLAN 4.4)")
         if not 0 <= self.forward.cap <= 1 or not 0 <= self.forward.back_cap_ratio <= 1:
             raise ConfigError("forward.cap and back_cap_ratio must be 0..1")
+        if not 0.0 <= self.forward.size_lowpass_s <= 5.0:
+            raise ConfigError("forward.size_lowpass_s must be 0..5")
+        if not 1 <= self.lifecycle.doubt_debounce_obs <= 5:
+            raise ConfigError("lifecycle.doubt_debounce_obs must be 1..5")
         if self.lifecycle.search.max_deg > 180:
             raise ConfigError("lifecycle.search.max_deg must be <= 180")
         if not (self.camera.frame_w == 1280 and self.camera.frame_h == 720):

@@ -206,6 +206,7 @@ class Governor:
         self._ap_step_ms = 0.0
         self._wrong_way_hold = False
         self._wrong_way_reason: Optional[str] = None
+        self._pitch_ww_since: Optional[float] = None    # capture_ms when the pitch condition began
         self._slew = dict(ZERO)
         self._applied = dict(ZERO)                       # normalized, effective, last tick
         self._yaw_hist: deque = deque(maxlen=150)        # (t_ms, yaw rate rad/s) actually commanded (6 s)
@@ -353,6 +354,7 @@ class Governor:
                 self._obs = None
                 self._obs_hist.clear()
                 self._frozen_box = self._frozen_since = None
+                self._pitch_ww_since = None
                 spoken = self._spoken_at(mission, now)
                 released = spoken > self._hold_ms
                 # Spoken before the last pause / land / E-stop / takeoff: it never moves the drone
@@ -486,6 +488,7 @@ class Governor:
             self._wrong_way_hold = False
             self._wrong_way_reason = None
             self._frozen_box = self._frozen_since = None
+            self._pitch_ww_since = None
             if self._ap.mode == AutopilotState.give_up and self._mission is not None:
                 self._ap = autopilot_start(self._ap, self._mission.mission_id, now,
                                            distance=self._mission.intent.distance,
@@ -903,16 +906,56 @@ class Governor:
         turned, _ = self._integral(self._yaw_hist, a, b)
         predicted = -turned
         if (abs(observed) > ww.min_change_rad and abs(predicted) > ww.min_change_rad
-                and observed * predicted < 0):
+                and observed * predicted < 0 and abs(observed) >= ww.yaw_min_ratio * abs(predicted)):
             return "yaw"
         if ww.pitch_enabled:
-            moved, covered = self._integral(self._pitch_hist, a, b)
-            if covered > 0.5 * (b - a) / 1000.0:
-                mean = moved / covered
-                grew = s2 - s1                       # log width ratio: + closer, - farther
-                if abs(mean) >= ww.pitch_min_cmd and grew * math.copysign(1.0, mean) <= -ww.pitch_min_size_change:
+            if self._pitch_condition(t2, theta_ms):
+                if self._pitch_ww_since is None:
+                    self._pitch_ww_since = t2
+                if t2 - self._pitch_ww_since >= ww.pitch_persist_s * 1000.0:
                     return "pitch"
+            else:
+                self._pitch_ww_since = None
         return None
+
+    def _median_log_width(self, t_center: float, half_ms: float) -> Optional[float]:
+        vals = [s for (t, _, s) in self._obs_hist if abs(t - t_center) <= half_ms]
+        if not vals:
+            return None
+        vals.sort()
+        n = len(vals)
+        return vals[n // 2] if n % 2 else 0.5 * (vals[n // 2 - 1] + vals[n // 2])
+
+    def _pitch_condition(self, t2: float, theta_ms: float) -> bool:
+        """Forward commanded over the pitch window while the (median) box width shrank, or back
+        while it grew. Medians around each window end make it robust to a walker's gait."""
+        ww = self.cfg.wrong_way
+        t1_target = t2 - ww.pitch_window_thetas * theta_ms
+        first = None
+        for entry in self._obs_hist:
+            if entry[0] <= t1_target:
+                first = entry
+            else:
+                break
+        if first is None:
+            return False
+        t1 = first[0]
+        lag = self.ap_params.plant.yaw_lag_s * 1000.0
+        a, b = t1 - lag, t2 - lag
+        moved, covered = self._integral(self._pitch_hist, a, b)
+        if covered <= 0.5 * (b - a) / 1000.0:
+            return False
+        mean = moved / covered
+        half = ww.pitch_median_s * 1000.0
+        s1 = self._median_log_width(t1, half)
+        s2 = self._median_log_width(t2, half)
+        if s1 is None or s2 is None:
+            return False
+        grew = s2 - s1                               # log width ratio: + closer, - farther
+        fw = self.ap_params.forward
+        cap = fw.cap if mean > 0 else fw.cap * fw.back_cap_ratio
+        need = max(ww.pitch_min_cmd, ww.pitch_min_cap_frac * cap)
+        return abs(mean) >= need and grew * math.copysign(1.0, mean) <= -ww.pitch_min_size_change
 
 
     # ==========================================================================================

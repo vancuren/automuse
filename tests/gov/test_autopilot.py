@@ -85,7 +85,9 @@ def test_follow_to_doubt_on_low_score_then_lost_after_p95_plus_half():
     d = Driver()
     d.run(1.3, cx=800)
     assert d.s.mode == S.follow
-    out = d.step(d.obs(cx=800, score=0.2))
+    d.step(d.obs(cx=800, score=0.2))         # one doubtful frame is debounced (doubt_debounce_obs = 2)
+    assert d.s.mode == S.follow
+    out = d.step(d.obs(cx=800, score=0.2))   # the second in a row enters DOUBT
     assert d.s.mode == S.doubt and out["yaw"] == 0 and out["pitch"] == 0
     d.run(1.9, cx=800, score=0.2)            # default detector p95 1.5 s + 0.5 s
     assert d.s.mode == S.doubt
@@ -97,6 +99,7 @@ def test_doubt_recovers_only_on_a_fresh_detector_confirmation():
     d = Driver()
     d.run(1.3, cx=800)
     d.step(d.obs(cx=800, score=0.2))
+    d.step(d.obs(cx=800, score=0.2))             # two in a row (doubt_debounce_obs = 2)
     assert d.s.mode == S.doubt
     d.run(0.3, cx=800, confirm_age_ms=2000.0)    # tracker fine but confirmation predates the doubt
     assert d.s.mode == S.doubt
@@ -215,3 +218,44 @@ def test_idle_outputs_zero_and_mission_filter():
     d = Driver()
     d.step(make_obs(1, d.t - 100, cx=900, mission_id="other"))
     assert d.s.mode == S.find
+
+
+# ---------------------------------------------------------------------------------------------
+# Integration fixes (2026-11-04): doubt debounce and box-width low-pass
+
+def test_single_doubtful_frame_keeps_following_on_the_last_good_box():
+    d = Driver()
+    d.run(1.3, cx=800)
+    assert d.s.mode == S.follow
+    out = d.step(d.obs(cx=800, score=0.1))       # one tracker dip
+    assert d.s.mode == S.follow and out["yaw"] > 0
+    d.step(d.obs(cx=800))                         # a good frame resets the count
+    d.step(d.obs(cx=800, score=0.1))
+    assert d.s.mode == S.follow
+
+
+def test_perception_lost_enters_doubt_at_once():
+    from mhd.contracts import SubjectState
+    d = Driver()
+    d.run(1.3, cx=800)
+    o = d.obs(cx=800)
+    lost = o.model_copy(update={"state": SubjectState.lost, "box": None})
+    out = d.step(lost)
+    assert d.s.mode == S.doubt and out["yaw"] == 0
+
+
+def test_width_lowpass_damps_a_gait_swing_in_the_size_error():
+    """A walker's box width swings +/-20 % with its gait; the forward command must not flip-flop."""
+    def pitches(params):
+        d = Driver(params)
+        d.run(1.3, cx=640, w=110)
+        out = []
+        for i in range(100):                      # 4 s of a 1 Hz gait swing around the reference width
+            w = 110 * (1.0 + 0.2 * math.sin(2 * math.pi * i / 25.0))
+            out.append(d.step(d.obs(cx=640, w=w, h=330))["pitch"])
+        return out
+    raw = pitches(replace(P, forward=replace(P.forward, size_lowpass_s=0.0)))
+    filt = pitches(P)
+    flips = lambda xs: sum(1 for a, b in zip(xs, xs[1:]) if a * b < 0)
+    assert flips(filt) <= flips(raw)
+    assert max(abs(x) for x in filt) < max(abs(x) for x in raw)

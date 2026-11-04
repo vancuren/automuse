@@ -458,7 +458,11 @@ def test_pitch_wrong_way_hovers(rig):
     r.obs_fn = fn
     outs = [r.tick() for _ in range(r.ticks_for(5.0))]
     fired = next((i for i, o in enumerate(outs) if "wrong_way:pitch" in o.safety_flags), None)
-    assert fired is not None and fired * TICK_MS / 1000.0 <= 3.0
+    # Bound relaxed from 3.0 s to 4.5 s (integration, 2026-11-04): the check now requires a near-cap
+    # forward command, so a correct drone falling behind a walker never latches a hover. A reversed
+    # pitch sign drives the command to the cap and still fires (here at about 4.1 s). The primary
+    # protection is the Session B sign check before any autonomy.
+    assert fired is not None and fired * TICK_MS / 1000.0 <= 4.5
     assert all(o.wire["pitch"] == 128 for o in outs[fired + 1:])
 
 
@@ -473,6 +477,40 @@ def test_pitch_check_quiet_when_approach_works(rig):
         return make_obs(r._fid, t - r.obs_latency, cx=640 + (r._fid % 2), w=state["w"], h=state["w"] * 3)
     r.obs_fn = fn
     outs = [r.tick() for _ in range(r.ticks_for(5.0))]
+    assert not any("wrong_way" in o.safety_flags for o in outs)
+
+
+def test_pitch_check_quiet_under_a_gait_swing(rig):
+    # Integration finding: a walker's box width swings +/-20 % with its gait. With raw end-point
+    # widths that tripped the pitch check while the drone was correctly flying forward.
+    import math as _m
+    r = rig()
+    r.following(cx=640, w=100, h=300)
+
+    def fn(t):                                    # slow approach plus a 1 Hz gait swing
+        r._fid += 1
+        base = 100.0 * (1.0 + 0.01 * (t / 1000.0))
+        w = base * (1.0 + 0.2 * _m.sin(2 * _m.pi * t / 1000.0))
+        return make_obs(r._fid, t - r.obs_latency, cx=640 + (r._fid % 2), w=w, h=300)
+    r.obs_fn = fn
+    outs = [r.tick() for _ in range(r.ticks_for(8.0))]
+    assert not any("wrong_way" in o.safety_flags for o in outs)
+
+
+def test_pitch_check_quiet_when_a_walker_recedes_below_the_cap(rig):
+    # Integration finding: a subject walking away makes the box shrink while the drone correctly
+    # flies forward below its cap (P control lags). That must not latch a wrong-way hover.
+    r = rig()
+    r.following(cx=640, w=100, h=300)         # box below the reference: flies forward, below the cap
+    state = {"w": 100.0}
+
+    def fn(t):
+        state["w"] = max(92.0, state["w"] * 0.9995)    # slow shrink (subject outpaces a little)
+        r._fid += 1
+        return make_obs(r._fid, t - r.obs_latency, cx=640 + (r._fid % 2), w=state["w"], h=state["w"] * 3)
+    r.obs_fn = fn
+    outs = [r.tick() for _ in range(r.ticks_for(8.0))]
+    assert any(o.wire["pitch"] > 128 for o in outs)          # it does fly forward
     assert not any("wrong_way" in o.safety_flags for o in outs)
 
 

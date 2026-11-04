@@ -76,6 +76,10 @@ class AutopilotRun:
     ff_prev: Optional[tuple[float, float]] = None  # (capture_ms, absolute bearing)
     # last computed values, for telemetry and logs
     dbg_bearing: Optional[float] = None
+    # integration fixes: low-passed box width (gait), doubtful-observation debounce
+    bw_f: Optional[float] = None
+    bw_f_ms: Optional[float] = None
+    doubt_count: int = 0
     dbg_e_s: Optional[float] = None
     dbg_gate: str = ""
 
@@ -218,14 +222,21 @@ def autopilot_step(obs: Optional[SubjectObs], state: AutopilotRun, params: Autop
         if new_obs:
             reason = _doubt_reason(obs, w, state, params)
             if reason is None:
+                w["doubt_count"] = 0
                 _note_sighting(w, obs, params)
                 w["last_box"] = _box_t(obs)
+            elif reason != "perception_lost" and w["doubt_count"] + 1 < lc.doubt_debounce_obs:
+                # One doubtful frame (a tracker dip, a dropped detection): keep the last good box
+                # for this frame instead of stopping. "lost" and missing observations act at once.
+                w["doubt_count"] += 1
+                reason = None
         elif since_obs_s > _OBS_GAP_DOUBT_S:
             reason = "no_observations"
         if reason is None and conf_age_now_s > lost_age_s:
             _enter_lost(w, now_ms)
             enter(Mode.lost, "confirmation_too_old", "I lost the subject. Looking around.")
         elif reason is not None:
+            w["doubt_count"] = 0
             w["doubt_since_capture_ms"] = obs.capture_ms if new_obs else (w["last_capture_ms"] or now_ms)
             enter(Mode.doubt, reason)
         else:
@@ -371,6 +382,8 @@ def _note_sighting(w: dict, obs: SubjectObs, params: AutopilotConfig) -> None:
 
 def _enter_lost(w: dict, now_ms: float) -> None:
     w["lost_since_ms"] = now_ms
+    w["bw_f"] = None
+    w["bw_f_ms"] = None
     w["ff_rate"] = 0.0
     w["ff_prev"] = None
     w["standoff_since_ms"] = None
@@ -414,7 +427,14 @@ def _follow_sticks(w: dict, params: AutopilotConfig, now_ms: float, conf_age_now
         ref_frac = getattr(fw.ref_width_frac, w["distance"], fw.ref_width_frac.medium)
         scale = getattr(fw.category_scale, w["category"], 1.0)
         w_ref = max(1.0, ref_frac * scale * W)
-        e_s = math.log(w_ref / bw)
+        tau = fw.size_lowpass_s
+        if tau > 0 and w["bw_f"] is not None and w["bw_f_ms"] is not None:
+            dt_s = max(0.0, (now_ms - w["bw_f_ms"]) / 1000.0)
+            w["bw_f"] = w["bw_f"] + (dt_s / (tau + dt_s)) * (bw - w["bw_f"])
+        else:
+            w["bw_f"] = bw
+        w["bw_f_ms"] = now_ms
+        e_s = math.log(w_ref / max(1.0, w["bw_f"]))
         w["dbg_e_s"] = e_s
         e = 0.0 if abs(e_s) <= fw.size_deadband else e_s - _sign(e_s) * fw.size_deadband
         pitch = fw.kp * e
