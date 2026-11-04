@@ -188,7 +188,7 @@ Google Chrome, and Node.js with npm. Everything else installs inside the reposit
 source env.sh                     # caches, venvs, models, and tools inside the project
 scripts/sync_envs.sh              # two Python 3.13 venvs: core (.venv) and ML (ml/.venv)
 scripts/fetch_models.sh           # about 22 GB into .cache/models (18 GB is Muse Glimmer); mediamtx into tools/
-(cd twin/web && npm install)      # three.js for the twin renderer
+(cd twin/web && npm ci)           # three.js for the twin renderer
 (cd turbodrone/frontend && npm ci)  # the operator UI
 $MHD_PY scripts/doctor.py         # environment check
 ```
@@ -229,14 +229,14 @@ backend, perception, the agent, the production UI, optionally the local Glimmer,
 the twin; Ctrl-C stops it all, the backend first so the drone lands:
 
 ```bash
-scripts/run_stack.sh --mode twin --scenario s1 --glimmer local --agent-extra "--intent glimmer"
+scripts/run_stack.sh --mode twin --scenario s1 --glimmer local --agent glimmer
 scripts/run_stack.sh --mode real --no-perception --no-agent     # Session A and B: backend and UI only
-scripts/run_stack.sh --mode real                                # flights; run scripts/preflight.py first
+scripts/run_stack.sh --mode real --config-dir config/real       # flights, with the Session B values
 ```
 
-`--agent-extra "--intent glimmer"` makes the local LoRA answer every command (see below). PLAN.md
-stops the twin, the renderer and the local LLM during real flights; docs/RUNBOOK.md has the
-flight-day choice.
+`--agent glimmer` makes the local LoRA answer every command; the default `--agent auto` races it
+against Muse Spark 1.3 (see below). `scripts/apply_sysid.py` writes `config/real/` after Session B.
+docs/RUNBOOK.md says when to run the local Glimmer during flights.
 
 **The full stack by hand** (one terminal each):
 
@@ -256,8 +256,8 @@ $MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000 --intent glimme
 2.5 s, which suits a cloud-hosted Glimmer; the local LoRA takes about 4 s, so Spark usually answers
 first.
 
-**The real drone.** Follow [docs/RUNBOOK.md](docs/RUNBOOK.md) (being written tonight by the ops
-workstream). In short:
+**The real drone.** Follow [docs/RUNBOOK.md](docs/RUNBOOK.md), the morning guide from the ops
+workstream. In short:
 
 1. From the terminal app that will launch the backend (macOS grants Local Network permission per
    app): `$MHD_PY scripts/preflight.py` checks the drone Wi-Fi, routes, internet and video.
