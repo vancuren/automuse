@@ -7,11 +7,14 @@ test on any real UDP socket; the reader thread is exercised with both ends on 12
 """
 from __future__ import annotations
 
+import asyncio
 import errno
 import json
+import logging
 import os
 import socket
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,6 +22,7 @@ from conftest import ROOT
 from test_camera_only import no_udp  # noqa: F401  (fixture: fails on any real UDP socket / datagram)
 
 from mhd.backend.modes import BackendEnv, ModeError, validate_env
+from mhd.contracts import FlightState
 
 LEWEI_ENV = {"FLIGHT_MODE": "real", "DRONE_TYPE": "x69_lg", "MHD_BOARD": "lewei", "DRONE_IP": "192.168.0.1",
              "CONTROL_PORT": "50000", "X69_LG_VIDEO_MODE": "rtsp", "PLUGINS_ENABLED": "false",
@@ -67,6 +71,16 @@ class FakeUdp:
             self.closed = True
             os.close(self._r)
             os.close(self._w)
+
+
+class FakeClock:
+    """A monotonic clock the test moves by hand (LeweiRcAdapter(clock=...))."""
+
+    def __init__(self, t: float = 1000.0):
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
 
 
 @pytest.fixture
@@ -160,26 +174,259 @@ def test_no_keepalive_only_rc_packets_go_out(lewei):
         ad.send_control_packet(ad.build_control_packet(_model()))
     assert len(sock.sent) == 5 and all(len(p) == 20 and a == DRONE for p, a in sock.sent)
     s = ad.link_stats()
-    assert (s["rc_sent"], s["rc_errors"], s["keepalive_sent"]) == (5, 0, 0) and s["keepalive_age_ms"] < 100
+    assert (s["rc_sent"], s["rc_errors"], s["keepalive_sent"]) == (5, 0, 0) and s["rc_error_age_ms"] is None
+    # Link health is the drone's downlink, not a good send (the tether route "succeeds" too): no reply
+    # yet, so the age counts from the adapter's start, and the reader thread is what is "alive".
+    assert s["keepalive_age_ms"] >= 1250.0 and s["keepalive_alive"] is True
 
 
-def test_failed_sends_raise_the_existing_link_flags(no_udp):  # noqa: F811
-    """No keepalive on this board: keepalive_last_ok means "an RC send succeeded", so a dead Wi-Fi shows
-    as rc_send_errors at once and keepalive_stale after 3 s, exactly as on the X69."""
+def test_failed_sends_raise_rc_send_errors_and_silence_raises_drone_link_stale(no_udp):  # noqa: F811
+    """A dead Wi-Fi with no other route: rc_send_errors at once (while the failures are recent), and,
+    3 s without a reply from the drone, drone_link_stale (never keepalive_stale: there is no keepalive)."""
     from mhd.backend.hub import Hub
     from mhd.governor.turbodrone_glue import LeweiRcAdapter
-    ad = LeweiRcAdapter(*DRONE, sock=FakeUdp(fail_with=errno.EHOSTUNREACH))
+    clock = FakeClock()
+    ad = LeweiRcAdapter(*DRONE, sock=FakeUdp(fail_with=errno.EHOSTUNREACH), clock=clock)
     try:
         hub = Hub()
         hub.rc_adapter = ad
         ad.send_control_packet(ad.build_control_packet(_model()))
         flags, extra = hub.link_flags_and_stats()
         assert flags == ["rc_send_errors"] and extra["rc_send_errors"] == 1
-        ad.keepalive_last_ok = time.monotonic() - 4.0          # 4 s without one good send
+        clock.t += 4.0                                          # 4 s, and the drone never replied
         ad.send_control_packet(ad.build_control_packet(_model()))
-        flags, _ = hub.link_flags_and_stats()
-        assert flags == ["rc_send_errors", "keepalive_stale"]
+        flags, extra = hub.link_flags_and_stats()
+        assert flags == ["rc_send_errors", "drone_link_stale"] and extra["rc_send_errors"] == 2
+        assert extra["keepalive_age"] == 4000.0
         assert ad.link_stats()["rc_sent"] == 0
+    finally:
+        ad.stop()
+    assert no_udp == []
+
+
+# ------------------------------------------------------------------------- link health (downlink)
+
+def test_link_stats_follow_the_downlink_not_the_sends(no_udp):  # noqa: F811
+    """keepalive_age_ms = time since the last VALID downlink packet (since the adapter started, before
+    the first one); keepalive_alive = the reader thread is alive. Fake clock throughout."""
+    from mhd.governor.turbodrone_glue import LeweiRcAdapter
+    clock = FakeClock(500.0)
+    sock = FakeUdp()
+    ad = LeweiRcAdapter(*DRONE, sock=sock, clock=clock)
+    try:
+        s = ad.link_stats()
+        assert s["keepalive_age_ms"] == 0.0 and s["keepalive_alive"] is True
+        assert (s["keepalive_sent"], s["keepalive_errors"], s["rc_error_age_ms"]) == (0, 0, None)
+        clock.t += 2.5
+        for _ in range(10):                                    # sends "succeed" (the tether route)...
+            ad.send_control_packet(ad.build_control_packet(_model()))
+        assert len(sock.sent) == 10
+        assert ad.link_stats()["keepalive_age_ms"] == 2500.0    # ...and prove nothing about the drone
+        assert ad.on_fc_packet(fc_packet(0x27, 0x00), DRONE)    # fresh: a valid reply
+        assert ad.link_stats()["keepalive_age_ms"] == 0.0
+        clock.t += 1.2
+        assert ad.link_stats()["keepalive_age_ms"] == 1200.0
+        # Invalid or foreign datagrams are not a sign of life.
+        assert not ad.on_fc_packet(fc_packet(0x27, 0x00)[:-1] + b"\x00", DRONE)
+        assert not ad.on_fc_packet(fc_packet(0x27, 0x00), ("192.168.0.7", 50000))
+        assert not ad.on_fc_packet(b"\x66\x27", DRONE)
+        clock.t += 3.0                                          # stale: 4.2 s since the last valid one
+        s = ad.link_stats()
+        assert s["keepalive_age_ms"] == 4200.0 and s["keepalive_alive"] is True
+        assert ad.fc_telemetry()["fc_telemetry_age"] == 4200.0  # the UI's battery age agrees
+        ad._reader_stop.set()                                   # the reader thread dies
+        ad._reader_thread.join(timeout=2.0)
+        assert ad.link_stats()["keepalive_alive"] is False
+    finally:
+        ad.stop()
+    assert no_udp == []
+
+
+def _link_hub(ad, state=FlightState.on_ground):
+    from mhd.backend.hub import Hub
+    hub = Hub()
+    hub.rc_adapter = ad
+    hub.gov = SimpleNamespace(flight_mode="real", state=state, estop_latched=False)
+    return hub
+
+
+def test_hub_drone_link_stale_after_3_s_or_8_s_while_landing(no_udp):  # noqa: F811
+    from mhd.backend.hub import DRONE_LINK_STALE_FLAG
+    from mhd.governor.turbodrone_glue import LeweiRcAdapter
+    assert DRONE_LINK_STALE_FLAG == "drone_link_stale"
+    clock = FakeClock()
+    ad = LeweiRcAdapter(*DRONE, sock=FakeUdp(), clock=clock)
+    hub = _link_hub(ad)
+
+    def flags():
+        return hub.link_flags_and_stats()[0]
+    try:
+        assert flags() == []
+        clock.t += 3.0
+        assert flags() == []                                    # exactly 3 s: not yet
+        clock.t += 0.1
+        assert flags() == ["drone_link_stale"]                  # no reply since the start, 3.1 s
+        ad.on_fc_packet(fc_packet(0x27, 0x08), DRONE)
+        assert flags() == []
+        clock.t += 3.1
+        assert flags() == ["drone_link_stale"]
+        hub.gov.state = FlightState.landing                     # the drone is silent ~5 s during LAND
+        assert flags() == []
+        clock.t += 4.8
+        assert flags() == []                                    # 7.9 s while LANDING
+        clock.t += 0.2
+        assert flags() == ["drone_link_stale"]                  # 8.1 s while LANDING
+        ad.on_fc_packet(fc_packet(0x27, 0x00), DRONE)
+        clock.t += 5.0
+        assert flags() == []                                    # 5 s while LANDING
+        for st in (FlightState.on_ground, FlightState.taking_off, FlightState.airborne, FlightState.estopped):
+            hub.gov.state = st
+            assert flags() == ["drone_link_stale"], st          # 5 s anywhere else
+        hub.gov = None                                          # no governor yet: the 3 s rule
+        assert flags() == ["drone_link_stale"]
+        hub.gov = SimpleNamespace(flight_mode="real", state=FlightState.landing)
+        ad.on_fc_packet(fc_packet(0x27, 0x00), DRONE)
+        ad._reader_stop.set()                                   # a dead reader: stale at once
+        ad._reader_thread.join(timeout=2.0)
+        assert flags() == ["drone_link_stale"]
+        tel_flags, extra = hub.link_flags_and_stats()
+        assert "keepalive_stale" not in tel_flags and extra["keepalive_age"] == 0.0
+    finally:
+        ad.stop()
+    assert no_udp == []
+
+
+def test_rc_send_errors_flag_only_while_a_failure_is_recent(no_udp):  # noqa: F811
+    """The count is cumulative (telemetry extras); the flag needs a failed send in the last 10 s, so one
+    failure while the drone was powered off does not stay lit for the rest of the session."""
+    from mhd.governor.turbodrone_glue import LeweiRcAdapter
+    clock = FakeClock()
+    sock = FakeUdp(fail_with=errno.ENETUNREACH)
+    ad = LeweiRcAdapter(*DRONE, sock=sock, clock=clock)
+    hub = _link_hub(ad)
+
+    def tick(dt: float):
+        clock.t += dt
+        ad.on_fc_packet(fc_packet(0x27, 0x00), DRONE)           # the drone answers: no drone_link_stale
+        return hub.link_flags_and_stats()
+    try:
+        ad.send_control_packet(ad.build_control_packet(_model()))  # one failure (drone powering off)
+        sock.fail_with = None
+        flags, extra = tick(0.0)
+        assert flags == ["rc_send_errors"] and extra["rc_send_errors"] == 1
+        assert ad.link_stats()["rc_error_age_ms"] == 0.0
+        flags, extra = tick(10.0)
+        assert flags == ["rc_send_errors"]                       # exactly 10 s ago: still recent
+        flags, extra = tick(0.1)
+        assert flags == [] and extra["rc_send_errors"] == 1      # gone; the count stays
+        ad.send_control_packet(ad.build_control_packet(_model()))  # good sends do not raise it
+        flags, extra = tick(30.0)
+        assert flags == [] and extra["rc_send_errors"] == 1
+        sock.fail_with = errno.EHOSTUNREACH
+        ad.send_control_packet(ad.build_control_packet(_model()))  # a new failure: lit again
+        flags, extra = tick(1.0)
+        assert flags == ["rc_send_errors"] and extra["rc_send_errors"] == 2
+        assert ad.link_stats()["rc_error_age_ms"] == 1000.0
+    finally:
+        ad.stop()
+    assert no_udp == []
+
+
+def test_rc_send_errors_rule_for_other_adapters():
+    """The X69 adapters report rc_error_age_ms too; an adapter without it keeps the old rule (any error)."""
+    from mhd.backend.hub import Hub
+
+    class Stub:
+        def __init__(self, **kw):
+            self.s = {"rc_sent": 1, "rc_errors": 0, "keepalive_sent": 1, "keepalive_errors": 0,
+                      "keepalive_age_ms": 100.0, "keepalive_alive": True, **kw}
+
+        def link_stats(self):
+            return dict(self.s)
+    hub = Hub()
+    for kw, want in (({"rc_errors": 3, "rc_error_age_ms": 9000.0}, ["rc_send_errors"]),
+                     ({"rc_errors": 3, "rc_error_age_ms": 10500.0}, []),
+                     ({"rc_errors": 0, "rc_error_age_ms": None}, []),
+                     ({"rc_errors": 3}, ["rc_send_errors"]),               # no age reported: old rule
+                     ({"keepalive_age_ms": 3500.0}, ["keepalive_stale"]),  # X69 rules unchanged
+                     ({"keepalive_alive": False}, ["keepalive_stale"])):
+        hub.rc_adapter = Stub(**kw)
+        flags, extra = hub.link_flags_and_stats()
+        assert flags == want, kw
+        assert extra["rc_send_errors"] == kw.get("rc_errors", 0)
+
+
+def test_x69_adapter_reports_the_age_of_its_last_failed_send(no_udp):  # noqa: F811
+    from mhd.governor.turbodrone_glue import CameraOnlyRcAdapter
+    ad = CameraOnlyRcAdapter("127.0.0.1", 23999)               # no socket at all; same link_stats code
+    try:
+        assert ad.link_stats()["rc_error_age_ms"] is None
+        with ad._stats_lock:
+            ad.rc_errors, ad.rc_last_error_t = 1, time.monotonic() - 12.0
+        assert ad.link_stats()["rc_error_age_ms"] >= 12000.0
+    finally:
+        ad.stop()
+    assert no_udp == []
+
+
+# ------------------------------------------------------------------------- RC pause wording
+
+def _pause_hub(ad, monkeypatch, mode="real"):
+    """A hub with a stub governor that records its status events and the end-of-pause report (run by
+    the test, its waits skipped) instead of broadcasting them."""
+    from mhd.backend import hub as hub_mod
+    hub = _link_hub(ad)
+    hub.gov.flight_mode = mode
+    events, broadcasts, coros = [], [], []
+    monkeypatch.setattr(hub, "_status_event", lambda text, data: events.append(text))
+
+    async def broadcast(_sockets, text):
+        broadcasts.append(json.loads(text)["text"])
+
+    async def no_wait(_s):
+        return None
+    monkeypatch.setattr(hub, "_broadcast", broadcast)
+    monkeypatch.setattr(hub, "_schedule", coros.append)
+    monkeypatch.setattr(hub_mod, "asyncio", SimpleNamespace(sleep=no_wait))
+    return hub, events, broadcasts, coros
+
+
+def test_rc_pause_on_the_lewei_board_says_all_packets_stop(no_udp, monkeypatch, caplog):  # noqa: F811
+    from mhd.governor.turbodrone_glue import LeweiRcAdapter
+    sock = FakeUdp()
+    ad = LeweiRcAdapter(*DRONE, sock=sock)
+    hub, events, broadcasts, coros = _pause_hub(ad, monkeypatch)
+    try:
+        with caplog.at_level(logging.WARNING, logger="mhd.backend.hub"):
+            r = hub.rc_pause(5)
+        assert r["ok"] is True
+        assert events == ["RC PAUSE (debug): all packets to the drone stopped for 5 s (no keepalive on this board)"]
+        logged = " ".join(rec.getMessage() for rec in caplog.records)
+        assert "ALL packets to the drone STOPPED for 5.0 s (Lewei board: there is no keepalive)" in logged
+        assert "keepalive continues" not in logged
+        for _ in range(3):
+            ad.send_control_packet(ad.build_control_packet(_model()))
+        assert sock.sent == []                                  # nothing at all goes out
+        hub.rc_resume()
+        asyncio.run(coros[0])                                   # the end-of-pause report
+        assert broadcasts == ["RC PAUSE ended (debug_resume): 3 control packets dropped, "
+                              "no keepalive on this board: nothing was sent"]
+    finally:
+        ad.stop()
+    assert no_udp == []
+
+
+def test_rc_pause_wording_for_the_x69_is_unchanged(no_udp, monkeypatch):  # noqa: F811
+    from mhd.governor.turbodrone_glue import CameraOnlyRcAdapter
+    ad = CameraOnlyRcAdapter("127.0.0.1", 23999)               # board x69_lg, no socket
+    hub, events, broadcasts, coros = _pause_hub(ad, monkeypatch, mode="twin")
+    try:
+        assert hub.rc_pause(5)["ok"] is True
+        assert events == ["RC PAUSE (debug): control packets stopped for 5 s, keepalive continues"]
+        hub.rc_resume()
+        asyncio.run(coros[0])
+        assert broadcasts[0].startswith("RC PAUSE ended (debug_resume): 0 control packets dropped, ")
+        assert broadcasts[0].endswith(" keepalives sent")
     finally:
         ad.stop()
     assert no_udp == []
@@ -350,3 +597,33 @@ def test_real_lewei_backend_end_to_end_bytes(lewei_backend, no_udp):  # noqa: F8
     assert not any(p[6] & 0x0E for p, _ in fake.sent), "no E-STOP, calibrate or flip bits were sent"
     client.__exit__(None, None, None)                                    # shutdown: neutral + land, then stop
     assert fake.closed and no_udp == []
+
+
+def test_drone_link_stale_is_telemetry_only_land_and_estop_still_go_out(lewei_backend, no_udp):  # noqa: F811
+    """drone_link_stale (the drone stopped replying) is for the operator and the UI's TAKEOFF button: the
+    governor never reads it, so LAND and E-STOP reach the wire exactly as before."""
+    client, hub, fake = lewei_backend
+    ad = hub.rc_adapter
+    assert _until(lambda: len(fake.sent) >= 5)
+    ad._started_at -= 10.0                                               # no reply from the drone for 10 s
+    st = client.get("/state").json()
+    assert "drone_link_stale" in st["safety_flags"] and "keepalive_stale" not in st["safety_flags"]
+    assert st["latency_ms"]["keepalive_age"] >= 10000.0
+    assert "drone_link_stale" not in hub.gov.snapshot().safety_flags       # not a governor flag
+    hb = json.dumps({"type": "hb", "client": "ui"})
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(hb)
+        n0 = len(fake.sent)
+        ws.send_text(json.dumps({"type": "cmd", "command": "land"}))
+        assert _until(lambda: any(p[6] & 0x80 for p, _ in fake.sent[n0:]))   # LAND 0x80 on the wire
+        assert hub.gov.state.value == "LANDING"
+        assert "drone_link_stale" in client.get("/state").json()["safety_flags"]      # 10 s > 8 s
+        ad._started_at = time.monotonic() - 5.0                         # silent 5 s: normal during LAND
+        assert "drone_link_stale" not in client.get("/state").json()["safety_flags"]
+        n1 = len(fake.sent)
+        ws.send_text(hb)
+        ws.send_text(json.dumps({"type": "cmd", "command": "estop"}))
+        assert _until(lambda: any(p[6] & 0x02 for p, _ in fake.sent[n1:]))   # E-STOP 0x02 on the wire
+        assert hub.gov.state.value == "ESTOPPED"
+        assert "drone_link_stale" in client.get("/state").json()["safety_flags"]      # 5 s > 3 s
+    assert {a for _, a in fake.sent} == {DRONE} and no_udp == []
