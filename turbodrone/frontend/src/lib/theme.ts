@@ -45,6 +45,7 @@ export function modelBadgeStyle(model: string): { bg: string; fg: string } {
 export function fmtMs(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return "–";
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)} s`;
+  if (ms < 10) return `${ms.toFixed(1)} ms`;
   return `${Math.round(ms)} ms`;
 }
 
