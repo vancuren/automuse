@@ -22,11 +22,11 @@ Our X69 is a different hardware revision from the one turbodrone documents. Foun
 |---|---|---|
 | Wi-Fi and address | 172.16.11.x, drone 172.16.11.1 | **X69DRONE_4EC4EF, 192.168.0.x, drone 192.168.0.1** (open network) |
 | Video | RTSP on the drone | **Lewei camera board, TCP 7060**: `scripts/lewei_bridge.py` relays it to RTSP on this Mac (H.264 1920x1080, ~20 fps) |
-| Flight control | UDP 23458, wrapped packets | **UDP 50000, the same 20-byte stick packet, sent raw** |
-| Replies from the drone | none | **status ~20/s: battery volts, motors-running flag** |
+| Flight control | UDP 23458, wrapped packets, plus a 1 Hz keepalive | **UDP 50000, the same 20-byte stick packet, sent raw; no keepalive** |
+| Replies from the drone | none | **status ~20/s: battery volts, motors-running flag** (about 5/s while the motors run, none for about 5 s during LAND) |
 
 - **Checked props-off at 13:22:** TAKEOFF spins the motors, LAND stops them. E-STOP and link loss are not checked yet: that is Session A.
-- **The drone switches itself off** about 15 minutes after power-on when idle, and a few minutes after video stops. Start the stack right after power-on: its video relay and stick stream keep the drone awake. Charge between sessions.
+- **The drone switches itself off without warning:** so far 4 to 17 minutes after power-on, even with the stack running. Start the stack right after power-on, keep each test short, and charge between sessions. What it does if this happens in the air is unknown: assume the motors stop and it drops. To carry on, see "If the drone switches itself off" below.
 - **The Mac must stay on the drone's Wi-Fi:** turn off Auto-Join for every other saved network nearby, or macOS leaves the drone's network (it has no internet).
 - **Use `--board lewei` everywhere below.** The plain commands target the other board's address and do nothing useful here.
 
@@ -34,9 +34,26 @@ Our X69 is a different hardware revision from the one turbodrone documents. Foun
 |---|---|
 | Preflight | `$MHD_PY scripts/preflight.py --board lewei` |
 | Session A (props off) | `$MHD_PY scripts/session_a.py --board lewei`, with `scripts/run_stack.sh --mode real --board lewei --no-perception --no-agent` running in a second window from the start |
-| Session B | `scripts/run_stack.sh --mode real --board lewei --config-dir config/real --no-perception --no-agent` |
-| Session C | `scripts/run_stack.sh --mode real --board lewei --config-dir config/real` (add `--glimmer local --agent glimmer` for the recorded loop) |
+| Session B | `scripts/run_stack.sh --mode real --board lewei --config-dir config/real --no-perception --no-agent`. **`config/real/` does not exist until the end of Session A:** the first `apply_sysid.py ... --write` creates it, normally 2.12's `$MHD_PY scripts/apply_sysid.py --hfov-deg <HFOV> --latency-ms <p50> --write`. Before that, run_stack stops with `run_stack: missing .../config/real/governor.yaml ...`. |
+| Session C | `scripts/run_stack.sh --mode real --board lewei --config-dir config/real` (add `--glimmer local --agent glimmer` for the recorded loop). Needs `config/real/` too: see Session B. |
 | Camera only, no flight | `scripts/run_stack.sh --mode camera` (banner: REAL CAMERA - NO FLIGHT; no flight command can be sent) |
+
+**Session A on this board:**
+- **Latency (2.6):** this 1920x1080 camera may decode only a few frames of the counter page. Hold the drone about 40 cm from the screen, with the screen brightness up and the page full screen. One or two decoded samples are acceptable: session_a carries them forward.
+- **Link loss, tests 1 and 2 (2.9): the seconds until the motors stop are an uncontrolled window.** For that long the drone may keep flying its last stick command, and nothing you press reaches it. In every props-on flight, keep people out of its path. When that window is over 3 s, or was not recorded, the summary's verdict is `GO WITH CONDITIONS` with the window in it: that condition holds for Sessions B and C.
+- **Link loss, test 3 (`rc_pause`) stops ALL packets on this board:** it has no keepalive. The motors are idle (ON_GROUND only), so the test shows whether the drone tolerates 10 s of silence and still takes off right after. The Safety panel shows `rc_paused`, then `keepalive_stale` after 3 s; both clear when the packets resume.
+
+**Battery volts:** the drone reports its battery voltage, shown next to the pack timer in the UI (amber below 3.5 V). Land when it reads below about 3.5 V, whatever the timer says.
+
+**If the drone switches itself off:**
+1. Power it on again, and rejoin **X69DRONE_4EC4EF** on the Mac if macOS does not do it by itself. Leave the stack running.
+2. The video relay and the backend reconnect by themselves within about 10 s: the video is back in the UI, and `keepalive_stale` clears.
+3. If the UI shows **LANDING**, press **Confirm touchdown** once the motors are stopped (the button the rest of this runbook calls **Landed**). LANDING blocks TAKEOFF, and its time counts on the pack timer.
+4. In Session A, answer `q` at the next prompt (or press Ctrl-C) before the step finishes: it saves, and the step stays unfinished. Then redo that step: `$MHD_PY scripts/session_a.py --board lewei --only <step> --resume logs/session_a-<time>.json` (step names: `--list`). `--resume` redoes only unfinished steps. A link-loss run during which the drone switched off does not count: its motors stopped for lack of power.
+5. Leftovers after the reconnect:
+   - `rc_send_errors` can stay in the Safety panel: it counts the sends that failed while the drone was off. Once `keepalive_stale` has cleared and the video is live, it is only a leftover.
+   - `flight_timer_warn` stays on, on the ground too, once this pack's timer passes 5:00. Session A's motor runs count, and so does every second in LANDING. From 6:30, every takeoff turns into a timer landing at once.
+   - A pack button (pack 1, pack 2) sets that pack's timer to 0:00. Click it only when a charged pack goes in, never after a power-cycle with the same pack. The selected pack's button is greyed out: to restart its timer after recharging, click the other pack, then this one.
 
 Everything else in this runbook (the gates, the safety rules, Session B's sign checks and sysid, Session C's walking rules) applies unchanged.
 
