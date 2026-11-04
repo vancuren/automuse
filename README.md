@@ -4,6 +4,10 @@
 
 ![The operator UI flying the digital twin: the spoken command, the mission from our fine-tuned Muse Glimmer, and the SAM 3.1 mask on the subject in FOLLOW](docs/img/demo_s1_2_voice_mission_follow.png)
 
+*The operator UI flying the digital twin. The command (voiced by macOS `say` into the agent's
+microphone input) went through Muse Voice Transcribe and our fine-tuned Muse Glimmer (badge
+`glimmer-30b+lora`); SAM 3.1 masks the subject, and the autopilot is in FOLLOW.*
+
 Hold Space and say "follow the person in the blue shirt". Muse Voice Transcribe turns your words
 into text, our fine-tuned Muse Glimmer turns the text into a mission, SAM 3.1 finds that person in
 the drone's video, and a classical controller inside a safety governor turns a Loiley X69 to keep
@@ -16,10 +20,11 @@ the blue shirt", "the green car"), never by identity. Ask it to "follow John" an
 can't follow someone by identity. Tell me what they're wearing instead." It films only people who
 agreed to be filmed, and it calls the person or thing it follows the *subject*.
 
-> **Status, 2026-11-04 03:30 ET.** In a wire-level digital twin on one Mac, a follow mission runs
-> through SAM 3.1, the autopilot and the safety governor to real X69 control packets, and HEVC video
-> comes back. The voice agent drives the same backend in its own tests. The real drone flies this
-> morning, after a props-off hardware check (Session A). This line will be updated with the result.
+> **Status, 2026-11-04 03:40 ET.** The whole chain runs end to end in a wire-level digital twin on
+> one Mac: a spoken command, Muse Voice Transcribe, our fine-tuned Glimmer, SAM 3.1, the autopilot
+> and the safety governor, real X69 control packets out and HEVC video back (pictured above). The
+> real drone flies this morning, after a props-off hardware check (Session A). This line will be
+> updated with the result.
 
 **Demo video (3 min):** _link coming: VIDEO_LINK_
 
