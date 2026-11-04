@@ -107,15 +107,16 @@ hit reports only the variable name and the file or commit. It also flags credent
 - **No real-drone numbers.** Sessions A-C happen this morning. README's status line, the results
   page and the submission description each say so and need one edit afterwards (SUBMISSION.md
   step 3 lists them).
-- **The demo stills and video are the demo workstream's.** README.md shows
-  `docs/img/demo_s1_2_voice_mission_follow.png`, `demo_s1_chase_follow.png` and
-  `demo_s2_crossing_follow.png`, committed on ws2/demo (`3ee6018`, the final S1 take at 03:36). They
-  resolve once ws2/demo is merged; if that workstream renames them, fix the three image links. The
-  video itself (VIDEO_LINK) is cut by the owner from `media/demo/` and the morning's flights.
-- **`docs/RUNBOOK.md`** (linked from README "Run it") is the ops workstream's and is not merged yet.
+- **Links that resolve only after the other wave-2 branches merge.** README.md shows five stills
+  committed on ws2/demo (`demo_s1_2_voice_mission_follow.png`, `demo_s1_chase_follow.png`,
+  `demo_s2_crossing_follow.png`, `demo_s3_2_voice_mission_follow.png`, `demo_s1_5_landing_voice.png`,
+  as of `59aaf9a`); results.md 1d and the video script link docs/ws2/demo.md (ws2/demo); README
+  "Run it" links docs/RUNBOOK.md (ws2/ops `5389c5c`). A dry-run `git merge-tree` of ws2/docs with
+  integration, ws2/demo and ws2/ops is clean for each.
+- **The video itself** (VIDEO_LINK) is the owner's edit, from `media/demo/` and the morning's flights.
 - **`scripts/demo_twin.py` and `scripts/run_stack.sh`** are documented in the README from their
-  committed docstrings (ws2/demo `328f7d3`, ws2/ops `2616343`); I did not run them (they start
-  servers, Chrome and the models, which this workstream may not).
+  committed docstrings (ws2/demo, ws2/ops `5389c5c`); I did not run them (they start servers, Chrome
+  and the models, which this workstream may not).
 - The Glimmer usage policy and the Meta API terms on training with model outputs were not read
   (no network use for docs); SUBMISSION.md step 3 asks the owner to.
 - One upstream file, `turbodrone/frontend/src/lib/ws.ts`, does not show in
@@ -128,15 +129,11 @@ hit reports only the variable name and the file or commit. It also flags credent
   LICENSE, NOTICE, THIRD_PARTY_NOTICES.md, licenses/SAM_LICENSE.txt, docs/results.md,
   docs/video_script.md, docs/SUBMISSION.md, docs/ws2/docs.md, scripts/secret_scan.py,
   tests/docs/test_secret_scan.py. No frozen file was touched.
-- After merging `ws2/demo`: check `ls docs/img/demo_*` against the three README image links.
-- After merging `ws2/ops`: the README's `docs/RUNBOOK.md` link resolves (it says "being written
-  tonight" until then; drop those three words once it exists).
-- `scripts/run_stack.sh --agent auto --glimmer local` passes `--intent auto`, so the router keeps
-  Glimmer's answer only inside its 2.5 s window and Spark usually answers (the local LoRA takes about
-  4 s). The README's twin example adds `--agent-extra "--intent glimmer"`; the demo workstream runs
-  `intent: glimmer` with a 9 s window (`config/demo/agent.yaml`). Worth a default in run_stack.
+- After merging ws2/demo and ws2/ops: `ls docs/img/demo_*.png docs/RUNBOOK.md docs/ws2/demo.md`
+  should list everything the README and results.md link to.
 - If anything merged tonight changes upstream turbodrone files, refresh the table in
-  THIRD_PARTY_NOTICES.md: `git diff --name-status 1aff2b5 HEAD -- turbodrone/ | grep -v '^A'`.
+  THIRD_PARTY_NOTICES.md: `git diff --name-status 1aff2b5 HEAD -- turbodrone/ | grep -v '^A'`
+  (28 lines at `6bb13fb`; ws2/demo's UI change is to a new file, so it does not add one).
 - Optional: one line in docs/STATUS.md pointing the owner to docs/SUBMISSION.md.
 
 Spend: $0. No paid API calls, no model loaded, no Chrome, no servers.
