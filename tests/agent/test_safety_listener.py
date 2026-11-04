@@ -176,3 +176,34 @@ def test_command_sender_falls_back_to_ws_callable():
     sender.close()
     assert results[0]["ok"] and results[0]["via"] == "ws"
     assert sent[0].command == "pause"
+
+
+# ---- propeller noise (synthetic proxy; the real check is Session B) -----------------------------------
+def test_prop_noise_alone_never_triggers(recognizer):
+    from mhd_ml.agent.make_test_audio import prop_noise
+
+    n = prop_noise(30, seed=7)
+    env = 1 + 0.8 * np.sin(2 * np.pi * np.arange(len(n)) / 16000 / 7.0)     # drone coming and going
+    lst = SafetyListener(recognizer=recognizer)
+    assert lst.process_array((n * env * 0.2).astype(np.float32)) == []
+
+
+def test_prop_noise_10db(audio_items, recognizer):
+    """At 10 dB SNR: most safety words still caught, no false triggers on neutral speech."""
+    from mhd_ml.agent.make_test_audio import mix_at_snr, prop_noise
+
+    det, total, false = 0, 0, []
+    for group in ("safety", "neutral"):
+        for i, it in enumerate(audio_items[group]):
+            if it["sample_rate"] != 16000:
+                continue
+            x, _ = load_wav(it["abspath"], target_sr=16000)
+            y = mix_at_snr(x, prop_noise(len(x) / 16000 + 0.1, seed=i), 10.0)
+            hits = SafetyListener(recognizer=recognizer).process_array(y)
+            if group == "safety":
+                total += 1
+                det += any(h.action == it["expected"] for h in hits)
+            elif hits:
+                false.append((it["id"], [h.transcript for h in hits]))
+    assert not false, false
+    assert det >= 0.7 * total, f"{det}/{total}"      # measured 13/17 at 10 dB

@@ -47,7 +47,8 @@ INFLECTIONS = {"landed": "land", "aborting": "land", "stopping": "hover", "hover
 # also reads clean Voice Transcribe text, must not turn "stalk" into hover).
 CTC_VARIANTS = {
     "landin": "land", "aboard": "land", "abord": "land",
-    "stob": "hover", "stap": "hover", "stalk": "hover", "stog": "hover",
+    "stob": "hover", "stap": "hover", "stalk": "hover", "stog": "hover", "stolk": "hover", "starp": "hover",
+    "stoppe": "hover",
     "preeze": "hover", "preese": "hover", "freese": "hover", "freez": "hover",
 }
 

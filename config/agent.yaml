@@ -47,7 +47,7 @@ router:
 
 safety:
   enabled: true
-  vad_threshold: 0.5
+  vad_threshold: 0.5   # 0.3-0.4 detected no more words in prop noise and added up to 0.4 s latency
   min_silence_s: 0.25
   min_speech_s: 0.10
   max_speech_s: 8.0
@@ -61,3 +61,4 @@ tts:
   voice: Samantha      # voice for the `say` fallback
   ack_after_s: 1.2     # if the intent takes longer than this, say ack_text first (null = never)
   ack_text: Okay.
+  speak_announcements: true   # say autopilot announcements relayed by the backend ("I lost the subject...")

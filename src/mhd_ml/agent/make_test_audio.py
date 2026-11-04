@@ -91,6 +91,32 @@ PAD_BEFORE_S = 0.5
 PAD_AFTER_S = 1.0
 
 
+def prop_noise(seconds: float, seed: int = 0, sample_rate: int = 16000) -> np.ndarray:
+    """Synthetic quadcopter noise, unit RMS: four motors near 205-226 Hz with 11 harmonics each, slow
+    speed wander (so the tones beat), plus low-passed broadband noise. A proxy only: real prop noise
+    must be checked in Session B with the real drone and microphone."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(seconds * sample_rate)) / sample_rate
+    x = np.zeros_like(t)
+    for m, f0 in enumerate([205.0, 211.0, 219.0, 226.0]):
+        f = f0 * (1 + 0.01 * np.sin(2 * np.pi * (0.3 + 0.1 * m) * t))
+        ph = 2 * np.pi * np.cumsum(f) / sample_rate
+        for k in range(1, 12):
+            x += np.sin(k * ph + rng.uniform(0, 6.28)) / k
+    white = rng.normal(0, 1, len(t))
+    pink = np.convolve(white, np.ones(8) / 8, mode="same")
+    x = x / np.sqrt(np.mean(x ** 2)) + 0.7 * pink / np.sqrt(np.mean(pink ** 2))
+    return (x / np.sqrt(np.mean(x ** 2))).astype(np.float32)
+
+
+def mix_at_snr(speech: np.ndarray, noise: np.ndarray, snr_db: float) -> np.ndarray:
+    """Add noise so that speech RMS (over voiced samples) / noise RMS = snr_db."""
+    voiced = speech[np.abs(speech) > 0.02]
+    s_rms = float(np.sqrt(np.mean(voiced ** 2))) if len(voiced) else 0.1
+    n = noise[: len(speech)]
+    return (speech + n * s_rms / (10 ** (snr_db / 20)) / (float(np.sqrt(np.mean(n ** 2))) + 1e-9)).astype(np.float32)
+
+
 def out_root() -> Path:
     tree = os.environ.get("MHD_TREE") or str(Path(__file__).resolve().parents[3])
     return Path(tree) / "media" / "test_audio"

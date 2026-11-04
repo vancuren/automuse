@@ -265,12 +265,19 @@ class AgentService:
 
     async def _on_message(self, msg: dict) -> None:
         if msg.get("type") != "agent_event":
-            return
+            return                                   # mission_ack, cmd_ack, candidates: nothing to do
         kind = msg.get("kind")
         if kind == "ptt_down":
             await self.ptt_down()
         elif kind == "ptt_up":
             await self.ptt_up()
+        elif kind == "status":
+            # The backend relays autopilot announcements ("Got them. Following.", "I lost the subject.
+            # Looking around.") as status events; the agent owns the voice, so it says them.
+            data = msg.get("data") or {}
+            if data.get("kind") == "announce" and msg.get("text") and \
+                    self.cfg.get("tts", {}).get("speak_announcements", True):
+                self.speaker.speak(msg["text"], interrupt=False)
 
     # ---- safety -------------------------------------------------------------------------------
     def _on_safety_hit(self, hit: SafetyHit) -> None:          # listener thread

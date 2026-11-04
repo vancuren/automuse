@@ -296,3 +296,23 @@ def test_local_asr_mode(backend, llm, audio_items):
     assert m["intent"]["subject_phrase"] == "gray cat"
     final = [e for e in svc.events if e["kind"] == "final"][-1]
     assert final["data"]["model"] == "omnilingual-ctc-300m"
+
+
+def test_autopilot_announcements_are_spoken(backend, llm):
+    asr = FakeRealtimeASR(port=ASR_PORT).start()
+    sp = RecordingSpeaker()
+    try:
+        async def script(svc, hub):
+            # what the gov backend relays: AgentEvent(kind="status", text=..., data={"kind": "announce"})
+            backend.send_to_agents({"type": "agent_event", "kind": "status", "text": "Got them. Following.",
+                                    "data": {"kind": "announce", "text": "Got them. Following."}})
+            backend.send_to_agents({"type": "agent_event", "kind": "status", "text": "flight AIRBORNE -> LANDING",
+                                    "data": {"kind": "flight_state"}})
+            backend.send_to_agents({"type": "mission_ack", "ok": True})
+            assert await wait_for(lambda: sp.lines, 3)
+            await asyncio.sleep(0.2)
+
+        asyncio.run(run_with_speaker(backend, make_cfg(asr.url), script, sp))
+    finally:
+        asr.stop()
+    assert sp.lines == [("Got them. Following.", False)]

@@ -89,6 +89,9 @@ def default_vad_model() -> str:
 @dataclass
 class SafetyConfig:
     vad_model: str = ""
+    # Silero's default. With synthetic propeller noise (same seeds), 0.5 / 0.4 / 0.3 detected the same
+    # (clean 17/17, 15 dB 16/17, 10 dB 13/17, 5 dB 6-8/17, no false triggers), but lower thresholds
+    # kept segments open longer in noise: worst latency 0.98 s at 0.5 vs 1.35 s at 0.3.
     vad_threshold: float = 0.5
     min_silence_s: float = 0.25      # quiet needed to close a segment (sets the final-path latency)
     min_speech_s: float = 0.10       # a clipped "stop" is short
