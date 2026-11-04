@@ -111,8 +111,9 @@ hit reports only the variable name and the file or commit. It also flags credent
   resolve once ws2/demo is merged; if that workstream renames them, fix the three image links. The
   video itself (VIDEO_LINK) is cut by the owner from `media/demo/` and the morning's flights.
 - **`docs/RUNBOOK.md`** (linked from README "Run it") is the ops workstream's and is not merged yet.
-- **`scripts/demo_twin.py` and `scripts/run_stack.sh`** are described as "being written tonight";
-  their flags are not documented in the README.
+- **`scripts/demo_twin.py` and `scripts/run_stack.sh`** are documented in the README from their
+  committed docstrings (ws2/demo `328f7d3`, ws2/ops `2616343`); I did not run them (they start
+  servers, Chrome and the models, which this workstream may not).
 - The Glimmer usage policy and the Meta API terms on training with model outputs were not read
   (no network use for docs); SUBMISSION.md step 3 asks the owner to.
 - One upstream file, `turbodrone/frontend/src/lib/ws.ts`, does not show in
@@ -126,8 +127,12 @@ hit reports only the variable name and the file or commit. It also flags credent
   docs/video_script.md, docs/SUBMISSION.md, docs/ws2/docs.md, scripts/secret_scan.py,
   tests/docs/test_secret_scan.py. No frozen file was touched.
 - After merging `ws2/demo`: check `ls docs/img/demo_*` against the three README image links.
-- After merging `ws2/ops`: the README's `docs/RUNBOOK.md` link resolves; if `scripts/run_stack.sh`
-  landed, replace the "being written tonight" sentence in README "Run it" with its usage line.
+- After merging `ws2/ops`: the README's `docs/RUNBOOK.md` link resolves (it says "being written
+  tonight" until then; drop those three words once it exists).
+- `scripts/run_stack.sh --agent auto --glimmer local` passes `--intent auto`, so the router keeps
+  Glimmer's answer only inside its 2.5 s window and Spark usually answers (the local LoRA takes about
+  4 s). The README's twin example adds `--agent-extra "--intent glimmer"`; the demo workstream runs
+  `intent: glimmer` with a 9 s window (`config/demo/agent.yaml`). Worth a default in run_stack.
 - If anything merged tonight changes upstream turbodrone files, refresh the table in
   THIRD_PARTY_NOTICES.md: `git diff --name-status 1aff2b5 HEAD -- turbodrone/ | grep -v '^A'`.
 - Optional: one line in docs/STATUS.md pointing the owner to docs/SUBMISSION.md.
