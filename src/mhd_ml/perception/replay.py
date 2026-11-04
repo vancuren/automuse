@@ -27,8 +27,9 @@ import numpy as np
 from mhd.contracts import Candidates, FindRequest, FrameMeta, SubjectObs
 
 from .benchutil import to_1280x720
+from .detectors import build_detector, build_tracker_factory
 from .pipeline import PerceptionConfig, PerceptionCore
-from .trackers import make_tracker, resolve_tracker_name
+from .trackers import REPLAY_MAX_STEPS
 from .types import iou
 
 log = logging.getLogger("percep.replay")
@@ -133,30 +134,16 @@ def load_truth(path: Optional[str], label: Optional[str] = None) -> dict[int, tu
     return out
 
 
-def build_detector(name: str, sam_res: int, min_score: float, spend_cap: float):
-    if name == "sam_mlx":
-        from .detectors.sam_mlx import SamMlxDetector
-        return SamMlxDetector(resolution=sam_res, threshold=min(0.25, min_score))
-    if name == "sam_api":
-        from .detectors.sam_api import SamApiDetector
-        return SamApiDetector(cap_usd=spend_cap)
-    if name == "fake":
-        from .detectors.fake import ColorBlobDetector
-        return ColorBlobDetector()
-    raise SystemExit(f"unknown detector {name!r}")
-
-
 def replay(frames, phrase: str, category: str, color: str, detector, tracker: str, fps: float,
            out_dir: str, truth: Optional[dict] = None, det_latency_ms: Optional[float] = None,
            cfg: Optional[PerceptionConfig] = None, write_video: bool = True, flight_mode: str = "real") -> dict:
     """Run the pipeline over frames. det_latency_ms None = use each call's measured latency."""
     os.makedirs(out_dir, exist_ok=True)
     truth = truth or {}
-    cfg = cfg or PerceptionConfig()
-    tname = resolve_tracker_name(tracker)
-    engine = getattr(detector, "engine", None)
-    core = PerceptionCore(cfg, getattr(detector, "name", "sam_mlx"),
-                          lambda: make_tracker(tname, engine=engine, phrase=phrase))
+    tname, factory = build_tracker_factory(tracker, detector)
+    if cfg is None:
+        cfg = PerceptionConfig(replay_max_steps=REPLAY_MAX_STEPS.get(tname, 30))
+    core = PerceptionCore(cfg, getattr(detector, "name", "sam_mlx"), factory)
     core.on_find(FindRequest(mission_id="replay", subject_phrase=phrase, category=category, color=color))
     obs_path = Path(out_dir) / "obs.jsonl"
     writer = Mp4Writer(str(Path(out_dir) / "annotated.mp4"), fps) if write_video else None

@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -84,6 +85,7 @@ class DetJob:
     capture_ms: float
     image: np.ndarray            # full-size BGR, counter block masked if needed
     submit_ms: float
+    generation: int = 0          # PerceptionCore.generation when submitted (any find bumps it)
 
 
 @dataclass
@@ -156,7 +158,8 @@ class PerceptionCore:
         self.last_det_submit_ms = -1e18
         self._latest: Optional[tuple[FrameMeta, np.ndarray]] = None
         self._track_seq = 0
-        self._det_latency: deque = deque(maxlen=20)      # recent detector latencies, ms
+        self._det_latency: deque = deque(maxlen=20)      # recent submit-to-fused cycles, ms
+        self.generation = 0          # bumped by every FindRequest that changes the mission
         self.stats = {"frames": 0, "detections": 0, "reseed_ok": 0, "reseed_rejected": 0,
                       "tracks_started": 0, "candidates_sent": 0}
 
@@ -185,6 +188,7 @@ class PerceptionCore:
             if self.mission == spec:
                 return                            # a repeated FindRequest must not reset the track
             self.mission = spec
+            self.generation += 1                  # results for the previous spec are now stale
             self.track = None
             self.pending = None
             self.selected = None
@@ -199,6 +203,7 @@ class PerceptionCore:
                 return
             log.info("release %s", msg.mission_id)
             self.mission = None
+            self.generation += 1
             self.track = None
             self.pending = None
             self.selected = None
@@ -214,8 +219,9 @@ class PerceptionCore:
                 log.info("select index %s out of range", msg.index)
                 return []
             p = self.pending
-            if self.ring.get(p.frame_id) is not None:
-                self._start_track(chosen, p.frame_id, p.capture_ms, None, confirms=self.cfg.confirm_needed)
+            if (self.ring.get(p.frame_id) is not None
+                    and self._start_track(chosen, p.frame_id, p.capture_ms, None, confirms=self.cfg.confirm_needed)):
+                pass
             else:
                 # The frame the user looked at is gone from the buffer (they took > 2 s): the
                 # subject has moved, so find the chosen one again in the next detection.
@@ -234,7 +240,9 @@ class PerceptionCore:
                 self._latest = (meta, img_bgr)
                 return []
             newest = self.ring.latest()
-            if newest is not None and meta.frame_id <= newest.frame_id:
+            if newest is not None and meta.frame_id == newest.frame_id:
+                return []                         # the same frame again (e.g. after a reconnect)
+            if newest is not None and meta.frame_id < newest.frame_id:
                 # Frame ids went backwards: the backend restarted. Old frames and the track's
                 # history would be matched to the wrong images, so start over.
                 log.warning("frame id %d after %d: backend restarted; resetting", meta.frame_id, newest.frame_id)
@@ -324,7 +332,7 @@ class PerceptionCore:
             self.det_inflight = True
             self.last_det_submit_ms = now_ms
             return DetJob(self.mission.mission_id, self.mission.phrase, meta.frame_id,
-                          meta.capture_ms, image, now_ms)
+                          meta.capture_ms, image, now_ms, self.generation)
 
     def detection_failed(self, job: DetJob) -> None:
         with self.lock:
@@ -355,19 +363,27 @@ class PerceptionCore:
                      now_ms: Optional[float] = None) -> list:
         """Fuse a detector result for job's frame (captured earlier). Returns [Candidates] or []."""
         with self.lock:
-            self.det_inflight = False
-            if latency_ms is not None:
-                self._det_latency.append(float(latency_ms))
-            if self.mission is None or job.mission_id != self.mission.mission_id:
-                return []                         # from an old mission
-            self.stats["detections"] += 1
-            start = self.ring.get(job.frame_id)
-            work = start.img if start is not None else work_image(job.image, False)
-            cands = self._rank(dets, work)
-            tr = self.track
-            if tr is not None and not tr.lost:
-                return self._update_track(tr, cands, job, latency_ms)
-            return self._find(cands, job, latency_ms, now_ms if now_ms is not None else job.submit_ms)
+            t0 = time.perf_counter()
+            try:
+                return self._on_detection(job, dets, latency_ms, now_ms)
+            finally:
+                # The follow cadence uses the whole cycle: submit -> result -> fused (re-seed included).
+                waited = (now_ms - job.submit_ms) if now_ms is not None else (latency_ms or 0.0)
+                self._det_latency.append(max(0.0, waited) + (time.perf_counter() - t0) * 1e3)
+
+    def _on_detection(self, job: DetJob, dets: list[Detection], latency_ms, now_ms) -> list:
+        self.det_inflight = False
+        if (self.mission is None or job.mission_id != self.mission.mission_id
+                or job.generation != self.generation):
+            return []                         # from an old mission or an older phrase
+        self.stats["detections"] += 1
+        start = self.ring.get(job.frame_id)
+        work = start.img if start is not None else work_image(job.image, False)
+        cands = self._rank(dets, work)
+        tr = self.track
+        if tr is not None and not tr.lost:
+            return self._update_track(tr, cands, job, latency_ms)
+        return self._find(cands, job, latency_ms, now_ms if now_ms is not None else job.submit_ms)
 
     def _find(self, cands: list[Cand], job: DetJob, latency_ms, now_ms: float) -> list:
         if not cands:
@@ -406,8 +422,14 @@ class PerceptionCore:
         self._start_track(cands[0], job.frame_id, job.capture_ms, latency_ms)
         return []
 
-    def _start_track(self, c: Cand, frame_id: int, capture_ms: float, latency_ms, confirms: int = 1) -> None:
-        rs = reseed(self.make_tracker, self.ring, frame_id, c.det.box, self.cfg.replay_max_steps)
+    def _new_tracker(self):
+        tr = self.make_tracker()
+        if hasattr(tr, "phrase") and self.mission is not None:
+            tr.phrase = self.mission.phrase       # the SAM tracker prompts with the mission phrase
+        return tr
+
+    def _start_track(self, c: Cand, frame_id: int, capture_ms: float, latency_ms, confirms: int = 1) -> bool:
+        rs = reseed(self._new_tracker, self.ring, frame_id, c.det.box, self.cfg.replay_max_steps)
         if rs is not None:
             tracker, box, t, score = rs.tracker, rs.box, rs.capture_ms, rs.score
         else:
@@ -417,8 +439,8 @@ class PerceptionCore:
             if newest is None or newest.capture_ms - capture_ms > self.cfg.max_blind_start_ms:
                 log.info("not starting a track from a %s ms old detection without replay",
                          None if newest is None else round(newest.capture_ms - capture_ms))
-                return
-            tracker = self.make_tracker()
+                return False
+            tracker = self._new_tracker()
             tracker.init(newest.img, c.det.box)
             box, t, score = c.det.box, newest.capture_ms, 1.0
         self._track_seq += 1
@@ -435,6 +457,7 @@ class PerceptionCore:
         self.pending = None
         log.info("track %d started from a %.2f detection (%s)", tr.track_id, c.det.score,
                  "re-seeded" if rs else "no replay")
+        return True
 
     def _update_track(self, tr: Track, cands: list[Cand], job: DetJob, latency_ms) -> list:
         tb = tr.box_at(job.frame_id, job.capture_ms)
@@ -449,7 +472,7 @@ class PerceptionCore:
                 self._start_track(cands[0], job.frame_id, job.capture_ms, latency_ms)
             return []
         c = cands[i]
-        rs = reseed(self.make_tracker, self.ring, job.frame_id, c.det.box, self.cfg.replay_max_steps)
+        rs = reseed(self._new_tracker, self.ring, job.frame_id, c.det.box, self.cfg.replay_max_steps)
         live = tr.box_at(rs.frame_id, rs.capture_ms) if rs is not None else None
         if rs is not None and live is not None and box_offset(rs.box, live) > self.cfg.reseed_max_offset:
             tr.reject_streak += 1

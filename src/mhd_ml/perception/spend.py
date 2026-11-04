@@ -4,11 +4,13 @@
   still be processed and billed).
 - One JSON line per paid batch is appended to $MHD_HOME/logs/spend.jsonl:
   {"ts": ..., "ws": "percep", "service": "...", "units": N, "est_usd": X}
-- The cap covers the whole workstream: at start-up the ledger's earlier "percep" lines are summed,
-  so restarting the service does not reset the budget.
+- The cap covers the whole workstream: the ledger's "percep" lines are summed on every check,
+  so restarts and concurrent processes share one budget (unflushed units of another live
+  process, at most flush_every - 1, are the only blind spot).
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import threading
@@ -47,20 +49,22 @@ class SpendMeter:
     """Counts paid units, enforces a cap, and flushes batches to the ledger."""
 
     def __init__(self, service: str, usd_per_unit: float, cap_usd: float = DEFAULT_CAP_USD,
-                 path: Optional[Path] = None, flush_every: int = 20):
+                 path: Optional[Path] = None, flush_every: int = 10):
         self.service = service
         self.usd_per_unit = usd_per_unit
         self.cap_usd = cap_usd
         self.path = path or ledger_path()
         self.flush_every = flush_every
         self._lock = threading.Lock()
-        self._base = spent_so_far(self.path)     # spend from earlier runs
         self._pending = 0                        # units not yet written to the ledger
         self._session_units = 0
+        atexit.register(self.flush)              # a crash can still lose < flush_every units
 
     @property
     def total_usd(self) -> float:
-        return self._base + self._session_units * self.usd_per_unit
+        """Everything in the ledger (all percep processes, re-read every time so concurrent
+        runs see each other's flushed spend) plus this process's unflushed units."""
+        return spent_so_far(self.path) + self._pending * self.usd_per_unit
 
     def can_spend(self, units: int = 1) -> bool:
         return self.total_usd + units * self.usd_per_unit <= self.cap_usd + 1e-9

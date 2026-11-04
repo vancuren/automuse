@@ -30,33 +30,11 @@ import numpy as np
 
 from mhd.contracts import FindRequest, NextFrame, Release, Select, decode_frame, now_ms
 
+from .detectors import build_detector, build_tracker_factory
 from .pipeline import DetJob, PerceptionConfig, PerceptionCore
-from .trackers import make_tracker, resolve_tracker_name
+from .trackers import REPLAY_MAX_STEPS
 
 log = logging.getLogger("percep.service")
-
-
-def build_detector(name: str, args):
-    if name == "sam_mlx":
-        from .detectors.sam_mlx import SamMlxDetector
-        return SamMlxDetector(resolution=args.sam_res, threshold=min(0.25, args.min_score))
-    if name == "sam_api":
-        from .detectors.sam_api import SamApiDetector
-        return SamApiDetector(cap_usd=args.spend_cap)
-    if name == "fake":
-        from .detectors.fake import ColorBlobDetector
-        return ColorBlobDetector()
-    raise SystemExit(f"unknown detector {name!r}")
-
-
-def build_tracker_factory(name: str, detector):
-    name = resolve_tracker_name(name)
-    if name == "sam_mlx":
-        engine = getattr(detector, "engine", None)
-        if engine is None:
-            raise SystemExit("--tracker sam_mlx needs --detector sam_mlx (they share the model)")
-        log.warning("SAM 3.1 MLX tracker: about 1 s per step on this Mac (G1); offline use only")
-    return name, (lambda: make_tracker(name, engine=getattr(detector, "engine", None)))
 
 
 class PerceptionService:
@@ -81,16 +59,18 @@ class PerceptionService:
         """Runs on the detector thread: build the detector, the tracker factory, and the core."""
         args = self.args
         if self.detector is None:
-            self.detector = build_detector(args.detector, args)
+            self.detector = build_detector(args.detector, args.sam_res, args.min_score, args.spend_cap)
         if args.detector == "sam_api" and not os.environ.get("MODEL_API_KEY"):
             log.error("--detector sam_api but MODEL_API_KEY is not set: nothing will be detected "
                       "(source env.sh, which loads $MHD_HOME/.env)")
         self.tracker_name, factory = build_tracker_factory(args.tracker, self.detector)
         if self.tracker_name == "sam_mlx":
+            log.warning("SAM 3.1 MLX tracker: about 1 s per step on this Mac (G1); offline use only")
             # The SAM tracker uses the same MLX engine, so frames must run on the detector thread.
             self.frame_pool = self.det_pool
         cfg = PerceptionConfig(min_score=args.min_score, hfov_deg=args.hfov_deg, mask_counter=args.mask_counter,
-                               find_period_ms=1000.0 / args.find_hz, follow_period_ms=1000.0 / args.follow_hz)
+                               find_period_ms=1000.0 / args.find_hz, follow_period_ms=1000.0 / args.follow_hz,
+                               replay_max_steps=REPLAY_MAX_STEPS.get(self.tracker_name, 30))
         self.core = PerceptionCore(cfg, getattr(self.detector, "name", args.detector), factory)
         self.warm_up()
 

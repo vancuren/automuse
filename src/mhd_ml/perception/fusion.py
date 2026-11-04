@@ -5,6 +5,7 @@ Boxes are (x1, y1, x2, y2) in 1280x720 pixels; times are capture times in mono m
 """
 from __future__ import annotations
 
+import functools
 import math
 import os
 from collections import deque
@@ -289,12 +290,13 @@ def size_prior(box: Box4) -> float:
 # =============================================================================================
 # Twin counter block masking.
 # =============================================================================================
+@functools.lru_cache(maxsize=1)
 def counter_roi() -> Box4:
     """(x1, y1, x2, y2) in 1280x720 of the twin's counter block, which perception must ignore.
 
     Order: MHD_COUNTER_ROI="x1,y1,x2,y2" (for runs before the twin branch is merged), then
     mhd.twin.counter.COUNTER_ROI (the twin's own value, (1008, 640, 1280, 720) as of 00:21 ET),
-    then the bottom-right 160x160 pixels."""
+    then the bottom-right 160x160 pixels. Resolved once per process (cached)."""
     env = os.environ.get("MHD_COUNTER_ROI")
     if env:
         try:

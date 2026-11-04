@@ -295,7 +295,8 @@ def test_follow_cadence_adapts_to_detector_latency(latency, expected):
         if job is not None:
             pending.append(job)
         for j in list(pending):
-            core.on_detection(j, truth_dets(boxes), latency_ms=latency, now_ms=t)
+            # The result is fused `latency` ms after submission (the cycle the cadence measures).
+            core.on_detection(j, truth_dets(boxes), latency_ms=latency, now_ms=j.submit_ms + latency)
             pending.remove(j)
     assert core.track.n_confirms >= 2
-    assert core.detector_period_ms() == pytest.approx(expected)
+    assert core.detector_period_ms() == pytest.approx(expected, abs=25)

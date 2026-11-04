@@ -233,7 +233,13 @@ def test_box_offset_threshold_semantics():
 
 
 def test_counter_roi_env_override(monkeypatch):
-    monkeypatch.setenv("MHD_COUNTER_ROI", "1008,640,1280,720")
-    assert counter_roi() == (1008.0, 640.0, 1280.0, 720.0)
-    monkeypatch.setenv("MHD_COUNTER_ROI", "garbage")
-    assert counter_roi()[2:] == (1280.0, 720.0)
+    counter_roi.cache_clear()
+    try:
+        monkeypatch.setenv("MHD_COUNTER_ROI", "1008,640,1280,720")
+        assert counter_roi() == (1008.0, 640.0, 1280.0, 720.0)
+        counter_roi.cache_clear()
+        monkeypatch.setenv("MHD_COUNTER_ROI", "garbage")
+        assert counter_roi()[2:] == (1280.0, 720.0)
+    finally:
+        monkeypatch.delenv("MHD_COUNTER_ROI", raising=False)
+        counter_roi.cache_clear()

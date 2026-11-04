@@ -84,7 +84,7 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
 - **The color gate.** With the red walker off screen, "person in red shirt" boxes the blue
   walker (score 0.47-0.72). Candidates whose shirt region matches the requested color in less
   than 8% of its pixels are now dropped: 34 false alarms -> 0, no true detection lost.
-- **Tests.** `tests/percep`: 54 passed. Fusion: Kalman timing, color score, association,
+- **Tests.** `tests/percep`: 61 passed in about 11 s (offline: no GPU, network, or spend). Fusion: Kalman timing, color score, association,
   re-seed, counter block. Pipeline: states, ties and Select, the color tie-break, loss, cadence,
   re-seed rejection, and the safety fixes. SAM API client: parsing, no retry on 400, cache,
   spend cap, deadline. WebSocket integration with the fake backend. Replay.
@@ -124,6 +124,22 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
     - a detection older than 300 ms with no frame left to replay from never starts a track;
     - a subject leaving the frame edge becomes "lost" rather than a zero-width box;
     - errors in the pipeline are logged and never drop the connection.
+12. Fixed after an independent code review (00:45 ET; regression tests in `test_review_fixes.py`):
+    - an API request refused by the in-flight limit is no longer billed;
+    - the spend cap re-reads the ledger on every check (concurrent processes share one budget)
+      and flushes at exit;
+    - a result computed for an older phrase under the same mission_id is discarded (mission
+      generation counter);
+    - a Select whose track cannot start falls back to re-identification instead of being lost;
+    - a repeated frame id (for example the newest frame re-sent after a reconnect) is skipped, not
+      treated as a backend restart;
+    - the SAM tracker restores the detector's input size even when MLX raises;
+    - the follow cadence uses the measured submit-to-fused cycle, not detector time alone;
+    - re-seed replays are capped per tracker (VitTrack 30 steps, CSRT 12, KCF 8), so a replay
+      holds the frame thread for about 0.2 s at most;
+    - `counter_roi()` is resolved once;
+    - one detector and tracker builder is shared by service and replay; trackers that prompt
+      (SAM) get the mission phrase.
 
 ## What the integrator must wire up
 
@@ -166,7 +182,8 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
    (it is `(1008, 640, 1280, 720)` there). Until then the fallback is the bottom-right 160x160,
    which does not cover the twin's whole block; set `MHD_COUNTER_ROI=1008,640,1280,720` for
    unmerged runs.
-6. **GPU etiquette:** only perception loads SAM, about 5.6 GB, or 11.7 GB with the SAM tracker.
+6. **GPU etiquette:** only perception loads SAM: 3.5-5.6 GB of MLX memory at 672 (the status line
+   logs it), or 11.7 GB with the SAM tracker at 1008.
    At 2 Hz it keeps about half of the idle GPU busy, and it slows down 2.5-3x next to Glimmer
    training.
 7. **Contracts:** no changes needed. Suggestion: an optional `bearing_rate` (rad/s, from the

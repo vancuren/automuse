@@ -289,8 +289,9 @@ class SamApiDetector:
         deadline = time.monotonic() + self.timeout_s
         with self._lock:
             if self._inflight >= 2:
-                raise TimeoutError("two earlier sam-3.1 calls are still pending")
+                raise TimeoutError("two earlier sam-3.1 calls are still pending (not sent, not billed)")
             self._inflight += 1
+        self.meter.charge(1)              # billed from here on: the request is on its way
         fut = self._pool.submit(self._post_blocking, body, deadline)
         try:
             return fut.result(timeout=max(0.0, deadline - time.monotonic()))
@@ -332,7 +333,6 @@ class SamApiDetector:
         body = self.request_body(jpeg, phrase)
         t1 = time.perf_counter()
         try:
-            self.meter.charge(1)          # counted once the request is on its way
             status, raw = self._post(body)
         except Exception as e:            # timeout, connection error: fail fast, no retry
             self.last_error = f"{type(e).__name__}: {e}"[:200]

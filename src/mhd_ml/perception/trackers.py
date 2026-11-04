@@ -133,21 +133,24 @@ class SamMlxTracker:
         from .types import WORK_H, WORK_W
 
         full = img if img.shape[1] == FRAME_W else cv2.resize(img, (FRAME_W, 720))
+        from .types import iou
+
         with self.engine.lock:
             prev = self.engine.resolution
-            self.engine.set_resolution(1008)
-            feats = self.engine.backbone(self.engine.preprocess(full))
-            mask = np.zeros((WORK_H, WORK_W), np.uint8)
-            x1, y1, x2, y2 = (int(v / 2) for v in box)
-            dets = self.engine.to_detections(self.engine.detect_features(feats, self.phrase), self.phrase)
-            from .types import iou
-            best = max(dets, key=lambda d: iou(d.box, box), default=None)
-            if best is not None and best.mask is not None and iou(best.box, box) > 0.3:
-                mask = best.mask
-            else:
-                mask[y1:y2, x1:x2] = 1
-            self._state = self.engine.track_init(feats, [mask])
-            self.engine.set_resolution(prev)
+            try:
+                self.engine.set_resolution(1008)
+                feats = self.engine.backbone(self.engine.preprocess(full))
+                mask = np.zeros((WORK_H, WORK_W), np.uint8)
+                x1, y1, x2, y2 = (int(v / 2) for v in box)
+                dets = self.engine.to_detections(self.engine.detect_features(feats, self.phrase), self.phrase)
+                best = max(dets, key=lambda d: iou(d.box, box), default=None)
+                if best is not None and best.mask is not None and iou(best.box, box) > 0.3:
+                    mask = best.mask
+                else:
+                    mask[y1:y2, x1:x2] = 1
+                self._state = self.engine.track_init(feats, [mask])
+            finally:
+                self.engine.set_resolution(prev)      # the detector must stay at its own size
         self._i = 0
 
     def update(self, img: np.ndarray) -> tuple[Optional[Box4], float]:
@@ -159,14 +162,21 @@ class SamMlxTracker:
         self._i += 1
         with self.engine.lock:
             prev = self.engine.resolution
-            self.engine.set_resolution(1008)
-            feats = self.engine.backbone(self.engine.preprocess(full))
-            r = self.engine.track_step(self._state, feats, self._i)
-            self.engine.set_resolution(prev)
+            try:
+                self.engine.set_resolution(1008)
+                feats = self.engine.backbone(self.engine.preprocess(full))
+                r = self.engine.track_step(self._state, feats, self._i)
+            finally:
+                self.engine.set_resolution(prev)
         if len(r.scores) == 0 or not r.masks[0].any():
             return None, 0.0
         b = r.boxes[0] * 2.0
         return (float(b[0]), float(b[1]), float(b[2]), float(b[3])), float(r.scores[0])
+
+
+# Replay cost per step (G1): VitTrack 3 ms, CSRT 14-17 ms, KCF 26-29 ms. A re-seed replays up to
+# this many steps on the frame thread, so slow trackers get fewer (about 0.2 s worst case).
+REPLAY_MAX_STEPS = {"vit": 30, "kcf": 8, "csrt": 12, "sam_mlx": 3}
 
 
 def resolve_tracker_name(name: str) -> str:
