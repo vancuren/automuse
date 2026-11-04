@@ -217,7 +217,8 @@ class Twin:
             self.video.set_target(self._pending_target)
             self.video.start()
         self._tasks = [asyncio.create_task(self._dynamics_loop(), name="dynamics"),
-                       asyncio.create_task(self._placeholder_loop(), name="placeholder")]
+                       asyncio.create_task(self._placeholder_loop(), name="placeholder"),
+                       asyncio.create_task(self._mediamtx_watchdog(), name="mediamtx-watchdog")]
 
     async def stop(self) -> None:
         for t in getattr(self, "_tasks", []):
@@ -232,6 +233,18 @@ class Twin:
             await asyncio.to_thread(self.video.join)
         self.truth_log.close()
         self.event_log.close()
+
+    async def _mediamtx_watchdog(self) -> None:
+        """Restart our mediamtx if it dies (ffmpeg reconnects by itself once it is back)."""
+        while True:
+            await asyncio.sleep(1.0)
+            if self.mediamtx is not None and self.mediamtx.poll() is not None:
+                log.warning("mediamtx exited with %s; restarting", self.mediamtx.returncode)
+                self.mediamtx_restarts = getattr(self, "mediamtx_restarts", 0) + 1
+                try:
+                    self.mediamtx = await asyncio.to_thread(media.start_mediamtx, self.args.rtsp_port, self.log_dir)
+                except Exception as exc:  # noqa: BLE001 - try again next second
+                    log.warning("mediamtx restart failed: %s", exc)
 
     async def _dynamics_loop(self) -> None:
         period = self.dyn.dt
@@ -525,6 +538,7 @@ class Twin:
             "drone": self.dyn.status(),
             "video": self.video.status() if self.video else None,
             "rtsp_url": self.rtsp_url if self.video else None,
+            "mediamtx_restarts": getattr(self, "mediamtx_restarts", 0),
             "chase_recording": str(self.chase_rec_path) if self.chase_recorder else None,
             "log_dir": str(self.log_dir),
         }

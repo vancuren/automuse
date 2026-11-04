@@ -7,11 +7,13 @@
 #
 #   --ports default   8766,23458,8554 (docs/interfaces.md)
 #   --ports ws-twin   8266,23520,8254 (the overnight twin workstream's ports)
+#   --latency-ms      TOTAL camera-to-decode latency set point. Default 500 (the X69's reported
+#                     lag, until Session A measures it); 0 = no injection (about 100 ms baseline).
 # Ctrl-C (or SIGTERM) stops everything it started.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 source "$HERE/env.sh"
-PORTS=default; SCENARIO=s1; LATENCY=""; RENDER=1; CHASE=""; EXTRA=()
+PORTS=default; SCENARIO=s1; LATENCY=500; RENDER=1; CHASE=""; EXTRA=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --ports) PORTS="$2"; shift 2;;
@@ -34,7 +36,7 @@ mkdir -p "$MHD_LOGS"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 SERVER_LOG="$MHD_LOGS/twin-server-$STAMP.log"; RENDER_LOG="$MHD_LOGS/twin-renderer-$STAMP.log"
 ARGS=(--http-port "$HTTP" --rc-port "$RC" --rtsp-port "$RTSP" --scenario "$SCENARIO")
-[ -n "$LATENCY" ] && ARGS+=(--latency-ms "$LATENCY")
+[ -n "$LATENCY" ] && [ "$LATENCY" != 0 ] && ARGS+=(--latency-ms "$LATENCY")
 caffeinate -i -w $$ &            # keep the Mac awake while this script runs
 "$MHD_PY" -m mhd.twin.server "${ARGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"} > "$SERVER_LOG" 2>&1 &
 SERVER=$!
