@@ -516,3 +516,15 @@ def test_digit_keys_pick_a_candidate_only_while_the_picker_is_shown(ui, mock_bac
     ui.keyboard.press("Digit2")
     sel_msgs = mock_backend.wait_for(lambda: mock_backend.of_type("select", "agent"))
     assert [e["msg"]["index"] for e in sel_msgs] == [2]
+
+
+def test_holding_camera_tilt_keeps_it_alive_and_release_stops_it(ui, mock_backend):
+    box = ui.locator(sel("tilt-up")).bounding_box()
+    ui.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    ui.mouse.down()
+    time.sleep(2.6)  # the governor would stop a single tilt_up after 3 s
+    ui.mouse.up()
+    stops = mock_backend.wait_for(lambda: mock_backend.commands("tilt_stop"))
+    ups = mock_backend.commands("tilt_up")
+    assert len(ups) >= 3, f"{len(ups)} tilt_up messages in a 2.6 s hold (initial + one per second)"
+    assert stops and stops[0]["t_ms"] > ups[-1]["t_ms"]

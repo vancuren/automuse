@@ -1,6 +1,6 @@
 # Workstream ui: the operator UI
 
-Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 87 tests (plus 6 opt-in tests that run against the real patched backend).
+Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 88 tests (plus 6 opt-in tests that run against the real patched backend).
 
 Screenshots are in `media/ui_screens/` (copied to `$MHD_HOME/media/shared/ui/`):
 - `ui_twin_follow.png`
@@ -102,7 +102,7 @@ Test files are all named `test_ui_*.py`, and shared helpers live in `tests/ui/ui
 | **Reset E-STOP…** | `estop_reset` | Appears only when E-STOPPED. Needs two clicks within 3 s. |
 | **Confirm touchdown** | `confirm_touchdown` | Appears while LANDING. |
 | W/A/S/D, arrows | axes: pitch/roll, throttle/yaw | Human override. Sent only while a key is held and the window is focused. |
-| PageUp/PageDown, camera ▲▼ | `tilt_up`/`tilt_down`, then `tilt_stop` on release | Hold to tilt. |
+| PageUp/PageDown, camera ▲▼ | `tilt_up`/`tilt_down`, then `tilt_stop` on release | Hold to tilt. The held command is re-sent every second, because the governor stops a tilt 3 s after the last one. |
 | pack 1 / pack 2 | `pack_swap` | On the ground only. |
 | 1-9 | `Select` | Picks that look-alike, only while the "Which one?" picker is shown. Perception numbers them left to right from 1. |
 
@@ -186,11 +186,11 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 
 ## Test results
 
-87 passed and 6 skipped (the opt-in gov tests) in about 2 min at 01:02 ET. From the repo root, including the scaffold's contract tests: 93 passed, 6 skipped. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3, 2587456 and 03f0527 (00:58).
+88 passed and 6 skipped (the opt-in gov tests) in about 2 min at 01:05 ET. From the repo root, including the scaffold's contract tests: 94 passed, 6 skipped. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3, 2587456 and 03f0527 (00:58).
 
 | File | Count | Checks |
 |---|---|---|
-| `test_ui_browser.py` | 33 | See the list below. |
+| `test_ui_browser.py` | 34 | See the list below. |
 | `test_ui_production.py` | 4 | The minified build (`--base /ui/`), served same-origin by the mock: worker chunk present, heartbeat 5 Hz from one socket, Esc, Space and L work, HTTP fallback works, only the configured backend URL is in the bundle, a page reload costs under 1 s of heartbeat, and the dashboard's main-thread cost is measured. |
 | `test_ui_latency.py` | 1 | Measurements below, with loose regression bounds. |
 | `test_ui_screenshots.py` | 2 | Twin and real screenshots. |
@@ -199,7 +199,7 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 | `test_ui_static.py` | 10 | `npm run build`, `eslint --max-warnings 0`, one backend URL, no speed/profile/plugin code, only the worker sends `hb`, every button is a `UiButton`, the followed thing is always called "subject", no web fonts, loopback dev server. |
 | `test_ui_gov_backend.py` | 6 (opt-in) | Real governor backend in twin mode with no twin: telemetry renders, no ARM needed in twin, TAKEOFF shows "no video", the governor sees the worker heartbeat (`hb_age` under 600 ms), Esc E-STOPs the governor and reset works, `POST /command` passes CORS, no contract errors in the backend log. |
 
-The 33 browser tests check that:
+The 34 browser tests check that:
 - the heartbeat runs at 5 Hz from a single socket, survives a 2 s main-thread stall, stops about 3 s into a hang and resumes after it;
 - a Worker that cannot start shows NO HEARTBEAT while E-STOP still works;
 - governor-reported heartbeat loss shows the banner and locks TAKEOFF;
@@ -225,6 +225,7 @@ The 33 browser tests check that:
 - the candidate picker sends `Select` by click, and by digit key only while it is shown;
 - mask colors follow the autopilot state;
 - the pack timer goes amber and red, and pack swap works;
+- a held camera tilt is kept alive every second and stopped on release;
 - the footer credit is present;
 - telemetry loss gives UNKNOWN with takeoff locked;
 - agent and governor events are routed correctly;

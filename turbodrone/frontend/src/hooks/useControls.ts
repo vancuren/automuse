@@ -370,6 +370,15 @@ export function useControls(opts: { flightState: FlightState | null }) {
     [sendCommand],
   );
 
+  // The governor stops a tilt by itself 3 s after the last tilt_up/tilt_down (the UI may die
+  // mid-press), so re-send the held direction every second, quietly (no status-line report).
+  useEffect(() => {
+    if (cameraTiltDirection === 0) return;
+    const command = cameraTiltDirection > 0 ? "tilt_up" : "tilt_down";
+    const keepAlive = setInterval(() => sockRef.current?.send(buildCommand(command)), 1000);
+    return () => clearInterval(keepAlive);
+  }, [cameraTiltDirection]);
+
   useEffect(() => {
     if (!commandCapabilities.camera_tilt) return;
     const map: Record<string, CameraTiltDirection> = { PageUp: 1, PageDown: -1 };
