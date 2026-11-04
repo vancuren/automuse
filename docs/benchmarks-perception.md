@@ -111,3 +111,65 @@ Parse time (special-token text to boxes and masks):
 end, with parsing, p95 is about 1.5 s, so the API detector runs at 1 Hz or less while
 following, with the local tracker in between, and the 2.5 s deadline drops slow calls.
 Spend: 41 calls, $0.10 (ledger `$MHD_HOME/logs/spend.jsonl`, ws "percep").
+
+## G1 under load (measured 2026-11-04 00:11-00:13 ET)
+
+**What else was running:** the train workstream's Glimmer LoRA job (`training/train_mlx.py`,
+about 13 GB, GPU at 99-100% per ioreg), the twin's Chrome (WebGL) renderer, and other
+workstreams' pytest runs. This is the "twin renders and Glimmer generates" condition of the
+G1 gate, or worse (training is heavier than generation).
+
+| What | idle (23:43) | under load (00:11) |
+|---|---|---|
+| SAM 3.1 MLX detect, 672 input, p50 | 234 ms | **698 ms** (min 585) |
+| SAM 3.1 MLX detect, 672 input, inside the live service, p50 / p95 (46 calls) | | **625 / 695 ms** |
+| SAM 3.1 MLX detect, 1008 input, p50 | 581 ms | **1406 ms** |
+| VitTrack update, 640x360, p50 / p95 | 2.6 / 2.7 ms | **2.8 / 3.2 ms** |
+| KCF update, p50 / p95 | 26.4 / 27.1 ms | 29.2 / 31.4 ms |
+| CSRT update, p50 / p95 | 13.8 / 14.7 ms | 15.4 / 19.1 ms |
+
+The CPU trackers are unaffected by GPU load. SAM detection slows down 2.5-3x when it shares the
+GPU with Glimmer training. During real flights the plan stops the twin, the renderer and the
+local LLM, so the idle numbers apply there.
+
+## G1 accuracy proxy: look-alikes that differ only in color (00:07 ET, GPU shared with training)
+
+Session A clips do not exist yet, so `mhd_ml.perception.bench_accuracy` builds look-alike scenes
+from COCO: the same skier pasted twice at random positions and scales (one jacket red, the
+other recolored blue or green with SAM's own jacket mask) on two people-free backgrounds, and
+car scenes with one car recolored green. Correct = the top candidate has IoU > 0.5 with the
+queried subject.
+
+| Query | scenes | SAM top-1 correct (672) | ranked top-1 correct (672) | SAM top-1 correct (1008) | ties flagged |
+|---|---|---|---|---|---|
+| "person in blue/red/green shirt" (two people) | 24 queries | **24/24** | **24/24** | **24/24** | 0 |
+| "green car" | 5 | 4/5 | 4/5 | 4/5 | 0 |
+
+- SAM 3.1 separates the colors decisively: right-subject score median 0.92, best wrong-subject
+  score median 0.32 (672); the smallest margin was 0.48.
+- The car miss: the recolored car was dark, so it stayed nearly black after the hue change;
+  SAM found no green car there.
+- G1 asks for the right subject in 8 of 10 frames: **go** on these proxies (100% for people). The
+  real check is on Session A clips with `mhd_ml.perception.replay`.
+
+## End to end: the service against a fake backend (00:10-00:11 ET, same load as above)
+
+`mhd_ml.perception.fake_backend` served a 15 fps back-and-forth pan over a two-person composite
+(blue jacket on the right, red on the left), and sent FindRequest "person in blue shirt".
+The service ran `--detector sam_mlx --tracker auto` (VitTrack), for 47 s.
+
+| Measure | Result |
+|---|---|
+| SubjectObs rate | **15.0 Hz** (one per frame, 705 observations) |
+| Perception time per frame (capture to SubjectObs out, minus the fake 80 ms camera latency) | about **10 ms** p50 |
+| Time from FindRequest to the first "confirmed" | **1.4 s** |
+| Frames on the right subject (IoU >= 0.5 with truth) after confirmation | **99.9%**, mean IoU 0.76 |
+| Identity switches | **0** (one track id) |
+| Detector latency p50 / p95 | 625 / 695 ms (GPU shared with Glimmer training) |
+| confirm_age_ms while confirmed, p50 / max | 1133 / 1735 ms |
+| Re-seeds accepted | 43 of 44 |
+
+The 1 Hz follow rate plus a 625 ms detector gives a confirmation age up to about 1.7 s. The
+autopilot's forward-motion rule needs less than 1.5 s, so under GPU load either raise the
+follow rate (`--follow-hz 1.5`) or accept yaw-only moments. With an idle GPU (real flights,
+234 ms detector) the maximum is about 1.25 s.

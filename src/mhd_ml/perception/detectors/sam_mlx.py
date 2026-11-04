@@ -33,11 +33,21 @@ def default_model_dir() -> Path:
     return Path(os.environ.get("MHD_MODELS", "")) / "sam3.1-bf16"
 
 
+def _offline_if_tokenizer_cached() -> None:
+    """mlx-vlm loads SAM's CLIP tokenizer by hub name (openai/clip-vit-base-patch32), which makes
+    transformers contact huggingface.co on every start. On flight day the Mac may have no
+    internet, so once the tokenizer is in the project's HF cache we tell the hub to stay offline."""
+    hf = os.environ.get("HF_HOME")
+    if hf and (Path(hf) / "hub" / "models--openai--clip-vit-base-patch32" / "snapshots").exists():
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+
 class SamMlxEngine:
     """Loads SAM 3.1 MLX once and exposes detection and tracking primitives."""
 
     def __init__(self, model_dir: Optional[str | Path] = None, resolution: int = NATIVE_RES,
                  threshold: float = 0.25):
+        _offline_if_tokenizer_cached()
         import mlx.core as mx  # noqa: F401  (fail early if MLX/Metal is missing)
         from mlx_vlm.models.sam3.generate import Sam3Predictor
         from mlx_vlm.models.sam3_1.processing_sam3_1 import Sam31Processor
@@ -81,12 +91,13 @@ class SamMlxEngine:
 
         return _get_backbone_features(self.model, pixel_values)
 
-    def detect_features(self, feats, phrase: str, threshold: Optional[float] = None):
+    def detect_features(self, feats, phrase: str, threshold: Optional[float] = None,
+                        size: tuple[int, int] = (WORK_W, WORK_H)):
         """Text-prompted detection on backbone features. Returns the mlx-vlm DetectionResult with
-        boxes in WORK_W x WORK_H pixels and masks (N, WORK_H, WORK_W) uint8."""
+        boxes in `size` pixels (default WORK_W x WORK_H) and masks (N, H, W) uint8."""
         from mlx_vlm.models.sam3_1.generate import _detect_with_backbone
 
-        return _detect_with_backbone(self.predictor, feats, [phrase], (WORK_W, WORK_H),
+        return _detect_with_backbone(self.predictor, feats, [phrase], size,
                                      threshold if threshold is not None else self.threshold)
 
     def to_detections(self, result, phrase: str) -> list[Detection]:

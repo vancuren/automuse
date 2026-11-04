@@ -63,10 +63,11 @@ class PerceptionService:
     def __init__(self, args, detector=None):
         self.args = args
         self.backend = args.backend.rstrip("/")
-        self.detector = detector or build_detector(args.detector, args)
-        self.tracker_name, factory = build_tracker_factory(args.tracker, self.detector)
-        cfg = PerceptionConfig(min_score=args.min_score, hfov_deg=args.hfov_deg, mask_counter=args.mask_counter)
-        self.core = PerceptionCore(cfg, getattr(self.detector, "name", args.detector), factory)
+        # The detector is built in run(), on the detector thread: MLX streams belong to the thread
+        # that created them, so SAM must be loaded and called on one thread (MLX 0.32 raises
+        # "There is no Stream(gpu, 1) in current thread" otherwise).
+        self.detector = detector
+        self.core: Optional[PerceptionCore] = None
         self.frame_pool = ThreadPoolExecutor(1, thread_name_prefix="frames")
         self.det_pool = ThreadPoolExecutor(1, thread_name_prefix="detector")
         self.out_q: asyncio.Queue = asyncio.Queue(maxsize=300)
@@ -75,6 +76,20 @@ class PerceptionService:
         self.det_latencies: list[float] = []
         self.sent = 0
         self.frames = 0
+
+    def _setup(self) -> None:
+        """Runs on the detector thread: build the detector, the tracker factory, and the core."""
+        args = self.args
+        if self.detector is None:
+            self.detector = build_detector(args.detector, args)
+        self.tracker_name, factory = build_tracker_factory(args.tracker, self.detector)
+        if self.tracker_name == "sam_mlx":
+            # The SAM tracker uses the same MLX engine, so frames must run on the detector thread.
+            self.frame_pool = self.det_pool
+        cfg = PerceptionConfig(min_score=args.min_score, hfov_deg=args.hfov_deg, mask_counter=args.mask_counter,
+                               find_period_ms=1000.0 / args.find_hz, follow_period_ms=1000.0 / args.follow_hz)
+        self.core = PerceptionCore(cfg, getattr(self.detector, "name", args.detector), factory)
+        self.warm_up()
 
     # ----- helpers --------------------------------------------------------------------------
     def _enqueue(self, msgs) -> None:
@@ -248,6 +263,8 @@ class PerceptionService:
             last_frames, last_t = self.frames, t
             lat = sorted(self.det_latencies)
             p50 = lat[len(lat) // 2] if lat else float("nan")
+            if self.core is None:
+                continue
             m = self.core.mission
             tr = self.core.track
             log.info("status: %.1f fps, sent %d, detector p50 %.0f ms, mission %s, track %s, stats %s",
@@ -273,7 +290,9 @@ class PerceptionService:
                     loop.add_signal_handler(sig, self.stop.set)
                 except (NotImplementedError, RuntimeError):
                     pass
-        await loop.run_in_executor(self.det_pool, self.warm_up)
+        await loop.run_in_executor(self.det_pool, self._setup)
+        log.info("perception ready: detector %s, tracker %s, backend %s", self.args.detector,
+                 self.tracker_name, self.backend)
         tasks = [asyncio.create_task(self.frames_loop()), asyncio.create_task(self.subject_loop()),
                  asyncio.create_task(self.status_loop())]
         await self.stop.wait()
@@ -301,6 +320,8 @@ def parse_args(argv: Optional[list[str]] = None):
     ap.add_argument("--tracker", default="auto", choices=["auto", "sam_mlx", "vit", "kcf", "csrt"])
     ap.add_argument("--sam-res", type=int, default=672, help="SAM MLX square input (G1: 672 = 234 ms)")
     ap.add_argument("--min-score", type=float, default=0.4)
+    ap.add_argument("--find-hz", type=float, default=2.0, help="detector rate while finding/lost/in doubt")
+    ap.add_argument("--follow-hz", type=float, default=1.0, help="detector rate while following")
     ap.add_argument("--hfov-deg", type=float, default=float(os.environ.get("MHD_HFOV_DEG", "80")))
     ap.add_argument("--mask-counter", default="auto", choices=["auto", "on", "off"])
     ap.add_argument("--spend-cap", type=float, default=8.0, help="USD cap for sam_api (whole workstream)")
