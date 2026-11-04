@@ -344,7 +344,7 @@ fast path for bare safety commands, MMS-TTS synthesized but muted, fake backend.
 | 00:24 | 2.35 / 3.35 s | 210 ms | 2.11 / 2.92 s | 20/20 |
 | 01:37 (final code) | **2.40 / 3.97 s** | 236 ms | 2.11 / 3.75 s | **20/20** |
 
-Targets: p50 4 s or less, p95 6 s or less, 18 of 20 right. Pass.
+Acceptance bar: p50 4 s or less, p95 6 s or less, 18 of 20 right. Pass.
 
 ### Local safety listener (silero VAD + Omnilingual ASR CTC-300M, CPU, 2 threads)
 

@@ -1,6 +1,6 @@
 # Submission checklist
 
-**Deadline: Wednesday 2026-11-04, 21:00 ET. Late entries are not considered. Target: submitted by
+**Deadline: Wednesday 2026-11-04, 21:00 ET. Late entries are not considered. Aim to be submitted by
 19:00 ET** (PLAN.md section 7). Work through this top to bottom; every box is something to do or
 check.
 
