@@ -825,6 +825,11 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
     @app.post("/mock/reset")
     async def mock_reset(request: Request):
         body = await _json(request)
+        # A push-to-talk still finishing from the previous test must not leak into the next one.
+        for task in list(hub.background_tasks):
+            task.cancel()
+        hub.ptt_task = None
+        hub.ptt_down_at = None
         log.reset()
         mode = body.get("flight_mode", sim.flight_mode)
         scenario = body.get("scenario", sim.scenario)

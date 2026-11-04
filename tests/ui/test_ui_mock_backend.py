@@ -141,3 +141,17 @@ def test_follow_sticks_steer_toward_the_subject(client):
     assert tm.active_source == "autopilot" and tm.subject.state.value == "confirmed"
     # +yaw when the subject is right of center (conventions.md)
     assert math.copysign(1, tm.sticks_by_source["autopilot"]["yaw"] or 1) == math.copysign(1, tm.subject.box.cx - 640 or 1)
+
+
+def test_reset_cancels_a_mission_still_being_answered(client):
+    """A push-to-talk released just before a reset must not produce a mission afterwards."""
+    import time as _time
+
+    with client.websocket_connect("/ws/agent?role=ui") as ws:
+        ws.send_text(json.dumps({"type": "agent_event", "kind": "ptt_down"}))
+        ws.send_text(json.dumps({"type": "agent_event", "kind": "ptt_up"}))
+        while AgentEvent.model_validate_json(ws.receive_text()).kind != "final":
+            pass
+    client.post("/mock/reset", json={})
+    _time.sleep(1.8)  # longer than the fake agent's 0.9-1.4 s "thinking"
+    assert client.sim.mission is None
