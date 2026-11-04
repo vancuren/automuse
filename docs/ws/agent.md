@@ -191,6 +191,11 @@ No false triggers at any SNR (20 neutral sentences each), nor on 30-60 s of nois
 thresholds 0.3-0.4 detected no more and raised the worst latency to 1.35 s, so the default stays 0.5.
 Real prop noise must be checked in Session B with `mic_check`.
 
+**Soak, 6 minutes** (01:47-01:53, real Voice Transcribe warm session + Spark, fake backend, one
+`say` command every 30 s, 12 utterances): RSS flat at 1.98 GB after the second utterance, 3 background
+tasks throughout, warm Voice Transcribe session ready for 11 of 12 utterances (the first miss was a
+blocking wait in the test script, fixed), 10 missions + 4 safety commands delivered, no errors.
+
 Other: Omnilingual load 0.32-0.39 s, decode 0.15 s for a 2 s clip. MMS-TTS: torch import 2.3 s +
 load 0.4 s at warm-up, then 0.12 s ("Landing now.") to 0.47 s (refusal line) per reply.
 
