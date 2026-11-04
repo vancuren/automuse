@@ -1,8 +1,8 @@
 """mediamtx config and process helpers, plus the ffmpeg HEVC publisher command.
 
 mediamtx serves RTSP only, on 127.0.0.1, TCP transport only (so no UDP RTP/RTCP ports are
-bound). Every other protocol (RTMP, HLS, WebRTC, SRT) and every HTTP service (API, metrics,
-pprof, playback) is disabled.
+bound). Every other protocol (RTMP, HLS, WebRTC, SRT, MoQ) and every HTTP service (API, metrics,
+pprof, playback) is disabled. tests/twin/test_media.py checks the listening sockets.
 """
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ rtmp: false
 hls: false
 webrtc: false
 srt: false
+moq: false
 paths:
   {path}:
     source: publisher
