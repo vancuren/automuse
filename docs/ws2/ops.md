@@ -90,7 +90,8 @@ Motor runs are bounded: the script sends LAND after `--motor-s`, 6 s by default.
 - Logs go to `logs/stack-<time>-<mode>/`.
 - Ctrl-C: the backend gets SIGINT at once (it lands), then the clients, the UI, and the twin last.
 - A dead component is announced. Enter restarts a dead backend.
-- Real mode refuses `--headless`, twin configs (by path and by YAML header), the oracle, and twin options.
+- Real mode refuses `--headless`, twin configs (by path, by `twin_only: true`, and by YAML header), the oracle, and twin options.
+- `--dry-run` validates, runs `run_backend.sh --dry-run` (the backend launcher's own real-mode config rules), prints every command, and starts nothing.
 
 **RUNBOOK.md contents:**
 - setup: tether and service order, Local Network and Microphone, caffeinate, AWDL, stopping overnight processes;
@@ -127,7 +128,8 @@ OPS_STACK=1 $MHD_PY -m pytest tests/ops -q -s -p no:logging   # + 3 end-to-end t
 | Test | Result |
 |---|---|
 | `tests/ops` | 14 fast tests and 3 opt-in end-to-end tests: **17 passed** |
-| `tests/gov`, all 185, after the hub and glue changes | **185 passed** (137 s). Run from a temporary copy with only the port numbers remapped into the ops range (8100-8109 to 8150-8159, 23510-23518 to 23550-23558); the copy was deleted afterwards. |
+| `tests/gov` after the hub and glue changes | **185 passed** (137 s). After merging integration's safety fixes (a0fcad4, at 04:20): **214 passed** (145 s). Both run from a temporary copy with only the port numbers remapped into the ops range (8100-8109 to 8150-8159, 23510-23518 to 23550-23558); the copy was deleted afterwards. |
+| After that merge | `tests/ops`: 17 passed again; `session_a --auto-twin`: all 17 steps, GO, the same rc_pause twin checks (link-loss timer fired at 1.04 s), latency p50 501.1 ms |
 | rc_pause on the wire, real backend (TestClient, real PacedFlightController, UDP listener on 23551) | 2.5 s pause: 0 control packets after a 50 ms grace, at least 2 keepalives, about 62 packets dropped (25 Hz), packets back afterwards, `rc_paused` in telemetry. E-stop during a 10 s pause: the first packet after it carries 0x02, within 0.25 s, end reason `state_changed`. Bad input refused: 0 s, −1 s, 61 s, "ten", NaN (422), a foreign Origin (403), already paused. |
 | rc_pause, real-mode policy (stub governor, adapter aimed at loopback) | refused in TAKING_OFF, AIRBORNE, LANDING and ESTOPPED; refused at 15.5 s, accepted at 15 s; TAKEOFF during the pause ends it and that packet goes out; a broken predicate fails safe (`predicate_error`, packet sent) |
 | **rc_pause against the wire-level twin** (`session_a --auto-twin` link-loss step 3, AIRBORNE, 6 s) | The twin's control-packet count froze at 1341 for the whole pause while keepalives went from 55 to 61. The twin's link-loss timer (1 s, keepalive ignored) fired at **1.04 s**; it landed and its motors stopped by about 4.1 s. Packets resumed (1341 to 1386 within 1 s). Backend: 150 packets dropped, 6 keepalives sent during the pause, end reason `timeout`. |
@@ -194,7 +196,7 @@ Shared artifacts are in `$MHD_HOME/media/shared/ops/`:
 
 ## For the integrator
 
-1. **Merge**: `ws2/ops` adds new files and edits only `src/mhd/backend/hub.py` and `src/mhd/governor/turbodrone_glue.py`. No frozen file was touched (contracts, intent_spec, conventions, interfaces, env.sh, doctor, governor core or config, autopilot core, `config/*.yaml`, `config/twin/*.yaml`). All 185 gov tests pass with the change.
+1. **Merge**: `ws2/ops` already contains `integration` up to a0fcad4 (merged at 04:20, no conflicts), and was re-tested on it. It adds new files and edits only `src/mhd/backend/hub.py` and `src/mhd/governor/turbodrone_glue.py`. No frozen file was touched (contracts, intent_spec, conventions, interfaces, env.sh, doctor, governor core or config, autopilot core, `config/*.yaml`, `config/twin/*.yaml`). All 185 gov tests pass with the change.
 2. **Optional: widen the real-mode rc_pause states** for the props-off Session A, so test 3 can observe spinning motors:
    - in hub.py, `REAL_MODE_RC_PAUSE_STATES = frozenset({FlightState.on_ground, FlightState.taking_off, FlightState.airborne})`;
    - then update the session_a step `linkloss_rcpause` (its real branch calls `ensure_ground_and_armed`; it would take off first, like the auto branch) and RUNBOOK 2.9.
