@@ -63,7 +63,7 @@ Its test controls (`POST /mock/control`) can do the following:
 - inject agent events;
 - push candidates (`POST /mock/candidates`).
 
-To run the tests (about 90 s), use the commands below. They start the mock on 8601 and 8602 and vite on 5273, run Chrome through Playwright (`channel="chrome"`, profile in `$MHD_HOME/.cache/chrome-ui`), and stop everything when they finish.
+To run the tests (about 2 min), use the commands below. They start the mock on 8601, 8602 and 8604 and vite on 5273, run Chrome through Playwright (`channel="chrome"`, profile in `$MHD_HOME/.cache/chrome-ui`), and stop everything when they finish. The opt-in gov test runs the real backend on 8603; `record_demo.py` also uses 8603, so don't run those two together.
 
 ```bash
 $MHD_PY -m pytest tests/ui -v                       # everything, about 2 min
@@ -77,7 +77,7 @@ Test files are all named `test_ui_*.py`, and shared helpers live in `tests/ui/ui
 
 ## Pre-flight checklist (UI part)
 
-1. Build for the backend you will fly with, and serve the build (not the dev server): `VITE_BACKEND_URL=http://localhost:8000 npm run build && npx vite preview`.
+1. Build for the backend you will fly with, and serve the build (not the dev server): `VITE_BACKEND_URL=http://localhost:8000 VITE_AXES_RELEASE_MESSAGE=1 npm run build && npx vite preview`. Leave out the release flag to keep the strict spec'd behavior (see decision 1).
 2. Open http://127.0.0.1:5173 in its own Chrome window, maximized and never minimized. Keep other tabs out of that window.
 3. Keep the Mac awake for the whole session: `caffeinate -dimsu` in a spare terminal.
 4. In the header, all four link chips must be green:
@@ -186,7 +186,7 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 
 ## Test results
 
-89 passed and 6 skipped (the opt-in gov tests) in about 2 min at 01:12 ET. From the repo root, including the scaffold's contract tests: 95 passed, 6 skipped. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3, 2587456 and 03f0527 (00:58).
+89 passed and 6 skipped (the opt-in gov tests) in about 2 min at 01:12 ET. From the repo root, including the scaffold's contract tests: 95 passed, 6 skipped. About a dozen full runs during the night all passed, with 0 flakes. The 6 opt-in tests passed against `ws/gov` at f4af4b3, 2587456 and 03f0527 (00:58).
 
 | File | Count | Checks |
 |---|---|---|
