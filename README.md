@@ -209,9 +209,28 @@ $MHD_PY scripts/e2e_twin.py --perception sam_api    # hosted SAM 3.1 (paid, $0.0
 Results land in `logs/e2e-<time>-<scenario>-<perception>/e2e_result.json`, with `report.json` and a
 per-frame `rows.csv`.
 
-**The full stack by hand** (one terminal each). Being written tonight by other workstreams:
-`scripts/demo_twin.py` (the recorded twin demo with the UI and the fine-tuned Glimmer) and
-`scripts/run_stack.sh` (start everything at once); check their `--help` once they land.
+**The recorded demo.** `scripts/demo_twin.py` (from the demo workstream) starts everything, opens
+the UI, speaks "Drone, follow the person in the blue shirt." into the agent's microphone input, lets
+the fine-tuned Glimmer answer, follows, says "land", and records the UI and the chase view to
+`media/demo/`:
+
+```bash
+$MHD_PY scripts/demo_twin.py                        # S1, "person in blue shirt"
+$MHD_PY scripts/demo_twin.py --demo-scenario s2     # S2: the red-shirt walker crosses
+$MHD_PY scripts/demo_twin.py --stills               # also write the README stills to docs/img/
+```
+
+**The whole stack with one command.** `scripts/run_stack.sh` (from the ops workstream) starts the
+backend, perception, the agent, the production UI, optionally the local Glimmer, and in twin mode
+the twin; Ctrl-C stops it all, the backend first so the drone lands:
+
+```bash
+scripts/run_stack.sh --mode twin --scenario s1 --glimmer local --agent-extra "--intent glimmer"
+scripts/run_stack.sh --mode real --no-perception --no-agent     # Session A and B: backend and UI only
+scripts/run_stack.sh --mode real --glimmer local                # real flights; run scripts/preflight.py first
+```
+
+**The full stack by hand** (one terminal each):
 
 ```bash
 scripts/run_twin.sh --scenario s1
