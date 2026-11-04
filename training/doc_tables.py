@@ -16,14 +16,14 @@ def results_table() -> str:
     for s, title in (("test", "Held-out test (300)"), ("gold", "Gold, hand-written (80)"),
                      ("gold_asr", "Gold spoken by `say` + Omnilingual ASR (80)")):
         out += [f"**{title}**", "",
-                "| model | valid JSON | action | subject (norm.) | clarify F1 | refuse F1 | land/hover |",
-                "|---|---|---|---|---|---|---|"]
+                "| model | n | valid JSON | action | subject (norm.) | clarify F1 | refuse F1 | land/hover |",
+                "|---|---|---|---|---|---|---|---|"]
         for m in ORDER:
             r = res.get(m, {}).get("sets", {}).get(s)
             if not r:
                 continue
             lh = "n/a" if r["land_hover_accuracy"] is None else f"{r['land_hover_accuracy']:.1%}"
-            out.append(f"| {res[m]['name']} | {r['valid_json_rate']:.1%} | {r['action_accuracy']:.1%} | "
+            out.append(f"| {res[m]['name']} | {r['n']} | {r['valid_json_rate']:.1%} | {r['action_accuracy']:.1%} | "
                        f"{r['subject_normalized']:.1%} | {r['clarify']['f1']:.2f} | {r['refuse']['f1']:.2f} | {lh} |")
         out.append("")
     out += ["**Latency per command, one request at a time** (client wall time)", "",

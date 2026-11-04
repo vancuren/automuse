@@ -33,7 +33,7 @@ Branch `ws/train`. Overnight, 2026-11-03 23:35 to 2026-11-04 (times ET). PLAN.md
 | `training/eval.py`, `training/eval_mlx.sh` | Evaluation (Spark, Fireworks, mlx_lm backends) and report: `docs/eval/results.json`, `summary.md`, `intent_eval.png` |
 | `scripts/serve_glimmer.sh` | Edge-mode server: mlx_lm.server on port 8080 with the adapter |
 | `src/mhd_ml/glimmer_client.py` | Small client the agent can call for edge (`GlimmerClient.edge()`) or cloud (`GlimmerClient.cloud()`) |
-| `tests/train/` | 39 pytest tests (generator, eval metrics, Fireworks client with mocked HTTP, Glimmer client) |
+| `tests/train/` | 38 pytest tests (generator, eval metrics, Fireworks client with mocked HTTP, Glimmer client) |
 
 ## Data
 
@@ -107,6 +107,8 @@ What I verified with the REST API (key from env, never printed):
   `{"code": 9, "message": "dataset uploads are temporarily disabled, please contact Fireworks AI to get access"}`.
 - `POST models` (HF_PEFT_ADDON) gives 400 `model creation, uploads and preparation are temporarily disabled,
   please contact Fireworks AI to get access`. So uploading our MLX adapter is blocked too.
+- Re-checked the dataset upload at 00:27, 01:00 and 01:37: still 403 each time. Each failed attempt's
+  placeholder dataset was deleted.
 - The Serverless Training API needs the `fireworks` Python SDK (`fireworks.training.sdk`), which is not
   installed. Installing is outside the rules, so I did not try it.
 - Multi-LoRA shapes for Glimmer exist only on GB300 (quota 0) and a B200 FP4 "Decision Engine" shape. The
@@ -126,9 +128,14 @@ source env.sh
 $MHD_PY training/generate.py --rebuild            # recreate training/data/fireworks/*.jsonl
 $MHD_PY training/fireworks.py train               # upload train/valid, SFT rank 16 x 2 epochs (falls back to rank 8 x 1), waits
 $MHD_PY training/fireworks.py morning --lora glimmer-intent-v1   # H200 hot-reload deployment + LoRA + warm-up; prints the model string
+# if the hot-reload LoRA load fails: delete, then deploy the fine-tuned model itself (live merge)
+#   $MHD_PY training/fireworks.py delete --deployment-id glimmer-intent
+#   $MHD_PY training/fireworks.py morning --merged --lora glimmer-intent-v1
 # ... demo ...
 $MHD_PY training/fireworks.py delete --deployment-id glimmer-intent   # by 12:45; stops billing ($8/hour)
 ```
+`morning` prints the exact model string that answered (LoRA route or base route; after a hot-reload merge
+Fireworks may serve the merged model under either one). Give that string to the agent.
 If uploads stay blocked, serve base Glimmer in the cloud and the LoRA on the Mac:
 ```bash
 $MHD_PY training/fireworks.py deploy --deployment-id glimmer-intent --plain   # base, scales to zero after 10 idle minutes
@@ -159,7 +166,40 @@ Allow about 5 minutes from create to READY (measured tonight), so start by 10:05
 
 ## Results
 
-RESULTS_TABLE
+Full tables: `docs/eval/summary.md`; chart: `docs/eval/intent_eval.png`; raw per-example predictions:
+`logs/eval/*.jsonl` (gitignored). Scored with `mhd.intent_spec.parse_intent` on the final channel, the same
+way the agent client parses. Invalid replies count as wrong.
+
+**Headline.** The LoRA (local MLX 4-bit) beats base Glimmer and Muse Spark 1.3 on action accuracy on both
+the held-out test set and the hand-written gold set, with 100% valid JSON. That meets PLAN 4.7's acceptance
+bar ("beats base Glimmer on action accuracy on both sets, with at least 95% valid JSON"), except that it
+runs locally, not on Fireworks. It also learned the label conventions, which base Glimmer and Spark do not
+follow by default: exact subject match on test is 93% for the LoRA vs 41% (base) and 53% (Spark). The
+LoRA emits about 47 output tokens per command; base Glimmer emits about 140 (Fireworks) to 230 (MLX),
+and Spark about 200 including reasoning.
+
+RESULTS_TABLES
+
+Conditions: MLX runs used `mlx_lm.server` on :8580 on the M5 Pro (48 GB), with the twin workstream's
+Chrome/WebGL renderer sharing the GPU. Quality runs used client concurrency 4 (LoRA) and 8 to 12 (base,
+batched decode). Latency rows are separate sequential runs. Base Glimmer on MLX was scored on the
+**first 100 test rows** only, to stay inside the time box (a full run would have taken about 50 minutes);
+gold and spoken gold are complete. Fireworks base and Spark covered the full test set.
+
+**Where the LoRA still fails** (every miss is a non-motion answer or a follow of the right category):
+- Spoken gold (real ASR noise) is the weak spot: 88.8% action accuracy vs Spark's 90.0%. Unintelligible
+  transcripts (`am folu adad`, or non-Latin output such as `放流米`) are refused as `unsupported` where
+  gold says `clarify`. A wake word misheard as "drown" ("drown follow the green remote control car")
+  flipped to `refuse/unsafe`. Fix for v2: add unintelligible-transcript examples labeled clarify, and noise
+  the wake words (the ASR noise misspells "drone" inside sentences, but wake words are added after that
+  pass).
+- Test misses: "keep yuki in frame" (an unseen phrasing with a name: followed instead of refused), "follow
+  that car" (treated as pointing, so clarify), "lend it" (ASR for "land it", sent to clarify), and
+  "follow perple one" (a color with no noun: followed instead of clarify).
+- Land and hover stay safe: 98% on test, 100% on gold, 93.8% on spoken gold. The one spoken miss ("held it
+  right their body") became clarify, which does not move the drone. The local safety listener handles
+  stop and land without any model anyway.
+
 
 ## Exact commands
 
