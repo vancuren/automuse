@@ -802,7 +802,7 @@ class Governor:
         while not self._hk_stop.wait(1.0):
             self.flight_timer.save_if_dirty()
             last = self.last_tick_ts
-            if last is not None and self._clock() - last > 500.0:
+            if last is not None and not self._shutdown and self._clock() - last > 500.0:
                 logger.error("[governor] RC tick is %.0f ms old: RC thread stalled?", self._clock() - last)
 
     def close(self) -> None:

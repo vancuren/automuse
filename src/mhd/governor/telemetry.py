@@ -34,7 +34,7 @@ def build_telemetry(gov: Governor, *, alarm: bool = False, extra_flags: Optional
     return Telemetry(
         ts_ms=now,
         flight_mode=gov.flight_mode,
-        flight_state=snap.flight_state,
+        flight_state=gov.state,            # live: reflects a command issued since the last tick
         autopilot_state=snap.autopilot_state,
         armed=gov.armed,
         sticks_wire=dict(snap.wire),
