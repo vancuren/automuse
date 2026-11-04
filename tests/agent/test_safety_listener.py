@@ -47,8 +47,9 @@ def test_edit_distance():
 
 
 def test_fuzzy_off_is_exact_only():
-    assert safety_action_for_word("stalk", fuzzy=False) is None
-    assert safety_action_for_word("stalk", fuzzy=True)[0] == "hover"
+    assert safety_action_for_word("stolk", fuzzy=False) is None
+    assert safety_action_for_word("stolk", fuzzy=True)[0] == "hover"
+    assert safety_action_for_word("stalk", fuzzy=True) is None       # English: utterance-level rule only
     assert safety_action_for_word("land", fuzzy=False)[0] == "land"
 
 
@@ -231,3 +232,34 @@ def test_backlog_skips_partials_but_still_detects(audio_items, recognizer):
     th.join(timeout=2)
     assert lst.hits and lst.hits[0].action == "land"
     assert lst.partials_skipped > 0 and lst.max_backlog_s > 1.0
+
+
+# ---- the matcher must not fire on everyday English (code review finding) ----------------------------
+@pytest.mark.parametrize("text", [
+    "tell me about the person in red", "they laid it down", "a lank rope", "the emergence of spring",
+    "they are lending us a car", "all aboard", "stalk him", "the stops are close", "it stopped raining",
+    "she hovered nearby", "the lands up north",
+])
+def test_everyday_english_is_not_a_command(text):
+    assert match_safety(text) is None, text
+
+
+def test_dictionary_sweep_only_known_words_trigger():
+    """No word of /usr/share/dict/words triggers unless it is a listed safety word or spelling."""
+    import os
+
+    from mhd.intent_spec import SAFETY_WORDS
+    from mhd_ml.agent.words import CTC_VARIANTS, INFLECTIONS, _dictionary
+
+    if not os.path.exists("/usr/share/dict/words"):
+        pytest.skip("no system dictionary")
+    allowed = set(SAFETY_WORDS) | set(INFLECTIONS) | set(CTC_VARIANTS)
+    hits = {w for w in _dictionary() if w.isalpha() and safety_action_for_word(w)}
+    assert hits <= allowed, sorted(hits - allowed)
+
+
+def test_ambiguous_spellings_need_a_pure_safety_utterance():
+    assert match_safety("aboard aboard").action == "land"
+    assert match_safety("aboard now").action == "land"
+    assert match_safety("stalk stalk").action == "hover"
+    assert match_safety("all aboard the train") is None

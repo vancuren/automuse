@@ -37,7 +37,7 @@ from mhd.contracts import now_ms
 
 from .asr_local import ASR_SAMPLE_RATE, OmnilingualRecognizer, get_shared_recognizer
 from .audio import load_wav, resample, speech_bounds
-from .words import SafetyHit, match_safety
+from .words import SafetyHit, match_safety, preload_dictionary
 
 log = logging.getLogger("mhd.agent.safety")
 
@@ -133,6 +133,8 @@ class SafetyListener:
         vcfg = sherpa_onnx.VadModelConfig(silero_vad=silero, sample_rate=ASR_SAMPLE_RATE, num_threads=1)
         self.vad = sherpa_onnx.VoiceActivityDetector(vcfg, buffer_size_in_seconds=30)
         self.rec = recognizer or get_shared_recognizer(num_threads=self.cfg.num_threads)
+        if preload_dictionary() == 0:
+            log.warning("no /usr/share/dict/words: fuzzy matching falls back to the NEAR_MISSES list")
         self.on_hit = on_hit
         self.on_transcript = on_transcript
         # Recent audio by absolute sample index (VAD index == ring index), for pre-roll and partials.

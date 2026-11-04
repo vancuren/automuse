@@ -3,11 +3,17 @@
 CTC output from Omnilingual is lowercase, unpunctuated, and sometimes misspelled ("lan", "stopp").
 Matching works on whole words, never substrings, so "island" and "landscape" do not trigger "land".
 
-Fuzzy matching is deliberately narrow. A false alarm only ever hovers or lands, but in a demo a false
-hover in the middle of "follow the person in the gold shirt" would still be a failure, so:
-- exact matches against mhd.intent_spec.SAFETY_WORDS (which already lists the common CTC misspellings);
-- plus edit distance 1 to a short list of canonical words, only for words of 4+ letters that share the
-  first letter, and never for a real English word that happens to be one edit away (NEAR_MISSES).
+A false alarm only ever hovers or lands, but a false land in the middle of "tell me about the person
+in red" would still end a flight, so fuzzy matching is narrow:
+- exact matches against mhd.intent_spec.SAFETY_WORDS (which already lists some CTC misspellings) and a
+  few inflections;
+- spellings Omnilingual actually produced on the test audio that are not English words (CTC_VARIANTS);
+- two English words it produced for safety words ("aboard" for abort, "stalk" for stop) only when the
+  utterance is nothing but safety words ("aboard aboard", "stalk now");
+- a safety word glued to a filler ("nowland");
+- edit distance 1 to a canonical safety word, same first letter, 4+ letters, and never for an English
+  word: macOS /usr/share/dict/words plus simple inflections ("about", "laid", "lending" are English, so
+  they never match), with NEAR_MISSES as a fallback if the dictionary is missing.
 """
 from __future__ import annotations
 
@@ -24,33 +30,33 @@ FUZZY_CANON = {
     "stop": "hover", "hover": "hover", "freeze": "hover",
 }
 
-# Real words one edit away from a canonical safety word. These never trigger.
+# English words one edit from a canonical safety word (same first letter, 4+ letters). With the
+# dictionary present these are redundant; they are the fallback if /usr/share/dict/words is missing.
 NEAR_MISSES = {
-    # land
-    "lane", "lad", "lard", "laud", "lent", "lens", "lind", "band", "hand", "sand", "wand", "bland",
-    "glad", "lander", "lands",
-    # stop
-    "shop", "step", "stoop", "stomp", "stow", "slop", "sop", "stops", "top", "atop", "stoppable", "swop",
-    "stood", "stork", "store", "story", "stone", "stove",
-    # hover
-    "hovel", "hoover", "homer", "hovers", "cover", "over", "lover", "rover", "mover", "power",
-    # freeze
-    "frieze", "freezer", "breeze", "frees", "freed",
-    # abort
-    "abbot", "aborts",
+    "lane", "lard", "laud", "lent", "lens", "lind", "lands", "laid", "lank", "lend", "lading",
+    "lending", "landings",
+    "shop", "step", "stoop", "stomp", "stow", "slop", "stops", "swop", "stoa", "atop",
+    "hovel", "hoover", "homer", "hovers", "hoven",
+    "frieze", "freezer", "frees", "freed",
+    "about", "aborts",
+    "emergence",
 }
 
 # Inflections that mean the same thing as their safety word (exact match only).
 INFLECTIONS = {"landed": "land", "aborting": "land", "stopping": "hover", "hovering": "hover"}
 
-# Misspellings seen from Omnilingual CTC on `say` test audio (listener only; the keyword grammar, which
-# also reads clean Voice Transcribe text, must not turn "stalk" into hover).
+# Misspellings Omnilingual CTC produced on the `say` test audio that are not everyday words (listener
+# only; the keyword grammar reads clean Voice Transcribe text).
 CTC_VARIANTS = {
-    "landin": "land", "aboard": "land", "abord": "land",
-    "stob": "hover", "stap": "hover", "stalk": "hover", "stog": "hover", "stolk": "hover", "starp": "hover",
-    "stoppe": "hover",
+    "landin": "land", "abord": "land",
+    "stob": "hover", "stap": "hover", "stog": "hover", "stolk": "hover", "starp": "hover", "stoppe": "hover",
     "preeze": "hover", "preese": "hover", "freese": "hover", "freez": "hover",
 }
+
+# English words CTC produced for safety words. They count only when the whole utterance is safety
+# words and fillers: "aboard aboard" lands, "all aboard" does not; "stalk stalk" hovers, "stalk him"
+# does not.
+AMBIGUOUS_VARIANTS = {"aboard": "land", "stalk": "hover"}
 
 # CTC sometimes glues a safety word to a neighbour ("stop now land" -> "stop nowland"). A word that is a
 # safety word plus one of these glue words counts ("nowland", "landnow", "stopit"); "island" does not.
@@ -58,6 +64,47 @@ GLUE = {"now", "please", "then", "and", "it", "right", "so", "just", "ok", "okay
         "there", "you"}
 
 _PUNCT_RE = re.compile(r"[^a-z0-9' ]+")
+
+_DICT: Optional[set] = None
+DICT_PATH = "/usr/share/dict/words"
+
+
+def _dictionary() -> set:
+    """macOS's word list (Webster's 2nd, ~235k base forms), loaded once; empty if missing."""
+    global _DICT
+    if _DICT is None:
+        try:
+            with open(DICT_PATH, encoding="utf-8", errors="ignore") as f:
+                _DICT = {w.strip().lower() for w in f if w.strip()}
+        except OSError:
+            _DICT = set()
+    return _DICT
+
+
+def preload_dictionary() -> int:
+    return len(_dictionary())
+
+
+_SUFFIXES = (("s", ""), ("es", ""), ("ed", ""), ("ed", "e"), ("ing", ""), ("ing", "e"),
+             ("ies", "y"), ("ied", "y"), ("er", ""), ("ers", ""), ("ly", ""), ("'s", ""))
+
+
+def is_english(word: str) -> bool:
+    """In the dictionary, or a simple inflection of a dictionary word ("lending", "stops", "stopped")."""
+    d = _dictionary()
+    if word in d or word in NEAR_MISSES:
+        return True
+    for suf, repl in _SUFFIXES:
+        if word.endswith(suf) and len(word) - len(suf) >= 3 and word[: -len(suf)] + repl in d:
+            return True
+    # "-d" only after an "-e" stem (freed, used): "landd" and "leand" are CTC noise, not English.
+    if word.endswith("ed") and word[:-1] in d:
+        return True
+    for suf in ("ed", "ing", "er"):            # doubled consonant: stopped -> stop
+        stem = word[: -len(suf)] if word.endswith(suf) else ""
+        if len(stem) >= 4 and stem[-1] == stem[-2] and stem[:-1] in d:
+            return True
+    return False
 
 
 def normalize(text: str) -> str:
@@ -101,14 +148,14 @@ def safety_action_for_word(word: str, fuzzy: bool = True) -> Optional[tuple[str,
         return None
     if word in CTC_VARIANTS:
         return CTC_VARIANTS[word], word, True
+    if len(word) < 4 or is_english(word):
+        return None
     for canon in ("land", "stop", "hover", "abort"):
         if len(word) > len(canon) + 1:
             if word.startswith(canon) and word[len(canon):] in GLUE:
                 return FUZZY_CANON[canon], canon, True
             if word.endswith(canon) and word[:-len(canon)] in GLUE:
                 return FUZZY_CANON[canon], canon, True
-    if len(word) < 4 or word in NEAR_MISSES:
-        return None
     for canon, action in FUZZY_CANON.items():
         if word[0] == canon[0] and edit_distance(word, canon, limit=1) <= 1:
             return action, canon, True
@@ -150,6 +197,10 @@ def match_safety(text: str, partial: bool = False, truncated_start: bool = False
     best: Optional[SafetyHit] = None
     for w in ws[lo:hi]:
         r = safety_action_for_word(w, fuzzy=fuzzy)
+        if r is None and fuzzy and w in AMBIGUOUS_VARIANTS and len(ws) <= 4 and all(
+                x in AMBIGUOUS_VARIANTS or x in GLUE or x == "drone" or safety_action_for_word(x, fuzzy=True)
+                for x in ws):
+            r = (AMBIGUOUS_VARIANTS[w], w, True)
         if r is None:
             continue
         action, canon, was_fuzzy = r
