@@ -91,8 +91,12 @@ else built Nov 3-4."
 
 - [ ] Everything merged to `main` (the integrator's job), tests green.
 - [ ] README: replace the status line with the real-flight result, add the video link
-      (`VIDEO_LINK`), replace `OWNER/REPO`, and link the demo stills in `docs/img/`. Check with
-      `grep -rn "OWNER/REPO\|VIDEO_LINK" README.md docs/SUBMISSION.md`.
+      (`VIDEO_LINK`), replace `OWNER/REPO`, and drop "being written tonight" once docs/RUNBOOK.md
+      exists. Check with
+      `grep -rn "OWNER/REPO\|VIDEO_LINK\|being written tonight" README.md docs/SUBMISSION.md`.
+- [ ] Every image in the README loads: `ls docs/img/demo_s1_2_voice_mission_follow.png
+      docs/img/demo_s1_chase_follow.png docs/img/demo_s2_crossing_follow.png` (from the demo
+      workstream).
 - [ ] docs/results.md: add a "Real drone" section with the Session A-C numbers, or say plainly that
       it did not fly.
 - [ ] If more turbodrone files changed tonight, refresh the list in THIRD_PARTY_NOTICES.md:
