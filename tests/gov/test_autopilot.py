@@ -359,3 +359,32 @@ def test_forward_only_toward_a_subject_within_about_6_m():
     d.step(d.obs(cx=700, w=66, h=200))               # 66 px: within the gate
     assert d.step(d.obs(cx=700, w=66, h=200))["pitch"] > 0
 
+
+def test_a_broken_lock_after_a_loss_goes_back_to_lost_not_find():
+    # Demo finding: after LOST, a flaky candidate flapped CONFIRM <-> FIND in the air, and FIND
+    # never searches. A broken lock now returns to LOST (then SEARCH), keeping the give-up timer.
+    d = Driver()
+    d.run(1.3, cx=1000)
+    d.step(d.obs(state="lost", w=0))
+    d.run(3.0, state="searching", w=0)
+    assert d.s.mode in (S.lost, S.search)
+    lost_since = d.s.lost_since_ms
+    d.step(d.obs(cx=700))
+    assert d.s.mode == S.confirm
+    d.step(d.obs(cx=700, score=0.2))                 # the lock breaks
+    assert d.s.mode == S.lost and d.s.lost_since_ms == lost_since
+    d2 = Driver()                                    # from FIND it still goes back to FIND
+    d2.step(d2.obs(cx=700))
+    d2.step(d2.obs(cx=700, score=0.2))
+    assert d2.s.mode == S.find
+
+
+def test_confirm_does_not_flap_on_a_score_at_the_threshold():
+    d = Driver()
+    states = []
+    for i in range(int(1.6 * 25)):
+        d.step(d.obs(cx=700, score=0.51 if i % 2 else 0.47))   # around confirm_min_score 0.5
+        states.append(d.s.mode)
+    flips = sum(1 for a, b in zip(states, states[1:]) if a != b)
+    assert flips <= 2 and d.s.mode == S.follow       # FIND -> CONFIRM -> FOLLOW, no flapping
+

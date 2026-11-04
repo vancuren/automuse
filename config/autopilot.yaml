@@ -64,6 +64,7 @@ forward:
 lifecycle:
   confirm_s: 1.0            # CONFIRM needs this long of consistent lock before FOLLOW
   confirm_min_score: 0.5    # tracker score needed for "consistent lock"
+  confirm_hysteresis: 0.05  # ... and CONFIRM is kept while it stays above 0.45 (no flapping at the threshold)
   confirm_max_jump_frac: 0.15  # box center may move at most this fraction of W between obs in CONFIRM
   follow_min_score: 0.4     # FOLLOW -> DOUBT below this tracker score
   jump_frac: 0.25           # FOLLOW -> DOUBT if the box center jumps more than this fraction of W ...

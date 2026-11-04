@@ -50,6 +50,7 @@ class AutopilotRun:
     last_box: Optional[tuple[float, float, float, float]] = None   # x1, y1, x2, y2 of last good obs
     confirm_track_id: Optional[int] = None
     confirm_since_capture_ms: Optional[float] = None
+    confirm_from: str = "find"                     # where CONFIRM was entered from: "find" or "lost"
     doubt_since_capture_ms: Optional[float] = None
     # last good sighting
     last_seen_bearing: float = 0.0
@@ -205,6 +206,7 @@ def autopilot_step(obs: Optional[SubjectObs], state: AutopilotRun, params: Autop
     if mode == Mode.find:
         if new_obs and _is_candidate(obs, params):
             _begin_confirm(w, obs)
+            w["confirm_from"] = "find"
             enter(Mode.confirm, "candidate")
         elif in_mode_s >= lc.find_timeout_s:
             enter(Mode.give_up, "find_timeout", "I can't find the subject. Holding position.")
@@ -220,9 +222,9 @@ def autopilot_step(obs: Optional[SubjectObs], state: AutopilotRun, params: Autop
                     enter(Mode.follow, "locked", "Got them. Following.")
             else:
                 w["confirm_since_capture_ms"] = None
-                enter(Mode.find, "lock_broken")
+                _back_from_confirm(w, enter, "lock_broken")
         elif since_obs_s > _EVIDENCE_GAP_S:
-            enter(Mode.find, "no_evidence")
+            _back_from_confirm(w, enter, "no_evidence")
 
     elif mode == Mode.follow:
         reason = None
@@ -272,6 +274,7 @@ def autopilot_step(obs: Optional[SubjectObs], state: AutopilotRun, params: Autop
         lost_s = (now_ms - (w["lost_since_ms"] or now_ms)) / 1000.0
         if new_obs and _is_candidate(obs, params):
             _begin_confirm(w, obs)
+            w["confirm_from"] = "lost"
             enter(Mode.confirm, "candidate")       # re-finding always passes through CONFIRM
         elif lost_s >= lc.give_up_s:
             enter(Mode.give_up, "give_up_timeout", "I can't find the subject. Holding position.")
@@ -327,8 +330,22 @@ def _begin_confirm(w: dict, obs: SubjectObs) -> None:
     w["last_box"] = _box_t(obs)
 
 
+def _back_from_confirm(w: dict, enter, reason: str) -> None:
+    """A broken lock returns to where CONFIRM came from. After a loss that is LOST (which goes on to
+    SEARCH, and whose give-up timer keeps running), not FIND, which waits without searching (demo
+    finding: CONFIRM/FIND flapping in the air after a LOST)."""
+    if w["confirm_from"] == "lost" and w["lost_since_ms"] is not None:
+        enter(Mode.lost, reason)
+    else:
+        enter(Mode.find, reason)
+
+
 def _consistent(obs: SubjectObs, w: dict, params: AutopilotConfig) -> bool:
-    if not _is_candidate(obs, params):
+    # Staying in CONFIRM needs a slightly lower tracker score than entering it (hysteresis), so a
+    # score hovering at the threshold does not flap CONFIRM <-> FIND at the observation rate.
+    lc = params.lifecycle
+    if not (_has_box(obs) and obs.state in (SubjectState.candidate, SubjectState.confirmed)
+            and obs.tracker_score >= lc.confirm_min_score - lc.confirm_hysteresis):
         return False
     if w["confirm_track_id"] is not None and obs.track_id is not None and obs.track_id != w["confirm_track_id"]:
         return False

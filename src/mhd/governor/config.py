@@ -419,6 +419,7 @@ class SearchCfg:
 class LifecycleCfg:
     confirm_s: float = 1.0
     confirm_min_score: float = 0.5
+    confirm_hysteresis: float = 0.05   # CONFIRM is kept while the score stays above min - this
     confirm_max_jump_frac: float = 0.15
     follow_min_score: float = 0.4
     jump_frac: float = 0.25
@@ -465,6 +466,8 @@ class AutopilotConfig:
             raise ConfigError("forward.size_lowpass_s must be 0..5")
         if not 1 <= self.lifecycle.doubt_debounce_obs <= 5:
             raise ConfigError("lifecycle.doubt_debounce_obs must be 1..5")
+        if not 0.0 <= self.lifecycle.confirm_hysteresis <= 0.2:
+            raise ConfigError("lifecycle.confirm_hysteresis must be 0..0.2")
         if not 1 <= self.lifecycle.doubt_window_k <= self.lifecycle.doubt_window_obs <= 20:
             raise ConfigError("lifecycle.doubt_window_k / doubt_window_obs must satisfy 1 <= k <= n <= 20")
         if not 0.0 <= self.forward.standoff.back_off_pitch <= 0.2:
