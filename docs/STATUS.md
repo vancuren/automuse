@@ -94,5 +94,5 @@ Tests on `integration`, all passing (730 in total, counting the opt-in UI and fu
 ## Files written outside this folder
 - **Before the rule reached the research agents:** `brew` libsndfile, libvorbis, flac and libogg; `~/.cache/fairseq2`; two Hugging Face model folders. The cleanup commands are in PLAN.md section 13.
 - **At 04:27 ET:** five of my own scratch files went to the macOS temp folder. They were moved back into `.cache/tmp/integrator/` within minutes.
-- **Not from this project, at 05:28 ET:** a new environment in `~/.cache/uv` (Python 3.14 with Playwright). This project runs Python 3.13, and no project script calls `uv` except `sync_envs.sh` with the project cache. The likely source is another app; the Claude desktop app's extensions run `uv` from `~/.local/bin`.
-- **Checking:** a watchdog checked every 4 minutes all night and saw nothing else.
+- **Not from this project, from 05:28 ET:** new environments in `~/.cache/uv`. They come from a separate project, `~/Projects/MetaHackathon` (package `opennode`), which was running `uv run pytest` in its own worktree at 05:34. This project runs Python 3.13, and no project script calls `uv` except `sync_envs.sh` with the project cache.
+- **Checking:** a watchdog checked every 4 minutes until 05:35 and saw nothing else.
