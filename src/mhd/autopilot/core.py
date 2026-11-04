@@ -80,6 +80,7 @@ class AutopilotRun:
     bw_f: Optional[float] = None
     bw_f_ms: Optional[float] = None
     doubt_count: int = 0
+    doubt_hist: tuple = ()                         # last doubt_window_obs FOLLOW obs: True = doubtful
     dbg_e_s: Optional[float] = None
     dbg_gate: str = ""
 
@@ -122,15 +123,18 @@ def _sign(x: float) -> float:
 
 def autopilot_start(state: AutopilotRun, mission_id: str, now_ms: float, *,
                     distance: str = "medium", category: str = "none") -> AutopilotRun:
-    """Begin (or restart) a follow mission: FIND. Keeps the heading estimate, resets the rest."""
+    """Begin (or restart) a follow mission: FIND. Keeps the heading estimate and the backward travel
+    used this flight (a new mission or a resume must not refill the budget), resets the rest."""
     return AutopilotRun(mode=Mode.find, mission_id=mission_id, distance=distance,
                         category=category, entered_ms=now_ms, last_step_ms=state.last_step_ms,
-                        heading=state.heading, heading_hist=state.heading_hist)
+                        heading=state.heading, heading_hist=state.heading_hist,
+                        backward_m=state.backward_m)
 
 
 def autopilot_stop(state: AutopilotRun, now_ms: float) -> AutopilotRun:
     return AutopilotRun(mode=Mode.idle, entered_ms=now_ms, last_step_ms=state.last_step_ms,
-                        heading=state.heading, heading_hist=state.heading_hist)
+                        heading=state.heading, heading_hist=state.heading_hist,
+                        backward_m=state.backward_m)
 
 
 # ----------------------------------------------------------------------------------------------
@@ -153,7 +157,10 @@ def autopilot_step(obs: Optional[SubjectObs], state: AutopilotRun, params: Autop
         hist = hist[1:]
     w["heading_hist"] = hist
     speed = params.plant.forward_speed_per_count * 127.0 * applied_pitch * dt   # metres, + forward
-    w["backward_m"] = max(0.0, state.backward_m - speed)
+    if state.mode != Mode.idle:
+        # Backward travel during missions, open loop on the modeled speed. Forward travel does not
+        # refill it (review: under a reversed sign, "forward" is the drone backing away).
+        w["backward_m"] = state.backward_m + max(0.0, -speed)
 
     if state.mode == Mode.idle:
         return dict(_ZERO), AutopilotRun(**w), events
@@ -221,13 +228,17 @@ def autopilot_step(obs: Optional[SubjectObs], state: AutopilotRun, params: Autop
         reason = None
         if new_obs:
             reason = _doubt_reason(obs, w, state, params)
+            hist = (state.doubt_hist + (reason is not None,))[-lc.doubt_window_obs:]
+            w["doubt_hist"] = hist
             if reason is None:
                 w["doubt_count"] = 0
                 _note_sighting(w, obs, params)
                 w["last_box"] = _box_t(obs)
-            elif reason != "perception_lost" and w["doubt_count"] + 1 < lc.doubt_debounce_obs:
-                # One doubtful frame (a tracker dip, a dropped detection): keep the last good box
-                # for this frame instead of stopping. "lost" and missing observations act at once.
+            elif (reason in _DEBOUNCED_REASONS and w["doubt_count"] + 1 < lc.doubt_debounce_obs
+                  and sum(hist) < lc.doubt_window_k):
+                # One doubtful frame (a tracker dip, a dropped box): keep acting on the last good
+                # box instead of stopping. Never more than doubt_window_k - 1 of the last
+                # doubt_window_obs frames. Lost, track switches and box jumps act at once.
                 w["doubt_count"] += 1
                 reason = None
         elif since_obs_s > _OBS_GAP_DOUBT_S:
@@ -237,6 +248,7 @@ def autopilot_step(obs: Optional[SubjectObs], state: AutopilotRun, params: Autop
             enter(Mode.lost, "confirmation_too_old", "I lost the subject. Looking around.")
         elif reason is not None:
             w["doubt_count"] = 0
+            w["doubt_hist"] = ()
             w["doubt_since_capture_ms"] = obs.capture_ms if new_obs else (w["last_capture_ms"] or now_ms)
             enter(Mode.doubt, reason)
         else:
@@ -250,6 +262,7 @@ def autopilot_step(obs: Optional[SubjectObs], state: AutopilotRun, params: Autop
         if recovered:
             _note_sighting(w, obs, params)
             w["last_box"] = _box_t(obs)
+            w["confirm_track_id"] = obs.track_id      # a new track needed this fresh confirmation
             enter(Mode.follow, "reconfirmed")
         elif in_mode_s >= det_p95_s + lc.doubt_extra_s:
             _enter_lost(w, now_ms)
@@ -279,6 +292,10 @@ def autopilot_step(obs: Optional[SubjectObs], state: AutopilotRun, params: Autop
 
 # ----------------------------------------------------------------------------------------------
 # Evidence helpers
+
+
+# Doubtful observations FOLLOW may ride through for a frame (keeping the last good box).
+_DEBOUNCED_REASONS = frozenset({"no_box", "low_tracker_score"})
 
 
 def _is_new(obs: Optional[SubjectObs], state: AutopilotRun) -> bool:
@@ -327,6 +344,9 @@ def _doubt_reason(obs: SubjectObs, w: dict, state: AutopilotRun, params: Autopil
     lc = params.lifecycle
     if obs.state in (SubjectState.lost, SubjectState.searching):
         return f"perception_{obs.state.value}"
+    if (w["confirm_track_id"] is not None and obs.track_id is not None
+            and obs.track_id != w["confirm_track_id"]):
+        return "track_switch"                 # perception started a new track: maybe someone else
     if not _has_box(obs):
         return "no_box"
     if obs.tracker_score < lc.follow_min_score:
@@ -420,7 +440,7 @@ def _follow_sticks(w: dict, params: AutopilotConfig, now_ms: float, conf_age_now
             w["standoff_since_ms"] = now_ms
         w["dbg_gate"] = "standoff"
         pitch = 0.0
-        if (now_ms - w["standoff_since_ms"]) / 1000.0 >= st.hover_s:
+        if st.back_off_pitch > 0 and (now_ms - w["standoff_since_ms"]) / 1000.0 >= st.hover_s:
             pitch = -min(st.back_off_pitch, fw.cap * fw.back_cap_ratio)
     else:
         w["standoff_since_ms"] = None
@@ -428,10 +448,12 @@ def _follow_sticks(w: dict, params: AutopilotConfig, now_ms: float, conf_age_now
         scale = getattr(fw.category_scale, w["category"], 1.0)
         w_ref = max(1.0, ref_frac * scale * W)
         tau = fw.size_lowpass_s
-        if tau > 0 and w["bw_f"] is not None and w["bw_f_ms"] is not None:
+        if tau > 0 and w["bw_f"] is not None and w["bw_f_ms"] is not None and bw < w["bw_f"]:
             dt_s = max(0.0, (now_ms - w["bw_f_ms"]) / 1000.0)
             w["bw_f"] = w["bw_f"] + (dt_s / (tau + dt_s)) * (bw - w["bw_f"])
         else:
+            # first box, filter off, or the box grew: a subject getting closer is seen at once
+            # (review: a lagging width kept the drone moving toward an approaching walker)
             w["bw_f"] = bw
         w["bw_f_ms"] = now_ms
         e_s = math.log(w_ref / max(1.0, w["bw_f"]))

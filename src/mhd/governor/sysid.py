@@ -144,7 +144,44 @@ def fit_steps(steps: list[Step], samples: list[tuple[float, float, float]], axis
     lags = [r["lag_s"] for r in out if r["lag_s"] is not None]
     if lags:
         fit["lag_s_median"] = float(np.median(lags))
+    fit.update(_direction(out))
     return fit
+
+
+def _direction(recs: list[dict]) -> dict:
+    """Did each clear step move the way the STICK asked? The K/deadband fit above uses absolute
+    values, so it looks the same for a reversed axis; only the signed per-step rates show it.
+    Steps slower than 20 % of the fastest are noise or deadband and do not vote."""
+    big = max((abs(r["rate"]) for r in recs if r["rate"] is not None), default=0.0)
+    votes = []
+    for r in recs:
+        r["moved_commanded_way"] = None
+        if r["rate"] is None or big <= 0 or abs(r["rate"]) < 0.2 * big or r["value"] == 0:
+            continue
+        r["moved_commanded_way"] = (r["rate"] > 0) == (r["value"] > 0)
+        votes.append(r["moved_commanded_way"])
+    agree = sum(votes)
+    if not votes:
+        verdict = "UNDETERMINED"
+    elif agree == len(votes):
+        verdict = "OK"
+    elif agree == 0:
+        verdict = "REVERSED"
+    else:
+        verdict = "MIXED"
+    return {"direction": verdict, "direction_votes": f"{agree}/{len(votes)}"}
+
+
+def direction_message(axis: str, fit: dict) -> str:
+    d, v = fit.get("direction"), fit.get("direction_votes")
+    if d == "OK":
+        return f"[sysid] {axis} direction OK: {v} steps moved the way the stick asked"
+    if d == "REVERSED":
+        return (f"[sysid] !!! {axis.upper()} REVERSED: {v} steps moved the commanded way. The drone moves "
+                f"OPPOSITE to the stick. Do not fly follow. Fix wire.sign.{axis} (scripts/apply_sysid.py "
+                f"does it) and re-run this step test.")
+    return (f"[sysid] !!! {axis} direction {d} ({v} steps moved the commanded way): check by hand "
+            f"(stick {'forward' if axis == 'pitch' else 'right'} for 1 s) before any follow")
 
 
 # ----------------------------------------------------------------------------------------------
@@ -245,6 +282,8 @@ def run(backend: str, axis: str, amps: list[float], hold_s: float, rest_s: float
     path.write_text(json.dumps(result, indent=1))
     print(f"[sysid] fit: K={fit['k_per_count']} per count, deadband={fit['deadband_counts']} counts, "
           f"lag={fit['lag_s_median']} s -> {path}")
+    if measure:
+        print(direction_message(axis, fit))
     return result
 
 

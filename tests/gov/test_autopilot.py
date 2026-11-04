@@ -184,20 +184,96 @@ def test_forward_cap_and_size_deadband():
     assert d2.step(d2.obs(cx=640, w=w_ref * 1.05, h=300))["pitch"] == 0
 
 
-def test_standoff_hover_then_back_off_and_budget():
+def test_standoff_hovers_and_never_backs_off_by_default():
+    # Review (2026-11-04): under a reversed pitch sign a back-off flies toward the person.
+    assert P.forward.standoff.back_off_pitch == 0.0
     d = Driver()
     big = dict(cx=640, w=800, h=650, cy=360)              # too close
     d.run(1.3, **big)
     assert d.s.mode == S.follow
+    pitches = [d.step(d.obs(**big))["pitch"] for _ in range(int(12 * 25))]
+    assert all(p == 0 for p in pitches) and d.s.dbg_gate == "standoff"
+    assert d.s.backward_m == 0.0
+
+
+def test_standoff_back_off_when_configured_stops_at_the_budget():
+    p = replace(P, **{"forward.standoff.back_off_pitch": 0.08})
+    d = Driver(p)
+    big = dict(cx=640, w=800, h=650, cy=360)
+    d.run(1.3, **big)
     assert d.step(d.obs(**big))["pitch"] == 0             # hover first
     d.run(0.6, **big)
     out = d.step(d.obs(**big))
     assert out["pitch"] < 0 and abs(out["pitch"]) <= P.forward.cap * P.forward.back_cap_ratio
-    # keep backing off: the 1 m budget runs out (0.08 x 127 counts x 0.012 m/s = 0.12 m/s -> ~8 s)
-    d.run(12.0, **big)
+    # the 0.5 m budget runs out: 0.08 x 127 x 0.012 = 0.12 m/s -> ~4 s
+    d.run(6.0, **big)
     assert d.step(d.obs(**big))["pitch"] == 0
-    assert d.s.backward_m >= P.forward.backward_budget_m
+    assert d.s.backward_m >= P.forward.backward_budget_m == 0.5
     assert any(e["kind"] == "safety" for e in d.events)
+
+
+def test_backward_budget_is_not_refilled_by_forward_travel_or_a_new_mission():
+    d = Driver()
+    near = dict(cx=640, w=180, h=400)       # closer than the 128 px reference: backs up on the size error
+    d.run(1.3, **near)
+    assert d.s.mode == S.follow and d.step(d.obs(**near))["pitch"] < 0
+    d.run(4.0, **near)                      # 0.125 x 127 x 0.012 = 0.19 m/s: 0.5 m in ~2.6 s
+    assert d.step(d.obs(**near))["pitch"] == 0 and d.s.dbg_gate == "backward_budget"
+    used = d.s.backward_m
+    assert used >= P.forward.backward_budget_m
+    for i in range(50):                     # the subject drifts away: 2 s of forward flight
+        d.step(d.obs(cx=640, w=180 - 2.4 * i, h=400 - 4 * i))
+    assert d.applied["pitch"] > 0
+    assert d.s.backward_m >= used           # forward travel does not refill the budget
+    s2 = autopilot_start(d.s, "m2", d.t)
+    assert s2.backward_m == d.s.backward_m  # nor does a new mission (the governor resets it at takeoff)
+
+
+def test_track_switch_enters_doubt_and_recovers_on_a_fresh_confirmation():
+    d = Driver()
+    d.run(1.3, cx=800)
+    assert d.s.mode == S.follow and d.s.confirm_track_id == 1
+    out = d.step(d.obs(cx=805, track_id=2))          # perception started a new track nearby
+    assert d.s.mode == S.doubt and out["yaw"] == 0 and out["pitch"] == 0
+    d.run(0.3, cx=805, track_id=2, confirm_age_ms=2000.0)   # its confirmation predates the doubt
+    assert d.s.mode == S.doubt
+    d.step(d.obs(cx=805, track_id=2, confirm_age_ms=0.0))
+    assert d.s.mode == S.follow and d.s.confirm_track_id == 2
+    d.run(0.5, cx=805, track_id=2)
+    assert d.s.mode == S.follow
+
+
+def test_alternating_bad_frames_enter_doubt_by_the_third_in_the_window():
+    d = Driver()
+    d.run(1.3, cx=800)
+    for good_between in (True, True):
+        d.step(d.obs(cx=800, score=0.1))
+        assert d.s.mode == S.follow
+        d.step(d.obs(cx=800))
+    d.step(d.obs(cx=800, score=0.1))                 # third doubtful frame within 8
+    assert d.s.mode == S.doubt
+
+
+def test_box_jumps_are_not_debounced():
+    d = Driver()
+    d.run(1.3, cx=640)
+    d.step(d.obs(cx=1100))                           # 460 px > 0.25 W
+    assert d.s.mode == S.doubt
+    d2 = Driver()
+    d2.run(1.3, cx=640, w=180)
+    d2.step(d2.obs(cx=640, w=300))                   # width ratio 1.67 > 1.6
+    assert d2.s.mode == S.doubt
+
+
+def test_a_growing_box_passes_the_width_filter_at_once():
+    d = Driver()
+    d.run(1.3, cx=640, w=110, h=330)                 # farther than the reference: forward
+    assert d.step(d.obs(cx=640, w=110, h=330))["pitch"] > 0
+    out = d.step(d.obs(cx=640, w=170, h=400))        # suddenly closer (ratio 1.55: not a jump)
+    assert out["pitch"] < 0                          # backs off on this very frame
+    d.run(0.5, cx=640, w=170, h=400)
+    out = d.step(d.obs(cx=640, w=110, h=330))        # farther again: shrinking is low-passed
+    assert d.s.bw_f > 160 and out["pitch"] < 0       # (a raw width would already fly forward)
 
 
 def test_feedforward_off_by_default_and_bounded_when_on():

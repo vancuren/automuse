@@ -46,18 +46,23 @@ class Proc:
         return self.p.poll() is None
 
     def stop(self) -> None:
-        if not self.alive():
-            return
-        for sig, wait in ((signal.SIGINT, 6), (signal.SIGTERM, 4), (signal.SIGKILL, 2)):
-            try:
-                os.killpg(self.p.pid, sig)
-            except ProcessLookupError:
-                return
-            try:
-                self.p.wait(wait)
-                return
-            except subprocess.TimeoutExpired:
-                continue
+        if self.alive():
+            for sig, wait in ((signal.SIGINT, 6), (signal.SIGTERM, 4), (signal.SIGKILL, 2)):
+                try:
+                    os.killpg(self.p.pid, sig)
+                except ProcessLookupError:
+                    break
+                try:
+                    self.p.wait(wait)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        try:
+            # Anything left in the session (a mediamtx restarted during shutdown, ffmpeg, Chrome)
+            # would hold its port into the next run.
+            os.killpg(self.p.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
 
 
 def port_free(port: int) -> bool:

@@ -32,17 +32,19 @@ forward:
   kp: 0.6                   # normalized pitch per unit of deadbanded e_s
   cap: 0.40                 # TWIN: forward cap (normalized); the governor caps again in counts (51)
   back_cap_ratio: 0.5       # backward speed is at most half the forward cap
-  backward_budget_m: 1.0    # net backward travel allowed per mission (forward travel does not bank credit)
+  backward_budget_m: 0.5    # backward travel per flight (missions and resumes keep the count; forward
+                            # travel does not refill it; open loop on plant.forward_speed_per_count)
+  size_lowpass_s: 0.6       # box width filter for e_s (gait): a growing box passes at once, shrinking is low-passed
   gate:                     # forward motion only when ALL hold; otherwise yaw-only
     edge_margin_frac: 0.02  # box at least 2% of H from the top and bottom edges
     max_box_h_frac: 0.8     # box height under 0.8 H
     max_abs_bearing_rad: 0.4
     max_confirm_age_s: 1.5  # last detector confirmation under 1.5 s old
-  standoff:                 # too close: hover, then back off slowly
-    max_box_h_frac: 0.85
+  standoff:                 # too close: hover (no back-off: under a reversed pitch sign it would fly
+    max_box_h_frac: 0.85    # toward the person; review 2026-11-04)
     max_box_w_frac: 0.6
     hover_s: 0.5
-    back_off_pitch: 0.08
+    back_off_pitch: 0.0     # > 0 backs off at this pitch after hover_s (within the backward budget)
   ref_width_frac:           # desired box width as a fraction of frame width, by mission distance.
                             # Person ~0.45 m wide, HFOV 75 deg (f = 834 px): w/W = 0.45*834/(1280*d).
                             # Full body in frame (box h < 0.8 H, feet inside the 2% edge margin at a
@@ -67,6 +69,9 @@ lifecycle:
   detector_p95_default_s: 1.5  # until perception reports detector_latency_ms
   detector_period_default_s: 1.0   # detector runs at 1 Hz while following
   doubt_extra_s: 0.5        # DOUBT -> LOST no sooner than detector p95 + this
+  doubt_debounce_obs: 2     # FOLLOW rides through 1 no-box / low-score frame on the last good box ...
+  doubt_window_obs: 8       # ... but DOUBT once doubt_window_k of the last doubt_window_obs frames were
+  doubt_window_k: 3         #     doubtful. Lost, track switch and box jumps go to DOUBT at once.
   lost_confirm_age_min_s: 2.5  # LOST when confirmation age > max(this, 2 x detector period + detector p95)
   find_timeout_s: 25.0      # FIND without any candidate this long: GIVE_UP
   give_up_s: 25.0           # LOST/SEARCH this long: GIVE_UP (hover and announce)
@@ -75,3 +80,5 @@ lifecycle:
     max_deg: 90.0
     yaw: 0.2                # normalized yaw while stepping (0.2 x 127 = 25 counts)
     stare_extra_s: 0.5      # stare for detector p95 + this after each step
+
+twin_only: true             # TWIN: the governor refuses to run in real mode with this file

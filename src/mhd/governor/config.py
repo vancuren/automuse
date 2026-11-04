@@ -157,25 +157,36 @@ class WrongWayCfg:
     # Pitch: sustained forward (or back) command while the box shrinks (or grows) by this much.
     pitch_enabled: bool = True
     pitch_min_cmd: float = 0.08          # mean |applied pitch| over the window (normalized)
-    pitch_min_size_change: float = 0.12  # |log(box width ratio)| over the window
+    pitch_min_size_change: float = 0.06  # |log(box width ratio)| over the window (medians, below)
     # Robustness (integration, 2026-11-04): a walking subject's box width swings with its gait, so
     # the pitch check compares the MEDIAN log width around each window end, over a longer window,
-    # and the condition must persist before it latches a hover. A reversed pitch sign still fires
-    # within about 3 s (test_pitch_wrong_way_hovers).
+    # and the condition must persist before it latches a hover. Thresholds were re-checked in closed
+    # loop against a reversed pitch sign with a 6-count deadband and +/-30 % speed error
+    # (tests/gov/test_reversed_sign_closed_loop.py): it must latch within about 1.5 m of travel.
     pitch_window_thetas: float = 2.0     # pitch check window, in units of theta
     pitch_median_s: float = 0.3          # half-width of the median window at each end
     pitch_persist_s: float = 0.5         # the condition must hold this long before it fires
-    # ... and only while the forward (or back) command is near its cap. A reversed pitch sign drives
-    # the command to the cap as the box keeps shrinking; a correct drone that is merely falling
-    # behind a walker stays below it (integration finding in the twin, 2026-11-04).
-    pitch_min_cap_frac: float = 0.7
-    # Backward half (back commanded, box grew) is off by default: anyone walking toward the drone
-    # outpaces the deliberately slow back-off and would latch a hover. A reversed sign while backing
-    # is bounded by the 1 m backward-travel budget and the standoff rule instead.
-    pitch_check_backward: bool = False
+    # Optionally require the command to be near its cap as well (fraction of the forward cap, or of
+    # the backward cap). 0 = off. Above 0 it blinds the check when the plant is slower than the
+    # model or has an uncompensated deadband (review, 2026-11-04: 11-13 m runaways at 0.7).
+    pitch_min_cap_frac: float = 0.0
+    # Backward half (back commanded and the box grew). On: under a reversed sign "back" flies toward
+    # the subject. It does not latch a hover: it stops all autopilot backing for the rest of the
+    # mission (a person walking up to a correctly backing drone trips it too; then we just hold).
+    pitch_check_backward: bool = True
     # Yaw: the observed bearing change must also be at least this fraction of the predicted one,
     # so a subject that briefly outpaces a correct turn does not look like a reversed yaw sign.
-    yaw_min_ratio: float = 0.8
+    # Kept low until Session B measures K (0.3 still latches at 0.7 x K and a 6-count deadband).
+    yaw_min_ratio: float = 0.3
+    # Pitch probe: before latching a pitch hover, hold pitch at 0 (yaw keeps tracking) and compare how
+    # fast the box shrinks (or grows) without our own forward (back) motion. Faster: the subject is
+    # outpacing a correct drone, so follow again (at most pitch_probe_max_clears times per mission).
+    # Slower or unclear: latch the hover as before. Under a reversed sign the probe is a hover as
+    # well, so it adds no travel toward or away from the subject. pitch_probe_window_s 0 = off.
+    pitch_probe_settle_s: float = 1.0    # let the drone stop before measuring
+    pitch_probe_window_s: float = 1.5    # measure the box rate over this long (medians at both ends)
+    pitch_probe_margin: float = 0.02     # log-width per s by which the rate must get worse to clear
+    pitch_probe_max_clears: int = 2
     # Frozen box: the same box (within frozen_box_px) for frozen_box_s while we turned >= frozen_box_min_turn_rad.
     frozen_box_s: float = 2.0
     frozen_box_px: float = 0.5
@@ -221,6 +232,8 @@ class GovernorConfig:
     mission: MissionCfg = MissionCfg()
     twin_headless_bypass: bool = False
     tick_log: bool = True
+    # config/twin/*.yaml set this: the Governor refuses to run in real mode with such a file.
+    twin_only: bool = False
 
     def validate(self) -> "GovernorConfig":
         """Types are checked by the loader (every float must be finite). Here: ranges. The safety
@@ -261,6 +274,11 @@ class GovernorConfig:
         within("wrong_way.pitch_median_s", self.wrong_way.pitch_median_s, 0.0, 1.0)
         within("wrong_way.pitch_persist_s", self.wrong_way.pitch_persist_s, 0.0, 2.0)
         within("wrong_way.pitch_min_cap_frac", self.wrong_way.pitch_min_cap_frac, 0.0, 1.0)
+        within("wrong_way.pitch_probe_settle_s", self.wrong_way.pitch_probe_settle_s, 0.3, 3.0)
+        within("wrong_way.pitch_probe_window_s", self.wrong_way.pitch_probe_window_s, 0.0, 4.0)
+        within("wrong_way.pitch_probe_margin", self.wrong_way.pitch_probe_margin, 0.005, 0.2)
+        if not 0 <= self.wrong_way.pitch_probe_max_clears <= 5:
+            raise ConfigError("wrong_way.pitch_probe_max_clears must be 0..5")
         within("wrong_way.yaw_min_ratio", self.wrong_way.yaw_min_ratio, 0.0, 2.0)
         within("wrong_way.frozen_box_px", self.wrong_way.frozen_box_px, 0.0, 20.0)
         within("wrong_way.frozen_box_min_turn_rad", self.wrong_way.frozen_box_min_turn_rad, 0.0, 3.0, lo_open=True)
@@ -350,7 +368,7 @@ class StandoffCfg:
     max_box_h_frac: float = 0.85
     max_box_w_frac: float = 0.6
     hover_s: float = 0.5
-    back_off_pitch: float = 0.08
+    back_off_pitch: float = 0.0     # 0 = hover only (review: under a reversed sign "back" is toward them)
 
 
 @dataclass(frozen=True)
@@ -372,11 +390,11 @@ class CategoryScaleCfg:
 @dataclass(frozen=True)
 class ForwardCfg:
     size_deadband: float = 0.08
-    size_lowpass_s: float = 0.6     # low-pass the box width before the size error (gait swings it); 0 = off
+    size_lowpass_s: float = 0.6     # box width filter (gait swings it): growth passes at once, shrinking is low-passed; 0 = off
     kp: float = 0.6
     cap: float = 0.25
     back_cap_ratio: float = 0.5
-    backward_budget_m: float = 1.0
+    backward_budget_m: float = 0.5  # backward travel per flight; forward travel does not refill it
     gate: GateCfg = GateCfg()
     standoff: StandoffCfg = StandoffCfg()
     ref_width_frac: RefWidthCfg = RefWidthCfg()
@@ -402,7 +420,9 @@ class LifecycleCfg:
     detector_p95_default_s: float = 1.5
     detector_period_default_s: float = 1.0
     doubt_extra_s: float = 0.5
-    doubt_debounce_obs: int = 2     # consecutive doubtful observations before DOUBT ("lost" acts at once)
+    doubt_debounce_obs: int = 2     # consecutive doubtful observations before DOUBT (no-box / low-score only)
+    doubt_window_obs: int = 8       # ... and DOUBT anyway once doubt_window_k of the last doubt_window_obs
+    doubt_window_k: int = 3         #     observations were doubtful (alternating bad/good frames)
     lost_confirm_age_min_s: float = 2.5
     find_timeout_s: float = 25.0
     give_up_s: float = 25.0
@@ -417,6 +437,8 @@ class AutopilotConfig:
     yaw: YawCfg = YawCfg()
     forward: ForwardCfg = ForwardCfg()
     lifecycle: LifecycleCfg = LifecycleCfg()
+    # config/twin/*.yaml set this: the Governor refuses to run in real mode with such a file.
+    twin_only: bool = False
 
     def validate(self) -> "AutopilotConfig":
         if not 20.0 <= self.camera.hfov_deg <= 170.0:
@@ -437,6 +459,12 @@ class AutopilotConfig:
             raise ConfigError("forward.size_lowpass_s must be 0..5")
         if not 1 <= self.lifecycle.doubt_debounce_obs <= 5:
             raise ConfigError("lifecycle.doubt_debounce_obs must be 1..5")
+        if not 1 <= self.lifecycle.doubt_window_k <= self.lifecycle.doubt_window_obs <= 20:
+            raise ConfigError("lifecycle.doubt_window_k / doubt_window_obs must satisfy 1 <= k <= n <= 20")
+        if not 0.0 <= self.forward.standoff.back_off_pitch <= 0.2:
+            raise ConfigError("forward.standoff.back_off_pitch must be 0..0.2")
+        if not 0.0 <= self.forward.backward_budget_m <= 2.0:
+            raise ConfigError("forward.backward_budget_m must be 0..2")
         if self.lifecycle.search.max_deg > 180:
             raise ConfigError("lifecycle.search.max_deg must be <= 180")
         if not (self.camera.frame_w == 1280 and self.camera.frame_h == 720):

@@ -16,6 +16,7 @@ Order inside one tick:
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 import threading
@@ -142,6 +143,12 @@ class Governor:
             raise GovernorError("twin_headless_bypass is set: refusing to run in real mode")
         if flight_mode == "real" and not cfg.takeoff.require_heartbeat:
             raise GovernorError("takeoff.require_heartbeat is false: refusing to run in real mode")
+        if flight_mode == "real" and (cfg.twin_only or ap_params.twin_only):
+            # config/twin/*.yaml carry the twin's calibration (bigger caps, deadband compensation,
+            # feed-forward). They must never reach the real drone, whatever path or env var says.
+            which = [n for n, c in (("governor", cfg), ("autopilot", ap_params)) if c.twin_only]
+            raise GovernorError(f"twin-only {' and '.join(which)} config (twin_only: true): "
+                                "refusing to run in real mode")
         cfg.validate()                          # also for configs built in code (replace() skips the loader)
         ap_params.validate()
         logq.install()                          # governor log calls never do I/O on the RC thread
@@ -207,6 +214,10 @@ class Governor:
         self._wrong_way_hold = False
         self._wrong_way_reason: Optional[str] = None
         self._pitch_ww_since: Optional[float] = None    # capture_ms when the pitch condition began
+        self._pitch_last: Optional[tuple] = None         # (mean cmd, t1, t2, s1, s2) of the last true condition
+        self._pitch_probe: Optional[dict] = None         # active pitch probe (see _start_pitch_probe)
+        self._pitch_probe_clears = 0                     # probes that cleared this mission
+        self._back_lockout = False                       # no autopilot backing for the rest of this mission
         self._slew = dict(ZERO)
         self._applied = dict(ZERO)                       # normalized, effective, last tick
         self._yaw_hist: deque = deque(maxlen=150)        # (t_ms, yaw rate rad/s) actually commanded (6 s)
@@ -355,6 +366,9 @@ class Governor:
                 self._obs_hist.clear()
                 self._frozen_box = self._frozen_since = None
                 self._pitch_ww_since = None
+                self._pitch_probe = None
+                self._pitch_probe_clears = 0
+                self._back_lockout = False
                 spoken = self._spoken_at(mission, now)
                 released = spoken > self._hold_ms
                 # Spoken before the last pause / land / E-stop / takeoff: it never moves the drone
@@ -384,6 +398,7 @@ class Governor:
         now = self._clock() if now is None else now
         with self._lock:
             self._ap = autopilot_stop(self._ap, now)
+            self._pitch_probe = None
             self._mission = None
 
     def command(self, cmd: str, *, arm_phrase: Optional[str] = None, pack_id: Optional[str] = None,
@@ -420,6 +435,7 @@ class Governor:
             self._estop_latched = True
             self._set_state(FlightState.estopped, now)
             self._ap = autopilot_stop(self._ap, now)
+            self._pitch_probe = None
             self._mission = None                  # E-stop ends the mission: nothing resumes it later
             self._hold(now)
             return ok()
@@ -458,6 +474,8 @@ class Governor:
             self._timer_land_next_s = self.cfg.flight_timer.land_s
             self._timer_warned = False
             self._hold(now)                       # a takeoff never starts following by itself
+            # The backward-travel budget is per flight: missions and resumes do not refill it.
+            self._ap = dataclasses.replace(self._ap, backward_m=0.0, budget_exhausted_announced=False)
             return ok()
         if cmd == "confirm_touchdown":
             # Only after a landing. A lost takeoff (0x01 never arrived) is cleared with LAND, then
@@ -489,6 +507,7 @@ class Governor:
             self._wrong_way_reason = None
             self._frozen_box = self._frozen_since = None
             self._pitch_ww_since = None
+            self._pitch_probe = None
             if self._ap.mode == AutopilotState.give_up and self._mission is not None:
                 self._ap = autopilot_start(self._ap, self._mission.mission_id, now,
                                            distance=self._mission.intent.distance,
@@ -677,13 +696,47 @@ class Governor:
         ap_sticks = dict(ZERO)
         if self._ap.mode != AutopilotState.idle and now >= self._ap_fault_until:
             ap_sticks = self._step_autopilot(now, ap_allowed, flags)
+            why = None
             if self._ap.mode == AutopilotState.follow and cfg.wrong_way.enabled and not self._wrong_way_hold:
-                why = self._wrong_way_check()
-                if why:
-                    self._wrong_way_hold = True
-                    self._wrong_way_reason = why
-                    self.events.append({"kind": "safety", "text": f"wrong-way ({why}): hovering", "ts_ms": now})
-                    logger.error("[governor] WRONG-WAY detector fired (%s): hovering", why)
+                if self._pitch_probe is not None:
+                    if not ap_allowed:
+                        why = "pitch"               # someone else flew during the probe: no answer, hold
+                    else:
+                        why = self._wrong_way_check(pitch=False) or self._pitch_probe_step(now)
+                else:
+                    why = self._wrong_way_check()
+                    if why == "pitch" and self._pitch_last is not None and self._pitch_last[0] < 0:
+                        # The box grew while backing up: a subject walking up to us, or a reversed
+                        # sign flying us toward them. Either way: no more backing this mission.
+                        self._back_lockout = True
+                        self._pitch_ww_since = None
+                        self.events.append({"kind": "safety", "text": "backing up stopped: the subject got "
+                                            "closer while we backed away", "ts_ms": now})
+                        logger.error("[governor] pitch condition while backing: backing locked out")
+                        why = None
+                    elif why == "pitch" and self._pitch_probe_ok():
+                        self._start_pitch_probe(now)
+                        why = None
+            elif self._pitch_probe is not None and not self._wrong_way_hold:
+                # FOLLOW ended before the probe could answer (subject lost, ...): hold, unless the
+                # mission itself stopped.
+                if self._ap.mode == AutopilotState.idle:
+                    self._pitch_probe = None
+                else:
+                    why = "pitch"
+            if why:
+                self._pitch_probe = None
+                ap_sticks = dict(ZERO)              # the hover starts on this very tick
+                self._wrong_way_hold = True
+                self._wrong_way_reason = why
+                self.events.append({"kind": "safety", "text": f"wrong-way ({why}): hovering", "ts_ms": now})
+                logger.error("[governor] WRONG-WAY detector fired (%s): hovering", why)
+            if self._pitch_probe is not None:
+                ap_sticks["pitch"] = 0.0            # the probe: no forward/back while we compare
+                flags.append("pitch_probe")
+            if self._back_lockout:
+                ap_sticks["pitch"] = max(0.0, ap_sticks["pitch"])
+                flags.append("back_lockout")
         if self._wrong_way_hold:
             flags.append("wrong_way")
             if self._wrong_way_reason:
@@ -869,7 +922,7 @@ class Governor:
             prev_t, prev_v = t, v
         return total, covered
 
-    def _wrong_way_check(self) -> Optional[str]:
+    def _wrong_way_check(self, pitch: bool = True) -> Optional[str]:
         """Returns why the drone is moving the wrong way (a reason string), or None.
 
         yaw (PLAN 4.5 step 5): observed bearing change over 1.5 theta vs. the change predicted from
@@ -908,7 +961,7 @@ class Governor:
         if (abs(observed) > ww.min_change_rad and abs(predicted) > ww.min_change_rad
                 and observed * predicted < 0 and abs(observed) >= ww.yaw_min_ratio * abs(predicted)):
             return "yaw"
-        if ww.pitch_enabled:
+        if ww.pitch_enabled and pitch:
             if self._pitch_condition(t2, theta_ms):
                 if self._pitch_ww_since is None:
                     self._pitch_ww_since = t2
@@ -957,7 +1010,63 @@ class Governor:
         fw = self.ap_params.forward
         cap = fw.cap if mean > 0 else fw.cap * fw.back_cap_ratio
         need = max(ww.pitch_min_cmd, ww.pitch_min_cap_frac * cap)
-        return abs(mean) >= need and grew * math.copysign(1.0, mean) <= -ww.pitch_min_size_change
+        hit = abs(mean) >= need and grew * math.copysign(1.0, mean) <= -ww.pitch_min_size_change
+        if hit:
+            self._pitch_last = (mean, t1, t2, s1, s2)
+        return hit
+
+    # ------------------------------------------------------------------------------------------
+    # Pitch probe: outpacing subject (correct sign) or reversed sign?
+    #
+    # The distance to the subject is proportional to 1/width. With the drone moving at v (forward)
+    # and the subject receding at u, the distance grows at u - v with a correct sign and u + v with
+    # a reversed one. Holding still makes it u in both cases: the subject recedes FASTER (by v) with
+    # a correct sign and SLOWER with a reversed one. Backing up is the mirror image. Rates are in
+    # units of the distance at the start of the probe (1/width relative to its value then), so the
+    # subject getting farther during the probe does not bias them. Only "clearly faster" clears.
+
+    def _pitch_probe_ok(self) -> bool:
+        ww = self.cfg.wrong_way
+        return (ww.pitch_probe_window_s > 0 and self._pitch_last is not None
+                and self._pitch_probe_clears < ww.pitch_probe_max_clears)
+
+    def _start_pitch_probe(self, now: float) -> None:
+        mean, t1, t2, s1, s2 = self._pitch_last
+        q1, q_ref = math.exp(-s1), math.exp(-s2)   # 1/width: distance in units of f x subject size
+        rho_pre = (q_ref - q1) / max(1e-3, (t2 - t1) / 1000.0) / q_ref
+        self._pitch_probe = {"start": now, "dir": 1.0 if mean > 0 else -1.0, "rho_pre": rho_pre, "q_ref": q_ref}
+        self.events.append({"kind": "safety", "text": "pitch check: holding still to compare", "ts_ms": now})
+        logger.warning("[governor] pitch wrong-way condition: probing (hold pitch; recession %.3f/s before)",
+                       rho_pre)
+
+    def _pitch_probe_step(self, now: float) -> Optional[str]:
+        """None while measuring or after a clear; "pitch" to latch the hover."""
+        pr = self._pitch_probe
+        ww = self.cfg.wrong_way
+        a = pr["start"] + ww.pitch_probe_settle_s * 1000.0
+        b = a + ww.pitch_probe_window_s * 1000.0
+        half = ww.pitch_median_s * 1000.0
+        newest = self._obs_hist[-1][0] if self._obs_hist else -INF
+        if newest < b + half:
+            return "pitch" if now > b + half + 3000.0 else None    # no observations: no answer, hold
+        s_a = self._median_log_width(a, half)
+        s_b = self._median_log_width(b, half)
+        if s_a is None or s_b is None:
+            return "pitch"
+        rho_probe = (math.exp(-s_b) - math.exp(-s_a)) / ((b - a) / 1000.0) / pr["q_ref"]
+        worse = (rho_probe - pr["rho_pre"]) * pr["dir"]   # > 0: receding (approaching) faster while still
+        if worse >= ww.pitch_probe_margin:
+            self._pitch_probe = None
+            self._pitch_probe_clears += 1
+            self._pitch_ww_since = None
+            self.events.append({"kind": "safety", "text": "pitch check passed: the subject is outpacing us",
+                                "ts_ms": now})
+            logger.warning("[governor] pitch probe cleared (recession %.3f/s before, %.3f/s holding)",
+                           pr["rho_pre"], rho_probe)
+            return None
+        logger.error("[governor] pitch probe: recession %.3f/s before, %.3f/s holding: our own motion",
+                     pr["rho_pre"], rho_probe)
+        return "pitch"
 
 
     # ==========================================================================================
