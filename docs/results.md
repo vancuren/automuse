@@ -405,7 +405,7 @@ warm-up (torch import 2.3 s, model load 0.4 s).
 | Transcript to valid mission, base Glimmer on Fireworks H200 | 0.83 s p50, 1.25 s p95 | 3 |
 | Button release to intent (whole agent, Spark) | 2.11 s p50, 3.75 s p95 | 4 |
 | Button release to the start of the spoken reply | 2.40 s p50, 3.97 s p95 | 4 |
-| Button release to the mission card in the UI, Glimmer + LoRA on the Mac | 4.3 s (both S1 demo takes) | 1d |
+| Button release to the mission card in the UI, Glimmer + LoRA on the Mac | 4.3 s (all four demo takes) | 1d |
 | Mission to autopilot FOLLOW in the twin (SAM 3.1 MLX) | 1.55-2.51 s | 1c |
 | Spoken "stop" or "land" to the governor (local listener) | about 0 s p50, worst 0.62 s after speech end | 4 |
 
