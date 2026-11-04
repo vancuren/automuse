@@ -128,26 +128,31 @@ default; the 1 m backward-travel budget and the standoff rule bound that case, a
 
 ### 1d. The whole chain with voice (demo takes)
 
-The demo workstream's `scripts/demo_twin.py` runs the same stack plus the voice agent, the Glimmer
-server (our LoRA, answering alone: `intent: glimmer`) and the operator UI (production build, real UI
-heartbeat, so not headless). The operator's lines are `say` recordings fed into the agent's
-microphone input: the push-to-talk command, then "Okay drone, please land now." on the open mic.
-Source: `logs/demo-<stamp>-<take>/demo_result.json` in the ws2/demo worktree, takes recorded by
-03:45 ET. The follow window is the 36.6 s of following that the demo films.
+Source: [docs/ws2/demo.md](ws2/demo.md) (the demo workstream, merged from ws2/demo) and each take's
+`demo_result.json`. `scripts/demo_twin.py` runs the same stack as 1c plus the fine-tuned Glimmer
+(answering alone: `intent: glimmer`), the voice agent and the production UI, with a real UI heartbeat
+(not headless). The operator's lines are `say` recordings fed into the agent's microphone input: the
+push-to-talk command, then "Okay drone, please land now." on the open mic. The follow window runs
+from 5 s after FOLLOW began to the spoken land. These are the takes the demo workstream recommends
+for the video; docs/ws2/demo.md has all seven.
 
-| | S1, 03:24 | S1, 03:36 (README stills) | S2, 03:39 | S3, 03:42 |
-|---|---|---|---|---|
-| Push-to-talk command | "Drone, follow the person in the blue shirt." | same | same | "Drone, follow the green car." |
-| Muse Voice Transcribe ASR time | 177.5 ms | 184.1 ms | 159.5 ms | 196.7 ms |
-| Mission from `glimmer-30b+lora` | 4,029.7 ms: follow, "person in blue shirt", person, blue | 4,038.5 ms, same mission | 3,951.6 ms, same mission | 3,794.9 ms: follow, "green car", car, green |
-| Button release to the mission card in the UI | 4.3 s | 4.3 s | 4.3 s | 4.3 s |
-| Follow window: subject in frame | 100% of 915 frames | 100% of 916 | 94.1% of 916 | 100% of 916 |
-| Follow window: bearing RMS (max) | 0.084 rad (0.132) | 0.082 rad (0.118) | 0.094 rad (0.288) | 0.070 rad (0.125) |
-| Follow window: locked / frames on another actor | 100% / 0 | 98.9% / 0 | 96.2% / 54 (the red walker) | 100% / 0 |
-| Spoken land: heard as, decode time | "oky drone please land now", 270.1 ms | same, 260.7 ms | same, 260.3 ms | same, 248.0 ms |
-| Landing | via voice | via voice | via voice | via voice |
+| | S1, final (03:36) | S2, recommended (03:28) | S3, "green car" (03:42) |
+|---|---|---|---|
+| Push-to-talk command | "Drone, follow the person in the blue shirt." | same | "Drone, follow the green car." |
+| Release to final transcript (Muse Voice Transcribe) | 184 ms | 220 ms | 197 ms |
+| Mission from `glimmer-30b+lora` (our LoRA on the Mac) | 4.04 s: follow, person in blue shirt, person, blue | 4.03 s, same | 3.79 s: follow, green car, car, green |
+| Mission to FOLLOW | 1.53 s | 1.54 s | 1.63 s |
+| Follow window | 36.6 s, 916 frames | 36.4 s, 910 frames | 36.6 s, 916 frames |
+| Bearing RMS / max | 0.082 / 0.118 rad | 0.092 / 0.178 rad | 0.070 / 0.125 rad |
+| Subject in frame | 100% | 94.0% (occlusions) | 100% |
+| Locked / frames on another actor | 98.9% / 0 | 100% / 18 (2.0%) | 100% / 0 |
+| Spoken land: listener decode / LANDING after the line ended | 261 ms / 0.32 s | 286 ms / 0.32 s | 248 ms / 0.26 s |
 
-Final numbers for every take are the demo workstream's (docs/ws2/demo.md once merged).
+Every take landed through the open-mic listener, never the L key. The second S2 take (03:39) put 54
+of 916 follow frames (5.9%) on the red walker, including 1.6 s at the second crossing, which matches
+the e2e S2 result above. Known on camera (docs/ws2/demo.md, Findings 2 and 3): after a deliberate
+landing the autopilot still announces "I lost the subject. Looking around." and its badge flickers
+between FIND and CONFIRM on the ground.
 
 ## 2. Perception gates (G0, G1, G2)
 
@@ -405,7 +410,8 @@ warm-up (torch import 2.3 s, model load 0.4 s).
 | Transcript to valid mission, base Glimmer on Fireworks H200 | 0.83 s p50, 1.25 s p95 | 3 |
 | Button release to intent (whole agent, Spark) | 2.11 s p50, 3.75 s p95 | 4 |
 | Button release to the start of the spoken reply | 2.40 s p50, 3.97 s p95 | 4 |
-| Button release to the mission card in the UI, Glimmer + LoRA on the Mac | 4.3 s (all four demo takes) | 1d |
+| Button release to the mission card in the UI, Glimmer + LoRA on the Mac | 4.3 s in every demo take | 1d |
+| Glimmer mission to autopilot FOLLOW, demo takes | 1.49-1.63 s | 1d |
 | Mission to autopilot FOLLOW in the twin (SAM 3.1 MLX) | 1.55-2.51 s | 1c |
 | Spoken "stop" or "land" to the governor (local listener) | about 0 s p50, worst 0.62 s after speech end | 4 |
 
