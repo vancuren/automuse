@@ -75,3 +75,39 @@ only train runs Glimmer). Repeat `--skip-sam` while they run to refresh the CPU 
   half the GPU; 1 Hz while following about a quarter. 1008 (581 ms) cannot sustain 2 Hz.
 - GPU sharing: SAM detection at 2 Hz keeps the GPU about 50% busy, which will slow Glimmer
   (train) and the twin renderer, and they will slow SAM. Measure again once they run together.
+
+## G0 for SAM: hosted sam-3.1 through the Meta Model API (measured 2026-11-03 23:48 ET)
+
+**Conditions:** home Wi-Fi; the model downloads had finished ("ALL DONE" in `logs/fetch.log`,
+no curl running); GPU idle. Other workstreams may have been calling Meta or Fireworks APIs at
+the same time (not visible from here). Same 12 COCO images and phrases as G1, one call at a
+time, no streaming, `metadata: {include_confidence: "true", mask_encoding: "one_bit"}`.
+Benchmark deadline 10 s (so slow calls get measured); the service uses 2.5 s.
+Reproduce: `$MHD_ML_PY -m mhd_ml.perception.bench_api --n640 30 --n1280 10` (costs $0.10).
+
+| Sent as | calls | round trip p50 ms | p95 ms | max ms | JPEG size | over 2.5 s | errors | mean objects |
+|---|---|---|---|---|---|---|---|---|
+| 640x360 JPEG q85 | 30 | **697** | **1277** | 1915 | 52 KB | 0 | 0 | 7.2 |
+| 1280x720 JPEG q85 | 10 | **724** | **1426** | 1554 | 144 KB | 0 | 0 | 8.3 |
+
+Parse time (special-token text to boxes and masks):
+
+| Parser | 640x360 p50 / p95 ms | 1280x720 p50 / p95 ms |
+|---|---|---|
+| meta_sam_parser, as run in the benchmark (its own mask validation, then a second decode of every mask) | 481 / 1032 | 1557 / 3984 |
+| meta_sam_parser alone (validates every mask: decode + re-encode, pure Python) | about 253 mean | not measured separately |
+| **service path**: key-based record reader + decode only the 3 best masks | **74 / 202** | 286 / 659 |
+
+- Mask payloads are box-local rasters at full source resolution, encoded with an adaptive range
+  coder; meta_sam_parser decodes them in pure Python at about 0.8 us per pixel, so parse cost
+  grows with the number and size of the objects, not with the network.
+- The service's reader follows the documented grammar (parse by key) and returned records
+  identical to meta_sam_parser's on all 40 recorded responses (`tests/percep/test_sam_api.py`
+  replays three of them). It decodes masks with the same package's decoder.
+- Sending 1280x720 instead of 640x360 costs nearly the same round trip but 3x the parse time
+  for no gain at this subject size: **send 640x360**.
+
+**G0 verdict for SAM: go at 640x360.** Round trip p95 1.28 s is within the 1.5 s gate. End to
+end, with parsing, p95 is about 1.5 s, so the API detector runs at 1 Hz or less while
+following, with the local tracker in between, and the 2.5 s deadline drops slow calls.
+Spend: 41 calls, $0.10 (ledger `$MHD_HOME/logs/spend.jsonl`, ws "percep").
