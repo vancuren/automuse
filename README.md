@@ -184,8 +184,10 @@ $MHD_PY scripts/doctor.py         # environment check
 ```
 
 Cloud models need a Meta Model API key: copy `.env.example` to `.env` (gitignored) and fill in
-`MODEL_API_KEY`. The LoRA adapter is not in git; train it with `training/train_mlx.sh full` (77
-minutes and 17.7 GB peak on the M5 Pro), or download it from the release page if one is published.
+`MODEL_API_KEY`. The LoRA adapter is not in git. Train it with
+`$MHD_PY training/generate.py --rebuild && training/train_mlx.sh full` (the first command rebuilds the
+chat files from the committed data; training took 77 minutes and 17.7 GB peak on the M5 Pro), or
+download it from the release page if one is published.
 
 **One-command twin run.** This starts the twin (Chrome renderer, HEVC/RTSP), the governed backend
 and perception, takes off, sends a follow mission, follows for 60 s, lands, and scores the run
