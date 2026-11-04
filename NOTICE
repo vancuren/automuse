@@ -1,0 +1,38 @@
+turbodrone — reverse-engineered control stack for cheap toy drones
+Copyright © 2025 Marshall Richards
+
+This product includes software developed by Marshall Richards
+(turbodrone, https://github.com/marshallrichards/turbodrone).
+
+Portions of this software are based on, or otherwise incorporate, the turbodrone project.
+
+Licensed under the Apache License, Version 2.0. You may obtain a copy of
+the license in the LICENSE file or at <https://www.apache.org/licenses/LICENSE-2.0>.
+
+--------------------------------------------------------------------
+You may add your own attribution notices below; this block must remain.
+--------------------------------------------------------------------
+
+Voice Follow Drone: a voice-directed follow-me camera for the Loiley X69 toy drone
+Copyright 2026 Russell Van Curen
+
+This repository is a fork of turbodrone. The turbodrone code in turbodrone/ was
+imported unchanged from upstream commit 2c09cf8 (this repository's commit 1aff2b5).
+Upstream files that the import missed because of ignore rules were added later,
+byte-identical to 2c09cf8 (commits 09d005e and 15a5f80).
+
+Russell Van Curen modified and deleted some of those turbodrone files in
+November 2026 (the operator UI in turbodrone/frontend, the backend web_server.py,
+and the removed follow plugin). THIRD_PARTY_NOTICES.md lists them, and
+`git diff 1aff2b5 HEAD -- turbodrone/` shows every change.
+
+Everything outside turbodrone/, except the license texts in LICENSE and licenses/,
+was written during the Meta Global AI Developer Hackathon, November 3-4, 2026, and
+is licensed under the Apache License, Version 2.0 (see LICENSE). The code was
+written with AI assistance (Claude Code).
+
+This product uses third-party models and libraries under their own licenses; see
+THIRD_PARTY_NOTICES.md. The SAM 3.1 weights and meta-sam-parser are under the SAM
+License (licenses/SAM_LICENSE.txt). MMS-TTS (facebook/mms-tts-eng) is licensed
+CC-BY-NC 4.0, for non-commercial use only. No model weights are stored in this
+repository.
