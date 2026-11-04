@@ -48,6 +48,7 @@ class GovernorStrategy(ControlStrategy):
         self.alarm = False           # set after any tick exception; telemetry shows it
         self.last_error = None
         self._land_toggle = 0
+        self._last_log = -1e9
 
     def update(self, model, dt, axes) -> None:  # noqa: ARG002 - axes are deliberately ignored
         try:
@@ -87,7 +88,11 @@ class GovernorStrategy(ControlStrategy):
                 land = True
             self._land_toggle = (self._land_toggle + 1) % 5   # every 5th packet: 5 Hz at 25 Hz
             model.land_flag = bool(land and not estop and self._land_toggle == 0)
-            logger.error("[governor] tick failed, neutral fallback: %r", exc)
+            now = time.monotonic()
+            if now - self._last_log >= 5.0:           # stderr I/O on the RC thread: rate-limited
+                self._last_log = now
+                logger.error("[governor] tick failed, neutral fallback (estop=%s, land=%s): %r",
+                             estop, land, exc)
         except Exception:  # noqa: BLE001
             pass
 

@@ -154,6 +154,8 @@ class Governor:
         self._ap = AutopilotRun()
         self._ap_paused = False
         self._ap_fault_until = -INF
+        self._ap_fault_count = 0
+        self._ap_fault_logged_ms = -INF
         self._ap_last_sticks = dict(ZERO)
         self._ap_step_ms = 0.0
         self._wrong_way_hold = False
@@ -536,7 +538,7 @@ class Governor:
                       and not human_active and not self._ap_paused and not self._wrong_way_hold
                       and not video_neutral and not obs_stale and now >= self._ap_fault_until)
         ap_sticks = dict(ZERO)
-        if self._ap.mode != AutopilotState.idle:
+        if self._ap.mode != AutopilotState.idle and now >= self._ap_fault_until:
             ap_sticks = self._step_autopilot(now, ap_allowed, flags)
             if self._ap.mode == AutopilotState.follow and cfg.wrong_way.enabled and not self._wrong_way_hold:
                 if self._wrong_way_check():
@@ -573,8 +575,8 @@ class Governor:
         # 6. Flags.
         takeoff = land = stop = False
         if self._shutdown:
-            land = True
-            stop = self._estop_latched
+            stop = self._estop_latched          # a latched E-stop stays exactly E-stop (0x02)
+            land = not stop
         elif st == FlightState.estopped:
             stop = True
         elif st == FlightState.taking_off and self._takeoff_left > 0:
@@ -631,8 +633,12 @@ class Governor:
                 self._obs, self._ap, self.ap_params, now, can_move=can_move,
                 applied_yaw=self._applied["yaw"], applied_pitch=self._applied["pitch"])
         except Exception:
-            logger.exception("[governor] autopilot step failed: autopilot output neutral")
             self._ap_fault_until = now + self.cfg.autopilot.fault_neutral_s * 1000.0
+            self._ap_fault_count += 1
+            if now - self._ap_fault_logged_ms >= 5000.0:   # stderr I/O on the RC thread: rate-limited
+                self._ap_fault_logged_ms = now
+                logger.exception("[governor] autopilot step failed (%d so far): autopilot neutral",
+                                 self._ap_fault_count)
             return dict(ZERO)
         self._ap_step_ms = (time.perf_counter() - t0) * 1000.0
         if self._ap_step_ms > self.cfg.autopilot.max_step_ms:
@@ -721,13 +727,13 @@ class Governor:
         lag = self.ap_params.plant.yaw_lag_s * 1000.0
         a, b = t1 - lag, t2 - lag
         predicted = 0.0
-        prev_t = None
-        for t, rate in self._yaw_hist:
+        prev_t = prev_rate = None
+        for t, rate in self._yaw_hist:              # the rate sent at prev_t holds until t
             if prev_t is not None and t > a and prev_t < b:
                 seg = (min(t, b) - max(prev_t, a)) / 1000.0
                 if seg > 0:
-                    predicted -= rate * seg
-            prev_t = t
+                    predicted -= prev_rate * seg
+            prev_t, prev_rate = t, rate
         return (abs(observed) > ww.min_change_rad and abs(predicted) > ww.min_change_rad
                 and observed * predicted < 0)
 
