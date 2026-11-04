@@ -407,7 +407,9 @@ warm-up (torch import 2.3 s, model load 0.4 s).
 | Spoken "stop" or "land" to the governor (local listener) | about 0 s p50, worst 0.62 s after speech end | 4 |
 
 Router budget (`config/agent.yaml`): Glimmer's answer wins if it is valid within 2.5 s, otherwise
-the first valid answer; the keyword grammar answers at 5 s (9 s when Glimmer runs locally).
+the first valid answer; the keyword grammar answers at 5 s (9 s when Glimmer runs locally). The
+local LoRA takes about 4 s, so the demo config (`config/demo/agent.yaml`, ws2/demo) runs it alone
+(`intent: glimmer`) with a 9 s window, which is how the demo takes got their 4.0 s Glimmer missions.
 
 ### Control loop (twin, S1 with SAM 3.1)
 
