@@ -77,6 +77,10 @@ honestly.
   and Glimmer running, UI open), screen-record the dashboard while saying "Follow John." The voice
   panel and mission card show the refusal; the reply comes from `mhd.intent_spec.build_reply`, so it
   is exactly "I can't follow someone by identity. Tell me what they're wearing instead."
+- **Which run the numbers come from.** The A5 captions quote the 60 s scripted runs
+  (`scripts/e2e_twin.py`, results.md 1c), while the footage comes from the shorter demo takes
+  (results.md 1d; the S2 demo take at 03:39 had 54 of 916 follow frames on the red walker). Add
+  "60 s scripted run" under the S1/S2 numbers, or quote the take you show.
 - **Model badge.** The mission card shows which model answered (`glimmer-30b+lora`,
   `muse-spark-1.3` or `keyword`) and its latency. Freeze-frame it for A6.
 - **Latency on screen.** The UI's latency panel shows frame age, observation age, detector time and
