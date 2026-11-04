@@ -16,8 +16,8 @@ Built overnight 2026-11-03/04. Every number below says what else was running.
          audio -> Muse Voice Transcribe realtime (streamed while the button is held)
                   (fallbacks: same audio through local Omnilingual; --asr local for edge mode)
          -> hedged router: Glimmer (Fireworks or local) and Spark 1.3 at once,
-            Glimmer wins if valid within 2.5 s, else first valid, else keyword grammar;
-            "stop"/"land" in the command skip the models entirely (safety fast path)
+            Glimmer wins if valid within 2.5 s, else first valid, else keyword grammar at 5 s;
+            a bare "stop" / "land now" skips the models entirely (safety fast path)
          -> follow / hover / land: POST /mission (WS fallback) with model + latency;
             hover / land also POST /command pause / land
             clarify / refuse: spoken and shown only, nothing changes in flight
@@ -34,7 +34,7 @@ Intent schema has no takeoff or E-stop action. The gov backend also refuses anyt
 | Module | Role |
 |---|---|
 | `safety_listener.py` | VAD-gated listener; final decode per VAD segment plus partial decodes every 0.4 s while speech continues; `CommandSender` (HTTP first, WS fallback); CLI with `--file` and `--mic` |
-| `words.py` | transcript normalization and safety-word matching (SAFETY_WORDS + inflections + observed CTC spellings + glued words + edit distance 1, with a near-miss list) |
+| `words.py` | transcript normalization and safety-word matching (SAFETY_WORDS + inflections + observed CTC spellings + glued words + edit distance 1 for non-English words only, checked against `/usr/share/dict/words`) |
 | `asr_meta.py` | Muse Voice Transcribe: `RealtimeSession`, `MetaRealtimeASR` (session per utterance, audio buffered until the ack), `WarmRealtimeASR` (pre-opened session streaming 80 ms silence), `MetaFileASR` (POST /v1/asr/transcribe, multipart `request` JSON + `audio` WAV) |
 | `asr_local.py` | Omnilingual CTC-300M int8 via sherpa-onnx, shared by the listener and `--asr local`; English carrier phrase |
 | `intent.py` | keyword grammar, `ChatIntentClient` (any OpenAI-compatible server, streamed, stops at the first complete valid JSON), `glimmer_client`, `spark_client`, `HedgedRouter` |
@@ -85,6 +85,7 @@ MHD_REAL_API=1 $MHD_ML_PY -m pytest tests/agent -q -k real   # + 2 real Voice Tr
 $MHD_ML_PY -m mhd_ml.agent.bench spark --n 20                # ~$0.07
 $MHD_ML_PY -m mhd_ml.agent.bench voice --n 10 [--rate 16000]
 $MHD_ML_PY -m mhd_ml.agent.bench safety
+$MHD_ML_PY -m mhd_ml.agent.bench noise                       # synthetic propeller noise table
 $MHD_ML_PY -m mhd_ml.agent.bench e2e --intent auto           # 20 scripted commands, ~$0.03
 $MHD_ML_PY scripts/agent/integration_smoke.py [--backend-tree ../gov]   # vs the real backend
 ```
@@ -138,6 +139,9 @@ effort, interleaved):** time to the complete, valid JSON
 | low | 3.58 s | 4.50 s | 20/20 | 20/20 | 421 (382) | $0.047 |
 
 Gate "Spark p95 <= 4 s": **GO at minimal** (low would fail). Minimal is the default.
+Later, interleaved A/B after the code review (10 calls each, minimal): one long-lived HTTPS client
+p50 1.71 s / p95 2.82 s versus a new client per call p50 1.80 s / p95 3.65 s. Server-side outliers
+dominate the tail (one call took 6.5 s with only 80 reasoning tokens), hence the 5 s keyword deadline.
 
 **G0 Voice Transcribe (`say` Samantha, button released 150 ms after speech ends):** end of speech to
 final transcript
@@ -155,28 +159,34 @@ costs the $0.18/hour audio rate while the agent runs).
 
 **Push-to-talk acceptance (PLAN 4.6), 20 scripted commands** through the real service (warm Voice
 Transcribe, Spark minimal since no Glimmer deployment existed yet, keyword fast path, MMS-TTS
-synthesized but muted, fake backend):
+synthesized but muted, fake backend). Two runs, before and after the code-review fixes:
 
-- button release to start of the spoken reply: **p50 2.35 s, p95 3.35 s** (target 4 s / 6 s): pass.
-- release to final transcript p50 210 ms; release to intent p50 2.11 s, p95 2.92 s.
-- right mission: **19/20** (target 18/20). The miss: "follow the guy with the green backpack" ->
-  "person with green backpack" (my checker wanted "man"; fine for SAM).
+| run | release -> reply start p50 / p95 | release -> final p50 | release -> intent p50 / p95 | right mission |
+|---|---|---|---|---|
+| 00:24 | 2.35 s / 3.35 s | 210 ms | 2.11 s / 2.92 s | 20/20 |
+| 01:37 (final code) | 2.40 s / 3.97 s | 236 ms | 2.11 s / 3.75 s | 20/20 |
 
-**Safety listener (local CPU, 2 threads, same concurrent load):** 18/18 safety clips detected, 0/20
-false triggers; latency after speech end p50 ~0 s (partial decodes catch the word before the VAD
-closes the segment), worst 0.64 s; one decode (with carrier) 0.22 s mean; listener CPU about a third
-of one core while someone talks, near zero in silence. Through the whole service in real time, the
+Targets: p50 <= 4 s, p95 <= 6 s, 18/20: **pass**. "Right" = right action, and for follow the same
+colors and things, with "person" accepted for any person noun (Spark often says "person in orange
+vest" for "the cyclist in the orange vest"). Three commands ("hover right here", "land now", "stop")
+took the safety fast path: about 0.4 s to the reply.
+
+**Safety listener (local CPU, 2 threads, same concurrent load), final code:** 18/18 safety clips
+detected, 0/20 false triggers; latency after speech end p50 ~0 s (partial decodes catch the word
+before the VAD closes the segment), worst 0.62 s; one decode (with carrier) 0.19 s mean; listener CPU
+about a quarter of one core while someone talks, near zero in silence. Through the whole service in real time, the
 land command reached the backend within 1.5 s of speech end (`test_spoken_land_during_flight...`).
 
 Synthetic propeller noise (four motor tones + harmonics + broadband, same seeds per setting):
 
-| SNR | 15 dB | 10 dB | 5 dB | 0 dB |
-|---|---|---|---|---|
-| safety words detected (of 17) | 16 | 13 | 6 | 0 |
+| SNR | clean | 15 dB | 10 dB | 5 dB | 0 dB |
+|---|---|---|---|---|---|
+| safety words detected (of 17) | 17 | 16 | 13 | 6 | 0 |
+| worst latency after speech end | 0.62 s | 0.79 s | 0.74 s | 0.74 s | - |
 
-No false triggers at any SNR, nor on 30-60 s of noise alone. VAD thresholds 0.3-0.4 detected no
-more and raised the worst latency to 1.35 s, so the default stays 0.5. Real prop noise must be
-checked in Session B with `mic_check`.
+No false triggers at any SNR (20 neutral sentences each), nor on 30-60 s of noise alone. VAD
+thresholds 0.3-0.4 detected no more and raised the worst latency to 1.35 s, so the default stays 0.5.
+Real prop noise must be checked in Session B with `mic_check`.
 
 Other: Omnilingual load 0.32-0.39 s, decode 0.15 s for a 2 s clip. MMS-TTS: torch import 2.3 s +
 load 0.4 s at warm-up, then 0.12 s ("Landing now.") to 0.47 s (refusal line) per reply.
@@ -193,15 +203,26 @@ Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/l
 - **Partial decodes ignore the last word** (could be the start of "landscape") and the first word of
   a truncated window (could be the end of "island"). Final decodes use every word.
 - **Land beats hover**; one command per action per VAD segment plus a 1 s debounce.
-- **Fuzzy matching stays narrow:** edit distance 1, same first letter, 4+ letters, not a near-miss
-  word. Distance 2 restricted to non-dictionary words was tested and rejected: it turned "shopp"
-  (coffee shop) into stop. Observed CTC spellings are listed explicitly (`stolk`, `stog`, `preeze`,
-  `aboard`, ...) and apply only in the listener, not the grammar ("stalk him" is a refusal).
+- **Fuzzy matching never fires on English.** Edit distance 1, same first letter, 4+ letters, and the
+  word must not be English: `/usr/share/dict/words` plus simple inflections. The code review found
+  that "about" was one edit from "abort", so "tell me about the person in red" would have landed;
+  a test now sweeps the whole dictionary. Distance 2 was tested and rejected ("shopp" became stop).
+  Observed CTC spellings are listed explicitly (`stolk`, `stog`, `preeze`, ...); the English ones
+  ("aboard" for abort, "stalk" for stop) count only in an utterance made of nothing but safety words
+  ("aboard aboard" lands, "all aboard" does not). None of this applies to the grammar.
+- **A trailing safety word is accepted once two partials agree** (0.4 s apart, last two words
+  unchanged), so noise holding the VAD open cannot delay a final "...land" until the segment closes.
 - **Commands go HTTP first** (`POST /command` acknowledges with the flight state), WS fallback.
   Missions too. Voice hover = `pause` (the governor holds position), voice land/abort = `land`.
+  "Delivered" and "accepted" are tracked separately: a governor refusal (HTTP 200 with
+  `{"ok": false, "reason": ...}`) raises an `error` event instead of passing as delivered.
 - **Only follow/hover/land become Missions**; clarify and refuse are spoken only.
-- **Safety fast path in push-to-talk:** a transcript with a safety word answers instantly from the
-  keyword grammar (consequence: "follow the person by the stop sign" hovers).
+- **Safety fast path in push-to-talk only for bare safety commands** ("stop", "land now", "abort
+  abort"). A sentence that also names a subject ("follow the man at the bus stop") goes to the
+  models; the local listener has already paused on its "stop" either way, and the follow mission
+  then resumes the autopilot.
+- **Router deadline 5 s** (was 8 s): after that the keyword grammar answers; late model answers are
+  still logged. One long-lived HTTPS client per model client, warmed at start and every minute.
 - **Spark:** Chat Completions, `response_format` json_schema strict, `reasoning_effort: minimal`,
   `max_completion_tokens: 1024` (reasoning counts against it), no temperature, no tools
   (`tool_choice` only supports auto, so strict schema is the reliable route). Streamed; the client
@@ -214,7 +235,11 @@ Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/l
 - **24 kHz capture by default** (PLAN), 16 kHz for headsets; if a device refuses the rate, the hub
   captures at the device rate and resamples.
 - **Push-to-talk auto-release after 15 s** (lost `ptt_up`).
-- **The listener ignores the agent's own voice** (see gap 4).
+- **The listener ignores the agent's own voice** only in the harmless case (see gap 4), and the agent
+  never says a hover word out loud: a follow reply containing one is spoken as "Following now."
+  (Mission.reply keeps the full text), and such autopilot announcements are not spoken.
+- **TTS queue:** an interrupting line (replies, safety lines) drops only lines queued before it;
+  non-interrupting lines (the reply after "Okay.", announcements) play in order.
 - **Backlog guard:** if the CPU is busy and mic audio backs up by more than 0.3 s, the listener skips
   partial decodes until it catches up (segment decodes always run), so a safety word is never heard
   seconds late behind a decode queue; it logs a warning above 2 s of backlog.
@@ -231,11 +256,11 @@ Spend for this workstream: about **$0.12** of the $3 cap (logged in `$MHD_HOME/l
    or `none` in `config/agent.yaml` (parsing tolerates prose around the JSON).
 3. **Propeller noise:** detection falls off below about 10 dB SNR (table above). Use a headset or a
    mic close to the mouth for flights; the UI LAND button and Esc E-STOP remain the primary controls.
-4. **Echo:** with laptop speakers the listener hears the agent's own voice. While a reply plays (and
-   1.5 s after), a safety word that is part of that reply is ignored (`safety.ignore_own_voice`); a
-   land word is ignored while "Landing now." is audible. An operator's "stop" is never dropped (no
-   reply or announcement contains a hover word). Tested with a stand-in speaker only, not with real
-   speakers and mic; a headset avoids the question entirely.
+4. **Echo:** with laptop speakers the listener hears the agent's own voice. A land word heard while
+   "Landing now." is audible (and 1.5 s after) is ignored, because the drone is already landing
+   (`safety.ignore_own_voice`). Hover words are never ignored, so an operator's "stop" always goes
+   through; the agent avoids saying hover words instead. Tested with a stand-in speaker only, not
+   with real speakers and mic; a headset avoids the question entirely.
 5. **Known false lands (safe direction):** `SAFETY_WORDS` (frozen) maps "lend" and "lan" to land, so
    "lend me a hand" lands; in heavy noise "camera lens" was once heard as "camer land".
 6. The Voice Transcribe file endpoint occasionally doubles a word ("woman woman"); realtime is the default.

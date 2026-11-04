@@ -3,6 +3,7 @@
     $MHD_ML_PY -m mhd_ml.agent.bench spark  --n 20      # Spark: minimal vs low, strict schema
     $MHD_ML_PY -m mhd_ml.agent.bench voice  --n 10      # Voice Transcribe: fresh session, warm session, file
     $MHD_ML_PY -m mhd_ml.agent.bench safety             # local listener on the `say` test set
+    $MHD_ML_PY -m mhd_ml.agent.bench noise              # same, with synthetic propeller noise
     $MHD_ML_PY -m mhd_ml.agent.bench e2e                # 20 scripted commands: release -> reply start
 
 Results go to $MHD_TREE/logs/agent/bench_<name>.json; paid calls are appended to the spend log.
@@ -189,6 +190,38 @@ def bench_safety() -> dict:
             "rows": rows}
 
 
+def bench_noise(snrs=(None, 15, 10, 5, 0), threshold: float = 0.5) -> dict:
+    """Safety listener with synthetic propeller noise mixed in at each SNR (same seeds every run)."""
+    from .asr_local import get_shared_recognizer
+    from .audio import load_wav, speech_bounds
+    from .make_test_audio import items, mix_at_snr, prop_noise
+    from .safety_listener import SafetyConfig, SafetyListener, latency_after_speech_end
+
+    rec = get_shared_recognizer()
+    data = {g: [(it, load_wav(it["abspath"], 16000)[0], i) for i, it in enumerate(items(g)) if it["sample_rate"] == 16000]
+            for g in ("safety", "neutral")}
+    table = {}
+    for snr in snrs:
+        det, fp, lat = 0, 0, []
+        for g, lst_ in data.items():
+            for it, x, i in lst_:
+                y = x if snr is None else mix_at_snr(x, prop_noise(len(x) / 16000 + 0.1, seed=i), snr)
+                _, end = speech_bounds(x, 16000)
+                hits = SafetyListener(SafetyConfig(vad_threshold=threshold), recognizer=rec).process_array(y)
+                if g == "safety":
+                    m = [h for h in hits if h.action == it["expected"]]
+                    if m:
+                        det += 1
+                        lat.append(latency_after_speech_end(m[0], end))
+                elif hits:
+                    fp += 1
+        table["clean" if snr is None else f"{snr} dB"] = {
+            "detected": f"{det}/{len(data['safety'])}", "false_triggers": f"{fp}/{len(data['neutral'])}",
+            "max_latency_s": round(max(lat), 3) if lat else None}
+        print(json.dumps({"snr": snr, **table["clean" if snr is None else f"{snr} dB"]}), flush=True)
+    return {"ts": time.time(), "vad_threshold": threshold, "table": table}
+
+
 async def bench_e2e(intent_mode: str = "spark") -> dict:
     """20 scripted commands through the real service: fake backend, real Voice Transcribe (warm),
     real Spark, MMS-TTS synthesized but muted. Release -> reply start = ptt_up -> TTS playback start."""
@@ -268,20 +301,28 @@ async def bench_e2e(intent_mode: str = "spark") -> dict:
 
 
 def _subject_ok(got: str, want: str) -> bool:
-    """Lenient: every color and head-noun word of the expected phrase appears (guy == man)."""
-    syn = {"guy": "man", "man": "man", "person": "person", "kid": "kid", "child": "kid"}
-    g = {syn.get(w, w) for w in got.lower().split()}
+    """Same subject for segmentation: every color and thing word of the expected phrase appears, and
+    the head noun matches, where "person" stands for any person noun (man, guy, cyclist, woman...)."""
+    from .intent import PERSON
+
+    syn = {"guy": "man", "kid": "child"}
+    g = [syn.get(w, w) for w in got.lower().split()]
+    gset = set(g)
     for w in want.lower().split():
+        w = syn.get(w, w)
         if w in ("in", "with", "the", "a", "wearing"):
             continue
-        if syn.get(w, w) not in g:
-            return False
+        if w in gset:
+            continue
+        if w in PERSON and ("person" in gset or any(x in PERSON for x in gset)):
+            continue
+        return False
     return True
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", choices=["spark", "voice", "safety", "e2e"])
+    ap.add_argument("what", choices=["spark", "voice", "safety", "noise", "e2e"])
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--efforts", default="minimal,low")
     ap.add_argument("--rate", type=int, default=24000)
@@ -294,6 +335,8 @@ def main() -> int:
         res = asyncio.run(bench_voice(min(args.n, 20), args.rate))
     elif args.what == "safety":
         res = bench_safety()
+    elif args.what == "noise":
+        res = bench_noise()
     else:
         res = asyncio.run(bench_e2e(args.intent))
     res["note"] = args.note
