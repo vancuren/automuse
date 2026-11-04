@@ -12,6 +12,16 @@ Screenshots are in `media/ui_screens/` (copied to `$MHD_HOME/media/shared/ui/`):
 - `ui_real_estopped.png`
 - `ui_real_disconnected.png`
 - `ui_gov_backend_twin_no_video.png`: the UI on the real governor backend.
+- `ui_demo_mock.mp4`: a 36 s, 1080p, 25 fps recording of the dashboard on the mock, showing the whole story:
+  1. takeoff;
+  2. a held-Space voice mission, its transcript, and the mission card with model badge and latency;
+  3. FIND, then CONFIRM, then a look-alike pick, then FOLLOW, with the mask and sticks steering;
+  4. DOUBT;
+  5. Esc E-STOP;
+  6. a link drop with the DISCONNECTED banner and LAND over HTTP;
+  7. auto-reconnect.
+
+  Regenerate it with `$MHD_PY turbodrone/frontend/mock/record_demo.py`. It uses Chrome's CDP screencast and the system ffmpeg, because Playwright's own video needs an ffmpeg download I did not make.
 
 ## Run it
 
