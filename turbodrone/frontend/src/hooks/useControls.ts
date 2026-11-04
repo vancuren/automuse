@@ -95,6 +95,15 @@ export function useControls(opts: { flightState: FlightState | null }) {
   const sockRef = useRef<ReconnectingSocket | null>(null);
   const flightStateRef = useRef<FlightState | null>(opts.flightState);
   flightStateRef.current = opts.flightState;
+  // When telemetry last showed each safety command in effect (performance.now()). A command
+  // confirmed at any moment after it was sent is never re-sent, even if the state moved on
+  // (for example an E-STOP followed quickly by a reset).
+  const confirmedAtRef = useRef<Record<string, number>>({});
+  useEffect(() => {
+    for (const command of SAFETY_COMMANDS) {
+      if (safetyConfirmed(command, opts.flightState)) confirmedAtRef.current[command] = performance.now();
+    }
+  }, [opts.flightState]);
 
   /* ------- state that triggers re-renders ------- */
   const [axes, setAxes] = useState<Axes>({ ...ZERO_AXES });
@@ -164,8 +173,10 @@ export function useControls(opts: { flightState: FlightState | null }) {
         if (safety) {
           // Belt and braces: if telemetry does not show the command took effect, the socket
           // may be open but unread. Send it again over HTTP (both are idempotent).
+          const sentAt = performance.now();
           setTimeout(() => {
             if (safetyConfirmed(command, flightStateRef.current)) return;
+            if ((confirmedAtRef.current[command] ?? -1) >= sentAt) return;
             void postCommandWithRetry(msg, 4).then((ok) =>
               report({
                 command,

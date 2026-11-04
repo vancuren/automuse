@@ -209,6 +209,20 @@ def test_estop_is_resent_over_http_when_the_socket_is_open_but_unread(ui, mock_b
     mock_backend.control(ws_mode="normal")
 
 
+def test_a_confirmed_estop_is_not_reasserted_after_a_quick_reset(ui, mock_backend):
+    """E-STOP confirmed by telemetry, then reset within the 600 ms re-send window: the UI must
+    not fire the E-STOP again over HTTP."""
+    import httpx
+
+    ui.keyboard.press("Escape")
+    ui.wait_for_selector(f'{sel("flight-state")}[data-state="ESTOPPED"]', timeout=2000)
+    httpx.post(mock_backend.url + "/command", json={"type": "cmd", "command": "estop_reset"})
+    ui.wait_for_selector(f'{sel("flight-state")}[data-state="ON_GROUND"]', timeout=2000)
+    time.sleep(1.2)
+    assert mock_backend.commands("estop", "http") == [], "E-STOP re-asserted after reset"
+    assert len(mock_backend.commands("estop", "ws")) == 1
+
+
 def test_l_lands_over_the_socket_and_over_http_when_down(ui, mock_backend):
     ui.click(sel("takeoff-btn"))
     ui.wait_for_selector(f'{sel("flight-state")}[data-state="TAKING_OFF"]', timeout=2000)
