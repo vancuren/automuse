@@ -449,21 +449,16 @@ def test_pitch_wrong_way_hovers(rig):
     r.following(cx=640, w=100, h=300)       # small box: the autopilot flies forward
     r.run(0.5)
     assert r.tick().wire["pitch"] > 128
-    state = {"w": 100.0}
-
-    def fn(t):                               # ... but the box keeps shrinking (pitch reversed)
-        state["w"] = max(30.0, state["w"] * 0.997)
-        r._fid += 1
-        return make_obs(r._fid, t - r.obs_latency, cx=640 + (r._fid % 2), w=state["w"], h=state["w"] * 3)
-    r.obs_fn = fn
-    outs = [r.tick() for _ in range(r.ticks_for(5.0))]
-    fired = next((i for i, o in enumerate(outs) if "wrong_way:pitch" in o.safety_flags), None)
-    # Bound relaxed from 3.0 s to 4.5 s (integration, 2026-11-04): the check now requires a near-cap
-    # forward command, so a correct drone falling behind a walker never latches a hover. A reversed
-    # pitch sign drives the command to the cap and still fires (here at about 4.1 s). The primary
-    # protection is the Session B sign check before any autonomy.
-    assert fired is not None and fired * TICK_MS / 1000.0 <= 4.5
-    assert all(o.wire["pitch"] == 128 for o in outs[fired + 1:])
+    r.obs_fn = _Plant(r, d0=3.75, u=0.0, sign=-1.0)    # ... but the pitch sign is reversed
+    outs = [r.tick() for _ in range(r.ticks_for(12.0))]
+    flagged = lambda o: "pitch_probe" in o.safety_flags or "wrong_way:pitch" in o.safety_flags  # noqa: E731
+    held = next((i for i, o in enumerate(outs) if flagged(o)), None)
+    # The condition fires within a few seconds; the pitch probe holds pitch at once, and since
+    # holding still stops the shrinking, it latches the hover about 3.5 s later.
+    assert held is not None and held * TICK_MS / 1000.0 <= 6.0
+    latched = next((i for i, o in enumerate(outs) if "wrong_way:pitch" in o.safety_flags), None)
+    assert latched is not None and (latched - held) * TICK_MS / 1000.0 <= 4.5
+    assert all(o.wire["pitch"] == 128 for o in outs[held:])
 
 
 def test_pitch_check_quiet_when_approach_works(rig):
@@ -514,21 +509,124 @@ def test_pitch_check_quiet_when_a_walker_recedes_below_the_cap(rig):
     assert not any("wrong_way" in o.safety_flags for o in outs)
 
 
-def test_pitch_check_ignores_a_subject_walking_toward_a_backing_drone(rig):
-    # Integration finding (SAM run in the twin): a walker approaching faster than the deliberately
-    # slow back-off made the box grow while backing up, which latched a hover.
-    r = rig()
-    r.following(cx=640, w=260, h=500)         # too close: the autopilot backs up
-    state = {"w": 260.0}
+def _approaching_subject(r):
+    state = {"w": 200.0}
 
     def fn(t):
-        state["w"] = min(330.0, state["w"] * 1.002)   # ... but the subject keeps approaching
+        state["w"] = min(330.0, state["w"] * 1.002)   # the subject keeps approaching
         r._fid += 1
         return make_obs(r._fid, t - r.obs_latency, cx=640 + (r._fid % 2), w=state["w"], h=500)
-    r.obs_fn = fn
-    outs = [r.tick() for _ in range(r.ticks_for(6.0))]
-    assert any(o.wire["pitch"] < 128 for o in outs)          # it does back up
+    return fn
+
+
+def test_box_growing_while_backing_locks_out_backing_without_a_hover(rig):
+    # A person walking up to a correctly backing drone, or a reversed pitch sign flying it toward
+    # them: either way the box grows while it backs up. Review (2026-11-04): check it, and stop all
+    # autopilot backing for the rest of the mission instead of latching a hover.
+    r = rig()
+    r.following(cx=640, w=200, h=500)         # closer than the reference: the autopilot backs up
+    r.obs_fn = _approaching_subject(r)
+    outs = [r.tick() for _ in range(r.ticks_for(8.0))]
+    assert any(o.wire["pitch"] < 128 for o in outs)          # it did back up at first
+    lock = next((i for i, o in enumerate(outs) if "back_lockout" in o.safety_flags), None)
+    assert lock is not None
+    assert all(o.wire["pitch"] >= 128 for o in outs[lock:])  # and never again after the lockout
     assert not any("wrong_way" in o.safety_flags for o in outs)
+    assert any(e.get("kind") == "safety" and "backing up stopped" in e.get("text", "") for e in r.g.drain_events())
+    r.g.set_mission(make_mission(mid="m2"))                  # a new mission may back up again
+    assert "back_lockout" not in r.tick().safety_flags
+
+
+def test_backward_check_can_be_switched_off(rig):
+    r = rig(gov_overrides={"wrong_way.pitch_check_backward": False})
+    r.following(cx=640, w=200, h=500)
+    r.obs_fn = _approaching_subject(r)
+    outs = [r.tick() for _ in range(r.ticks_for(6.0))]
+    assert not any("back_lockout" in o.safety_flags or "wrong_way" in o.safety_flags for o in outs)
+    assert any(o.wire["pitch"] < 128 for o in outs)
+    assert r.g.autopilot.dbg_gate == "backward_budget"       # only the 0.5 m budget stopped it
+
+
+class _Plant:
+    """Distance to the subject driven by the governor's own applied pitch (1.524 m/s per unit, the
+    modeled 0.012 m/s per count): distance' = u - sign * v. Box width = 375 / distance."""
+
+    def __init__(self, r, d0: float, u: float, sign: float = 1.0):
+        self.r, self.d, self.u, self.sign = r, d0, u, sign
+
+    def __call__(self, t):
+        v = self.r.g._applied["pitch"] * 0.012 * 127.0
+        self.d = max(1.0, self.d + (self.u - self.sign * v) * TICK_MS / 1000.0)
+        self.r._fid += 1
+        w = 375.0 / self.d
+        return make_obs(self.r._fid, t - self.r.obs_latency, cx=640 + (self.r._fid % 2), w=w, h=min(600.0, 3 * w))
+
+
+def _probe_starts(outs):
+    return sum(1 for a, b in zip(outs, outs[1:]) if "pitch_probe" in b.safety_flags and "pitch_probe" not in a.safety_flags)
+
+
+def test_pitch_probe_clears_when_the_subject_outpaces_a_correct_drone(rig):
+    r = rig()
+    r.following(cx=640, w=110, h=330)
+    plant = _Plant(r, d0=375.0 / 110, u=0.6)          # walks away faster than the 0.38 m/s cap
+    r.obs_fn = plant
+    outs = [r.tick() for _ in range(r.ticks_for(7.0))]
+    assert _probe_starts(outs) == 1
+    assert not any("wrong_way" in o.safety_flags for o in outs)
+    assert "pitch_probe" not in outs[-1].safety_flags and outs[-1].wire["pitch"] > 128   # following again
+    assert any(e.get("kind") == "safety" and "pitch check passed" in e.get("text", "") for e in r.g.drain_events())
+
+
+def test_pitch_probe_latches_when_holding_still_stops_the_shrink(rig):
+    r = rig()
+    r.following(cx=640, w=110, h=330)
+    r.obs_fn = _Plant(r, d0=375.0 / 110, u=0.0, sign=-1.0)   # stationary subject, reversed pitch sign
+    outs = [r.tick() for _ in range(r.ticks_for(12.0))]
+    assert _probe_starts(outs) == 1
+    latched = next((i for i, o in enumerate(outs) if "wrong_way:pitch" in o.safety_flags), None)
+    assert latched is not None
+    start = next(i for i, o in enumerate(outs) if "pitch_probe" in o.safety_flags)
+    assert all(o.wire["pitch"] == 128 for o in outs[start + 1:])
+
+
+def test_pitch_probe_clears_are_limited_per_mission(rig):
+    r = rig()
+    r.following(cx=640, w=110, h=330)
+    r.obs_fn = _Plant(r, d0=375.0 / 110, u=1.2)      # far faster than the drone can follow
+    outs = [r.tick() for _ in range(r.ticks_for(40.0))]
+    max_clears = r.g.cfg.wrong_way.pitch_probe_max_clears
+    assert _probe_starts(outs) == max_clears
+    assert "wrong_way:pitch" in outs[-1].safety_flags
+
+
+def test_twin_only_configs_are_refused_in_real_mode(tmp_path):
+    twin_gov = load_governor_config(ROOT / "config" / "twin" / "governor.yaml")
+    twin_ap = load_autopilot_config(ROOT / "config" / "twin" / "autopilot.yaml")
+    gov, ap = load_governor_config(), load_autopilot_config()
+    assert twin_gov.twin_only and twin_ap.twin_only and not gov.twin_only and not ap.twin_only
+    for g, a in ((twin_gov, ap), (gov, twin_ap), (twin_gov, twin_ap)):
+        with pytest.raises(GovernorError, match="twin-only"):
+            Governor(g, a, "real", log_dir=tmp_path, tick_log=False, persist_timer=False)
+    Governor(twin_gov, twin_ap, "twin", log_dir=tmp_path, tick_log=False, persist_timer=False).close()
+    Governor(gov, ap, "real", log_dir=tmp_path, tick_log=False, persist_timer=False).close()
+
+
+def test_backward_budget_is_per_flight(rig):
+    import dataclasses
+    r = rig()
+    r.following(cx=640, w=128, h=380)
+    r.g._ap = dataclasses.replace(r.g._ap, backward_m=0.4)
+    r.g.set_mission(make_mission(mid="m2"))          # a new mission keeps what this flight used
+    assert r.g.autopilot.backward_m == pytest.approx(0.4)
+    assert r.g.command("resume").ok
+    assert r.g.autopilot.backward_m == pytest.approx(0.4)
+    assert r.g.command("land").ok
+    r.run(1.0)
+    assert r.g.command("confirm_touchdown").ok
+    r.tick(2)
+    assert r.g.command("takeoff").ok                 # a new flight starts with the whole budget
+    assert r.g.autopilot.backward_m == 0.0
 
 
 def test_frozen_box_while_turning_hovers(rig):

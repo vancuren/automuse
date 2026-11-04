@@ -68,6 +68,37 @@ def test_fit_recovers_gain_deadband_and_lag():
     assert fit["lag_s_median"] == pytest.approx(lag_true, abs=0.15)
 
 
+def _pitch_steps(moves_with_stick: bool):
+    """Synthetic pitch steps: forward speed = -d(range)/dt; a correct axis closes on the marker for
+    a positive stick."""
+    k, db = 0.012, 6.0
+    steps, samples, t, rng_m = [], [], 0.0, 3.0
+    for counts in (13, -13, 25, -25, 32, -32):
+        st = Step("pitch", counts / 127.0, 1.5, 1.0, t_start_ms=t, t_end_ms=t + 1500.0, wire_count=counts)
+        steps.append(st)
+        for i in range(int(2.5 * 15)):
+            tt = t + i * 1000.0 / 15
+            moving = st.t_start_ms + 200.0 <= tt <= st.t_end_ms
+            v = k * math.copysign(max(0.0, abs(counts) - db), counts) if moving else 0.0
+            rng_m -= (v if moves_with_stick else -v) / 15.0
+            samples.append((tt, 0.0, rng_m + np.random.default_rng(i).normal(0, 0.002)))
+        t += 2500.0
+    return steps, samples
+
+
+def test_fit_reports_the_direction_and_flags_a_reversed_axis():
+    from mhd.governor.sysid import direction_message
+    ok = fit_steps(*_pitch_steps(True), "pitch")
+    rev = fit_steps(*_pitch_steps(False), "pitch")
+    # the K / deadband fit uses absolute values, so it cannot tell the two apart ...
+    assert ok["k_per_count"] == pytest.approx(rev["k_per_count"], rel=0.05)
+    # ... the per-step signed rates can
+    assert ok["direction"] == "OK" and rev["direction"] == "REVERSED"
+    assert all(r["moved_commanded_way"] is False for r in rev["steps"] if r["moved_commanded_way"] is not None)
+    assert "REVERSED" in direction_message("pitch", rev) and "Do not fly follow" in direction_message("pitch", rev)
+    assert "OK" in direction_message("pitch", ok)
+
+
 @pytest.fixture
 def marker_stream(tmp_path):
     from test_rtsp_integration import _mediamtx, _port_open
