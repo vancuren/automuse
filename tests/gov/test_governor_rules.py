@@ -347,6 +347,19 @@ def test_flight_timer_warns_then_lands_and_persists(rig, tmp_path):
     assert r.g.command("pack_swap", pack_id="2").ok and r.g.flight_timer.flight_s() == 0.0
 
 
+def test_button_style_land_presses_then_releases_and_repeats(rig):
+    # Our Lewei unit lands on a ~2 s press of 0x80 followed by a release (bench 13:22), not on pulses or a hold.
+    r = rig(gov_overrides={"landing.press_s": 2.0, "landing.release_s": 6.0})
+    r.airborne()
+    assert r.g.command("land").ok
+    flags = [r.tick().land for _ in range(r.ticks_for(16.0))]
+    per_s = r.ticks_for(1.0)
+    assert all(flags[: 2 * per_s - 1])                       # pressed for the first 2 s
+    assert not any(flags[2 * per_s + 1: 8 * per_s - 1])      # released for the next 6 s
+    assert all(flags[8 * per_s + 1: 10 * per_s - 1])         # pressed again
+    assert r.g.state == FlightState.landing
+
+
 def test_a_long_landing_state_adds_no_phantom_flight_time(rig):
     # 2026-11-04: the drone switched itself off while the governor sat in LANDING for minutes; that time
     # was counted as flight, and the next TAKEOFF was landed at once by the flight timer (no 0x01 sent).

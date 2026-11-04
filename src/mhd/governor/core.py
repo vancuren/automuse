@@ -792,6 +792,12 @@ class Governor:
         elif st == FlightState.taking_off and self._takeoff_left > 0:
             takeoff = True
             self._takeoff_left -= 1
+        elif st == FlightState.landing and cfg.landing.press_s > 0:
+            # Button-style LAND (our Lewei unit's flight controller, 2026-11-04): it lands on a press of
+            # about 2 s followed by a release. Held nonstop it never lands, and single-packet pulses do not
+            # register. Press press_s, release release_s, repeat for as long as LANDING lasts.
+            cycle_ms = (cfg.landing.press_s + cfg.landing.release_s) * 1000.0
+            land = (now - self._state_since) % cycle_ms < cfg.landing.press_s * 1000.0
         elif st == FlightState.landing:
             # Fixed 200 ms grid (not "200 ms after the last one"), so the average is exactly
             # reassert_per_s even when the RC loop runs slower than 25 Hz; no burst after a stall.

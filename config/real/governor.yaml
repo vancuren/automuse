@@ -77,8 +77,9 @@ takeoff:
                             # false is refused in real mode.
 
 landing:
-  reassert_per_s: 25        # [set 2026-11-04 16:01: Session A 15:54, LAND pulsed 5/s did NOT stop the Lewei board's motors;
-                            # 0x80 held in every packet did (props-off bench test 13:22). 25 = every RC packet.]
+  reassert_per_s: 5         # (unused while press_s > 0)
+  press_s: 2.0              # [set 2026-11-04 16:30: button-style LAND for our Lewei unit. Pulsed 5/s (Session A 15:54)
+  release_s: 6.0            # and held nonstop (16:19) did not stop the motors; 2 s held then released did (bench 13:22).]
   throttle_ramp: false      # Fallback if Session A shows 0x80 does not land: while LANDING, also ramp the
                             # throttle stick down (the land flag is still re-asserted). Tune in the twin,
                             # check at low height in Session B before relying on it.

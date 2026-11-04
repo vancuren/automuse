@@ -130,6 +130,8 @@ class LandingCfg:
     throttle_ramp: bool = False      # PLAN 4.5 fallback if Session A shows 0x80 does not land
     throttle_down: float = 0.35      # normalized throttle reached by the ramp (sent as -throttle_down)
     throttle_ramp_s: float = 1.0     # time to reach it
+    press_s: float = 0.0             # >0: button-style LAND (hold 0x80 press_s, release release_s, repeat)
+    release_s: float = 6.0           #     instead of the reassert_per_s grid (our Lewei unit's controller)
 
 
 @dataclass(frozen=True)
@@ -264,6 +266,8 @@ class GovernorConfig:
         within("takeoff.hold_s", self.takeoff.hold_s, 0.0, 10.0)
         within("takeoff.packets", self.takeoff.packets, 1, 25)
         within("landing.reassert_per_s", self.landing.reassert_per_s, 0.0, 25.0, lo_open=True)
+        within("landing.press_s", self.landing.press_s, 0.0, 10.0)
+        within("landing.release_s", self.landing.release_s, 0.2, 30.0)
         within("flight_timer.warn_s", self.flight_timer.warn_s, 0.0, 600.0, lo_open=True)
         within("flight_timer.land_s", self.flight_timer.land_s, 0.0, 600.0, lo_open=True)
         within("flight_timer.refire_after_s", self.flight_timer.refire_after_s, 1.0, 120.0)
