@@ -352,6 +352,8 @@ class Demo:
         self.t_mark0 = None
         self.wall_minus_mono = time.time() - time.monotonic()
         self.stills_raw: dict[str, bytes] = {}
+        self.cast_frames: list[tuple[float, str]] = []
+        self.t_chase0 = self.t_chase1 = None
 
     # ---- helpers -------------------------------------------------------------------------------
     def mark(self, name: str, **extra) -> None:
@@ -540,6 +542,7 @@ class Demo:
             await asyncio.sleep(2.5)                     # chase iframe and camera settle after the reset
             cdp = await ctx.new_cdp_session(page)
             cast = Screencast(cdp, frames_dir)
+            self.cast_frames = cast.frames                 # the same list: filled while recording
             twin_control(record_chase=True)
             self.t_chase0 = time.monotonic()
             await cast.start()
@@ -562,7 +565,6 @@ class Demo:
             await asyncio.wait_for(tele, 3)
         except Exception:
             pass
-        self.cast_frames = cast.frames
 
     async def story(self, page) -> None:
         a = self.args
@@ -680,6 +682,9 @@ class Demo:
         name = f"demo-{self.take}-{self.stamp}"
         ui_mp4 = self.media / f"{name}-ui.mp4"
         frames = self.cast_frames
+        if not frames:
+            self.result["ui_video"] = {"error": "nothing was recorded"}
+            return
         # CDP timestamps are wall-clock seconds; map them onto the monotonic clock of the marks.
         t_video0_mono = frames[0][0] - self.wall_minus_mono if frames else self.t_mark0
         self.result["video_t0_minus_mark0_s"] = round(t_video0_mono - self.t_mark0, 3) if frames else None
@@ -693,7 +698,7 @@ class Demo:
         raw = sorted((self.out / "twin_media").glob("chase-*.mp4"))
         if raw:
             chase_mp4 = self.media / f"{name}-chase.mp4"
-            wall = self.t_chase1 - self.t_chase0
+            wall = (self.t_chase1 or time.monotonic()) - self.t_chase0
             ctrack = self.soundtrack(self.t_chase0, wall, self.out / "soundtrack_chase.wav") \
                 if not self.args.no_audio else None
             raw_info = probe(raw[-1])
@@ -797,6 +802,8 @@ class Demo:
             "partials": len(pick("partial")), "errors": [e["text"] for e in pick("error")],
             "tts": [{"text": e["text"], "duration_s": e["duration_s"]} for e in ev if e.get("type") == "tts"]}
         # Voice Transcribe bills audio seconds: one session per push-to-talk utterance (warm_session off).
+        if "wav" not in self.result:
+            return
         secs = sum(self.result["wav"][k]["s"] for k in ("command",)) + 1.0
         self.result["spend"] = {"voice_transcribe_audio_s": round(secs, 1), "est_usd": round(secs / 3600 * 0.18, 5)}
         with open(HOME / "logs" / "spend.jsonl", "a") as f:
@@ -806,19 +813,28 @@ class Demo:
 
     async def run(self) -> dict:
         self.preflight()
+        err: BaseException | None = None
         try:
             self.start_glimmer()
             self.build_ui()
             self.start_stack()
             self.wait_glimmer()
             await self.fly()
+        except BaseException as e:                 # record it, still save what was recorded, then re-raise
+            err = e
+            self.result["error"] = f"{e.__class__.__name__}: {e}"
+            log(f"ERROR: {self.result['error']}")
         finally:
             self.stop_all()
-        self.voice_summary()
-        self.metrics()
-        self.follow_window()
-        self.finish_media()
+        for step in (self.voice_summary, self.metrics, self.follow_window, self.finish_media):
+            try:
+                step()
+            except Exception as e:
+                self.result.setdefault("post_errors", []).append(f"{step.__name__}: {e.__class__.__name__}: {e}")
+                log(f"{step.__name__} failed: {e}")
         (self.out / "demo_result.json").write_text(json.dumps(self.result, indent=1, default=str))
+        if err is not None:
+            raise err
         return self.result
 
 

@@ -8,8 +8,9 @@ Mac in the wire-level twin, loopback only (`FLIGHT_MODE=twin`). Nothing was sent
 - **One command records the whole story:** `$MHD_PY scripts/demo_twin.py` starts the twin, the governed
   backend (not headless: the UI's heartbeat keeps it flying), SAM 3.1 perception on MLX, the fine-tuned
   Glimmer (MLX 4-bit + LoRA on 8080), the voice agent and the production UI, then flies one scripted
-  mission and records it. About 2 minutes 10 seconds with Glimmer already loaded, plus about 1 minute 45
-  seconds for a cold Glimmer load.
+  mission and records it, then stops everything it started. About 2 minutes 10 seconds with Glimmer
+  already loaded, 2 minutes 30 seconds when it starts Glimmer itself (weights in the page cache), plus up
+  to about 1 minute more after a reboot (cold page cache).
 - **The story on screen:** the dashboard in TWIN mode, TAKEOFF clicked, Space held while "Drone, follow
   the person in the blue shirt" is heard, the live transcript, the mission card with the
   **`glimmer-30b+lora`** badge (3.8-4.0 s), FIND, CONFIRM and FOLLOW with the SAM mask for about 40 s
@@ -26,6 +27,8 @@ Mac in the wire-level twin, loopback only (`FLIGHT_MODE=twin`). Nothing was sent
   | S2, second take | `logs/demo-20261104-033923-s2` | `demo-s2-20261104-033923-ui.mp4`, 69.5 s | `demo-s2-20261104-033923-chase.mp4`, 68.9 s | 0.094 rad / 94.1% / 54 of 916 (5.9%) |
   | S3, bonus ("green car") | `logs/demo-20261104-034231-s3` | `demo-s3-20261104-034231-ui.mp4`, 68.9 s | `demo-s3-20261104-034231-chase.mp4`, 68.8 s | 0.070 rad / 100% / 0 frames |
   | S1, first take | `logs/demo-20261104-032416-s1` | `demo-s1-20261104-032416-ui.mp4`, 71.3 s | `demo-s1-20261104-032416-chase.mp4`, 71.2 s | 0.084 rad / 100% / 0 frames |
+  | S1, verification (Glimmer reused) | `logs/demo-20261104-034845-s1-cold` | `demo-s1-cold-20261104-034845-ui.mp4`, 71.7 s | `demo-s1-cold-20261104-034845-chase.mp4`, 71.5 s | 0.091 rad / 100% / 0 frames |
+  | S1, cold start (the script started and stopped Glimmer) | `logs/demo-20261104-035110-s1-cold` | `demo-s1-cold-20261104-035110-ui.mp4`, 71.4 s | `demo-s1-cold-20261104-035110-chase.mp4`, 71.2 s | 0.084 rad / 100% / 0 frames |
 
   Run directories are under `.worktrees/demo/logs/` (gitignored). The S2 03:28 take and the first S1 take
   were recorded before the Detector-bar fix, so their latency panel shows "-" for the detector.
@@ -36,7 +39,7 @@ Mac in the wire-level twin, loopback only (`FLIGHT_MODE=twin`). Nothing was sent
   outlived the twin holding the RTSP port (it is why 8554 is still taken: see Findings 1); (2) the UI's
   Detector latency bar was empty about 98% of the time.
 - **Found, not fixed (frozen files):** after a deliberate landing the autopilot keeps its lifecycle
-  running, says "I lost the subject. Looking around." on the ground, and in both full S1 takes flapped
+  running, says "I lost the subject. Looking around." on the ground, and in every full S1 take flapped
   FIND/CONFIRM at about 8 Hz (Findings 2 and 3).
 - Spend: about $0.001 (Voice Transcribe, one session per push-to-talk utterance; logged).
 
@@ -68,10 +71,14 @@ Other flags: `--follow-s 40`, `--command "..."`, `--land-text "..."`, `--voice S
 `--scenario NAME|YAML`, `--subject`, `--take NAME`, `--rtsp-port`, `--no-audio`, `--headed`, `--keep-frames`,
 `--still-scn-s 32,53`, `--agent-config`, `--governor-config`, `--autopilot-config` (twin-calibrated by default).
 
-Preconditions: ports 8000, 8766, UDP 23458 and 5173 free (it refuses to start otherwise); 8080 either free
-or already serving Glimmer (then it is reused and left running); RTSP 8554 free, else it uses 8555 and says
-so. Only one Glimmer process fits in memory: the script reuses a running one, `scripts/serve_glimmer.sh`
-refuses a second.
+Preconditions: ports 8000, 8766, UDP 23458 and 5173 free (it refuses to start otherwise), so never run it
+while the real-drone stack is up; 8080 either free or already serving Glimmer (then it is reused and left
+running); RTSP 8554 free, else it uses 8555 and says so. Only one Glimmer process fits in memory (about 17 GB):
+the script reuses a running one, `scripts/serve_glimmer.sh` refuses a second. With `--keep-glimmer` the PID it
+leaves running is in `demo_result.json` (`glimmer.left_running_pid`); stop it before a flight if memory matters.
+The script is twin-only: it refuses `FLIGHT_MODE=real`, and the backend it starts is `--mode twin` (loopback).
+If any step fails, everything is still stopped, `demo_result.json` records the error, and whatever was recorded
+is still encoded and scored.
 
 What it starts, in order (logs in the run directory):
 
@@ -165,8 +172,11 @@ One brief `video_stale` (0.6 s, autopilot neutral) at 24.2 s in the S2 03:39 tak
 The land WAV ("Okay drone, please land now.") is 1.97 s long; LANDING came 2.2 s after it started, 0.26-0.34 s
 after it ended, every time through the open-mic listener (transcript `oky drone please land now`), never the
 L-key fallback. Router reason `glimmer_in_window` every time; no keyword fallback, no errors, no page errors.
-Glimmer warm-up (the demo command) 4.6 s; cold load to `/v1/models` about 1 minute 45 seconds (03:12:56 to
-03:14:38, 13.9 GB resident at that point).
+Glimmer warm-up (the demo command) 4.6-7.0 s. Load to `/v1/models`: about 1 minute 45 seconds from a cold
+page cache (03:12:56 to 03:14:38, 13.9 GB resident at that point); in the cold-start run (03:51) the script's
+own `serve_glimmer.sh` was serving and warm 46 s after it started, in parallel with the rest of the stack.
+The two verification runs gave intent latencies of 4.17 s and 4.21 s, transcripts 184 and 175 ms after
+release, listener decodes 277 and 281 ms.
 
 ## Decisions (nobody to ask)
 
@@ -214,11 +224,11 @@ Glimmer warm-up (the demo command) 4.6 s; cold load to `/v1/models` about 1 minu
    ground (by design: "the autopilot runs whenever a mission is active, including on the ground"). After
    touchdown the camera sits on the grass, the subject's box is clipped at the top edge, SAM stops
    re-confirming, and about 4 s after the land command the autopilot goes FOLLOW -> LOST
-   (`confirmation_too_old`) and announces "I lost the subject. Looking around." (both full S1 takes; not in
-   the S1 smoke run, S2 or S3). In a flight the operator hears this right after saying "land". Suggestion (frozen files):
+   (`confirmation_too_old`) and announces "I lost the subject. Looking around." (all four full S1 takes;
+   not in the S1 smoke run, S2 or S3). In a flight the operator hears this right after saying "land". Suggestion (frozen files):
    no announcements unless AIRBORNE, or release the mission on a voice or UI land.
 3. **FIND <-> CONFIRM flapping at about 8 Hz** after that, on the ground (S1 final take: 27 transitions in
-   3.2 s; first S1 take: 21 in 3.5 s). Cause: the tracker score hovers around `lifecycle.confirm_min_score` 0.5
+   3.2 s; the other full S1 takes: 21, 8 and 31 state changes after the landing). Cause: the tracker score hovers around `lifecycle.confirm_min_score` 0.5
    (0.47-0.63), and `_is_candidate` (enter CONFIRM) and `_consistent` (stay in CONFIRM) use the same
    threshold with no hysteresis or debounce, so alternate frames enter and leave CONFIRM
    (`src/mhd/autopilot/core.py` lines 199-216 and 302-323, frozen). Perception meanwhile reports `confirmed`
@@ -229,6 +239,10 @@ Glimmer warm-up (the demo command) 4.6 s; cold load to `/v1/models` about 1 minu
 4. **S2 occlusion:** the tracker can sit on the crossing red walker for up to 1.6 s without a DOUBT (above).
    Perception's re-seed fixes it; a color check on tracker frames (not only detector frames) would catch it
    sooner.
+   **`box_size_jump` DOUBTs away from any crossing:** S1 03:48 at 36.4 s and S2 03:28 at 42.8 s (2 of the 7
+   full takes). Both timed out into LOST and were back in FOLLOW 1.0 s after the LOST, so the viewer hears
+   "I lost the subject. Looking around." then "Got them. Following." mid-follow. The twin tuning already
+   low-passes the box width; these may be the walker turning at the end of its path (not verified).
 5. **`detector_latency_ms` only on detection frames** (51 of 1,344 observations in S1). Fixed in the UI
    (bar holds the last value 3 s). Backend alternative: `latency_ms.detector` = the last detection's latency.
 6. **"backward travel budget used up"** (governor safety event) in 2 of 3 S1 takes and in S3 while
@@ -248,8 +262,10 @@ Glimmer warm-up (the demo command) 4.6 s; cold load to `/v1/models` about 1 minu
 
 ## Tests
 
-- The demo takes themselves (5 full runs plus one 15 s smoke run): 0 fallbacks other than the RTSP port,
-  0 agent errors, 0 page errors, every process stopped at the end.
+- The demo takes themselves (7 full runs plus a 15 s smoke run and an 8 s check run after the last code
+  change): 0 fallbacks other than the RTSP port,
+  0 agent errors, 0 page errors, every process stopped at the end (checked with `ps` and `lsof` after the
+  cold-start run: nothing of mine left, ports 8000, 8766, 5173, 8555 and 8080 closed).
 - `tests/ui` after the LatencyBars change: **89 passed, 6 skipped** (the opt-in gov tests), 130 s.
 - `tests/twin` after the watchdog change: **65 passed** in 179 s.
 - The twin shutdown check (5 stops of `run_twin.sh` by process-group SIGINT, 2 of them with the Chrome
@@ -257,12 +273,12 @@ Glimmer warm-up (the demo command) 4.6 s; cold load to `/v1/models` about 1 minu
 
 ## Shared artifacts
 
-- `$MHD_HOME/media/demo/`: the ten MP4s in the table above.
+- `$MHD_HOME/media/demo/`: the fourteen MP4s in the table above.
 - `$MHD_HOME/media/shared/demo/`: `README.md` (index), each take's `demo_result.json` and `report.json`, and
   the README stills.
 
 ## Spend
 
 Voice Transcribe realtime, one session per push-to-talk utterance: about 3.5 audio seconds per take, about
-$0.0002 each, $0.001 in total (lines with `"ws": "demo"` in `$MHD_HOME/logs/spend.jsonl`). Glimmer, SAM 3.1,
+$0.0002 each, under $0.002 in total for the 8 runs plus the wrapper smoke test (lines with `"ws": "demo"` in `$MHD_HOME/logs/spend.jsonl`). Glimmer, SAM 3.1,
 Omnilingual and MMS-TTS ran on this Mac. No Fireworks or Spark calls.
