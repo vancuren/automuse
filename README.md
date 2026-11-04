@@ -31,7 +31,7 @@ agreed to be filmed, and it calls the person or thing it follows the *subject*.
 | The twin's chase view: the drone (center) turns to keep the walker in blue in frame | S2: a walker in red crosses between the drone and the subject in blue |
 |---|---|
 | ![Chase view of the twin](docs/img/demo_s1_chase_follow.png) | ![The S2 crossing in the operator UI](docs/img/demo_s2_crossing_follow.png) |
-| **S3: "Drone, follow the green car."** The LoRA's mission is `green car`, and SAM 3.1 boxes the RC car, not the parked red one | **"Okay drone, please land now."** The local listener hears "land" with no model involved, and the governor lands |
+| **S3: "Drone, follow the green car."** The LoRA's mission is `green car`, and SAM 3.1 boxes the RC car, not the parked red one | **"Okay drone, please land now."** The local listener (Omnilingual ASR on the laptop, no language model) hears "land", and the governor lands |
 | ![The S3 green car mission in the operator UI](docs/img/demo_s3_2_voice_mission_follow.png) | ![A spoken land command in the operator UI](docs/img/demo_s1_5_landing_voice.png) |
 
 ## How it works
