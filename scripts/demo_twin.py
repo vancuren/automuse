@@ -654,6 +654,13 @@ class Demo:
         self.mark("on_ground")
         await asyncio.sleep(a.outro_s)
         await self.still(page, "6_on_ground")
+        # End after the agent's last spoken line, so the sound track never stops mid-sentence.
+        t_end = time.monotonic() + 5.0
+        while time.monotonic() < t_end:
+            tts = [e for e in self.agent_events() if e.get("type") == "tts"]
+            if not tts or tts[-1]["t_ms"] / 1000.0 + tts[-1]["duration_s"] + 0.4 < time.monotonic():
+                break
+            await asyncio.sleep(0.2)
 
     # ---- after the run -------------------------------------------------------------------------
     def soundtrack(self, t_ref: float, duration_s: float, out: Path) -> Path | None:
