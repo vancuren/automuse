@@ -53,12 +53,13 @@ Always `cd $MHD_TREE && source env.sh` first.
 ```bash
 # The agent (backend must be up; it reconnects if not)
 $MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000 --asr meta --intent auto
-#   with the tuned Glimmer on Fireworks:
+#   with the tuned Glimmer on Fireworks (model string from training/fireworks.py morning):
 $MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000 --intent auto \
-    --glimmer-url https://api.fireworks.ai/inference/v1 --glimmer-model accounts/<acct>/deployedModels/<id>
-#   edge mode (no internet): local ASR, local Glimmer server, or keyword only
+    --glimmer-url https://api.fireworks.ai/inference/v1 \
+    --glimmer-model "accounts/$FIREWORKS_ACCOUNT_ID/models/glimmer-intent-v1#accounts/$FIREWORKS_ACCOUNT_ID/deployments/glimmer-intent"
+#   edge mode (no internet): local ASR + local Glimmer (scripts/serve_glimmer.sh), or keyword only
 $MHD_ML_PY -m mhd_ml.agent.service --asr local --intent glimmer \
-    --glimmer-url http://127.0.0.1:8080/v1 --glimmer-model <name> --glimmer-label glimmer-30b
+    --glimmer-url http://127.0.0.1:8080/v1 --glimmer-model default_model
 $MHD_ML_PY -m mhd_ml.agent.service --asr local --intent keyword
 #   other flags: --tts mms|say|none, --mute, --no-safety, --no-mic, --mic-rate 16000, --no-warm,
 #   --asr-endpoint file, --config FILE, -v
@@ -80,7 +81,7 @@ $MHD_ML_PY -m mhd_ml.agent.mic_check --ptt 4                # local + Meta trans
 
 # Test audio (also generated on demand by the tests), tests, gates
 $MHD_ML_PY -m mhd_ml.agent.make_test_audio
-$MHD_ML_PY -m pytest tests/agent -q                          # offline; ~3 min
+$MHD_ML_PY -m pytest tests/agent -q                          # offline; ~2 min
 MHD_REAL_API=1 $MHD_ML_PY -m pytest tests/agent -q -k real   # + 2 real Voice Transcribe calls
 $MHD_ML_PY -m mhd_ml.agent.bench spark --n 20                # ~$0.07
 $MHD_ML_PY -m mhd_ml.agent.bench voice --n 10 [--rate 16000]
@@ -98,29 +99,37 @@ decoding. The scaffold tests (`tests/test_contracts.py`, `tests/test_intent_spec
 
 - `test_keyword_grammar.py`: 62 grammar cases (follow with color, person + garment/object, distance,
   safety words, refusals, clarify, plurals) plus invariants.
-- `test_intent_clients.py`: lenient parsing (reasoning text, `<think>`, code fences, case repair,
-  rejects); clients against the mock server on 8480 (stream and non-stream, invalid, truncated,
-  HTTP 500, timeout, Glimmer prompt, Spark request body: strict schema, `reasoning_effort`,
-  `max_completion_tokens`, no temperature, no tools).
+- `test_intent_clients.py`: lenient parsing (reasoning text, `<think>`, code fences, raw Glimmer
+  `<|message|>` channels, case repair, rejects); clients against the mock server on 8480 (stream and
+  non-stream, invalid, truncated, HTTP 500, timeout, Glimmer request without constrained decoding,
+  Spark request body: strict schema, `reasoning_effort`, `max_completion_tokens`, no temperature,
+  no tools); 9 s deadline in edge mode.
 - `test_router.py`: both fast -> Glimmer; slow Glimmer -> Spark at the 2.5 s window; invalid Glimmer
   -> Spark without waiting; Glimmer at 2.8 s beats a slower Spark; both invalid and total timeout ->
-  keyword; safety fast path calls no model; late answers logged.
+  keyword; a bare safety command calls no model, "follow the man at the bus stop" does; late answers
+  logged.
 - `test_safety_listener.py`: 18 safety clips detected within 1.5 s of speech end; 0 false triggers on
   20 neutral sentences (near misses: island, landscape, hand, gold, shop, top, over, cover, lens);
   silence, noise, 24 kHz input; one command per utterance; stop then land escalates; command
-  delivery over HTTP and the WS fallback; synthetic propeller noise.
+  delivery over HTTP and the WS fallback; synthetic propeller noise; everyday English never fires
+  ("about", "laid", "lending", "all aboard") and a sweep of the whole system dictionary only finds
+  the listed safety words; a trailing word fires once two partials agree but not on a growing prefix;
+  a 10 s backlog skips partials and still detects.
 - `test_asr_meta.py`: fake realtime server on 8485-8488: handshake fields, PCM_24KHZ/PCM_16KHZ,
   80 ms chunks, every byte sent, real-time pacing, buffering until a slow ack, rejected handshake,
   missing key, warm session hand-over and replacement, fresh-session fallback, a final sent before
   endStream; file endpoint multipart against a local FastAPI fake; 2 opt-in real calls.
 - `test_tts_and_local_asr.py`: MMS-TTS synthesis checked by transcribing it back with Omnilingual;
-  `say` fallback to file; Speaker queue (no playback at night unless `MHD_TTS_PLAY=1`); MMS missing
-  -> `say`; Omnilingual push-to-talk transcripts.
+  `say` fallback to file; Speaker queue order and interruption (no playback at night unless
+  `MHD_TTS_PLAY=1`); MMS missing -> `say`; own-voice window; Omnilingual push-to-talk transcripts.
 - `test_service.py`: the whole process with fake backend, mock Glimmer and fake Voice Transcribe:
   push-to-talk -> Mission over HTTP with model and latency and the events the UI reads; clarify sends
   no Mission; the listener alone lands the drone in real time within 1.5 s of speech end; Voice
-  Transcribe down -> local ASR fallback; keyword mode; spoken acknowledgment; lost ptt_up watchdog;
-  `--asr local`; relayed autopilot announcements are spoken.
+  Transcribe down -> local ASR fallback; Voice Transcribe hanging -> local transcript ~2.4 s after
+  release; keyword mode; spoken acknowledgment; lost ptt_up watchdog; `--asr local`; relayed autopilot
+  announcements are spoken; the agent's own "Landing now." is not a command but an operator's "stop"
+  during a reply is; a governor refusal becomes an error event; a dead microphone is reported; Ctrl-C
+  during push-to-talk shuts down cleanly.
 - `scripts/agent/integration_smoke.py` against the gov workstream's real patched backend, run on my
   ports 8407-8409 with RC datagrams to an unused loopback port: **PASS** at 01:10 (their worktree,
   read-only) and again at 01:45 against their latest commit 03f0527 (exported with `git archive` into
@@ -130,7 +139,7 @@ decoding. The scaffold tests (`tests/test_contracts.py`, `tests/test_intent_spec
 ## Measurements
 
 Conditions for all cloud numbers: home Wi-Fi, model downloads finished (fetch.log ALL DONE 23:40:51),
-measured 00:20-01:05 ET while the train workstream ran MLX LoRA training on the GPU, the perception
+measured 00:20-01:53 ET while the train workstream ran MLX LoRA training on the GPU, the perception
 service ran, and the UI workstream drove Chrome through Playwright. Not yet repeated over the tether.
 
 **G0 Spark (muse-spark-1.3, Chat Completions, strict json_schema, streamed, 20 varied commands per
@@ -176,9 +185,10 @@ took the safety fast path: about 0.4 s to the reply.
 
 **Safety listener (local CPU, 2 threads, same concurrent load), final code:** 18/18 safety clips
 detected, 0/20 false triggers; latency after speech end p50 ~0 s (partial decodes catch the word
-before the VAD closes the segment), worst 0.62 s; one decode (with carrier) 0.19 s mean; listener CPU
-about a quarter of one core while someone talks, near zero in silence. Through the whole service in real time, the
-land command reached the backend within 1.5 s of speech end (`test_spoken_land_during_flight...`).
+before the VAD closes the segment), worst 0.62 s; one decode (with carrier) 0.19 s mean; listener
+CPU about a quarter of one core while someone talks, near zero in silence. Through the whole service
+in real time, the land command reached the backend within 1.5 s of speech end
+(`test_spoken_land_during_flight_reaches_backend`).
 
 Synthetic propeller noise (four motor tones + harmonics + broadband, same seeds per setting):
 
@@ -304,5 +314,6 @@ Spend for this workstream: about **$0.22** of the $3 cap (every batch logged in 
   `response_format`, `max_tokens` 1200; raw `<|message|>` channels from mlx_lm.server are handled. A
   scaled-to-zero Fireworks deployment answers 503 at once, so the router falls through to Spark.
 - **Memory/GPU:** the agent uses CPU only (Omnilingual 2 threads, MMS-TTS 2 threads) and loads no
-  MLX model. Peak RSS measured 1.9 GB (1.2 GB after Omnilingual + VAD, 1.8 GB after MMS-TTS + torch).
+  MLX model. Peak RSS about 2.0 GB (1.2 GB after Omnilingual + VAD, 1.8 GB after MMS-TTS + torch,
+  flat at 1.98 GB through the soak).
 - **Contracts:** no changes needed. No frozen file was edited.
