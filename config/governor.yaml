@@ -1,0 +1,101 @@
+# Safety governor parameters (loaded by mhd.governor.config.load_governor_config).
+#
+# These are defaults for FIRST FLIGHTS. Values marked [Session A] or [Session B] are guesses until
+# measured on the drone (PLAN.md section 6). Unknown keys are an error, so a typo cannot silently
+# fall back to a default.
+#
+# Units: times in seconds; normalized sticks are -1..1; "counts" are wire offsets from the 128 center
+# (the wire byte is 128 + offset, 0..255). The X69 speed tier is pinned at index 2 (scale 1.0), so
+# the counts below are exactly what goes on the wire.
+
+rc_rate_hz: 25              # FlightController rate for x69_lg; informational (land re-assert is time-based)
+
+wire:
+  full_scale_counts: 127    # normalized 1.0 = 127 counts on BOTH sides (symmetric: 1..255, never 0)
+  sign:                     # per-axis sign applied before caps. Flip to -1 if Session B shows an axis reversed.
+    throttle: 1
+    yaw: 1
+    pitch: 1
+    roll: 1
+  deadband_counts:          # firmware deadband compensation in counts, autopilot output only [Session B]
+    throttle: 0             # u -> sign(u) * (deadband + |u|*127) when |u| > deadband_threshold
+    yaw: 0
+    pitch: 0
+    roll: 0
+  deadband_threshold: 0.01  # autopilot |u| below this is sent as exact center (no compensation)
+
+caps:                       # max |offset| in counts, applied after sign and deadband compensation
+  autopilot:                # PLAN 4.4 first-flight caps: yaw 38 (0.30), pitch 32 (0.25), roll 0, throttle 0
+    throttle: 0
+    yaw: 38
+    pitch: 32
+    roll: 0
+  human:                    # manual flying from the UI (keyboard, gamepad); 64 counts = 0.5
+    throttle: 64
+    yaw: 64
+    pitch: 64
+    roll: 64
+
+slew:
+  autopilot_per_s: 1.0      # autopilot sticks move at most 1.0 normalized unit per second.
+                            # Safety neutralization always bypasses the slew limiter.
+
+human:
+  stale_s: 0.25             # human sticks count as zero this long after the last nonzero message
+  deadzone: 0.05            # |axis| below this is zero, so gamepad drift is not "input"
+  inc_ramp_per_s: 1.0       # 'inc' (keyboard) mode: stick ramps toward +/- the human cap at this rate;
+                            # release (all-zero message or staleness) is an immediate zero
+
+heartbeat:                  # UI heartbeat ({"type":"hb"} at 5 Hz from a Web Worker)
+  neutral_after_s: 1.5      # missing this long: all sticks neutral (hover)
+  land_after_s: 5.0         # missing this long while flying: safety landing
+
+video:                      # frame lag = (now - capture_ms) minus the 10 s floor of (receive - capture)
+  neutral_lag_s: 0.7        # autopilot neutral (the human keeps control for line-of-sight flying)
+  land_lag_s: 2.0           # safety landing
+  floor_window_s: 10.0      # sliding window for the best-case pipeline latency
+  floor_cap_s: 1.5          # the floor never excuses more than this much latency
+
+observation:                # obs lag = (now - capture_ms of the newest SubjectObs) minus its 10 s floor
+  stale_min_s: 0.4          # autopilot neutral above max(stale_min_s, stale_periods x measured period)
+  stale_periods: 2.5
+  floor_window_s: 10.0
+  floor_cap_s: 2.0
+
+autopilot:
+  max_step_ms: 5.0          # an autopilot step slower than this sets the "autopilot_slow" health flag
+  fault_neutral_s: 1.0      # after an autopilot exception, its output stays neutral at least this long
+
+takeoff:
+  hold_s: 4.0               # TAKING_OFF holds neutral sticks at least this long before AIRBORNE
+  packets: 1                # takeoff flag (0x01) is sent in this many consecutive packets
+  require_heartbeat: true   # takeoff refused unless the UI heartbeat is fresh (bypass: twin_headless_bypass)
+
+landing:
+  reassert_per_s: 5         # LANDING re-asserts the land flag (0x80) this many times per second, evenly spaced
+
+estop:
+  rearm_after_reset: true   # real mode: after estop_reset, ARM must be typed again before takeoff
+
+arming:
+  phrase: "ARM"             # real mode: {"type":"cmd","command":"arm","arm_phrase":"ARM"} (exact, after strip)
+
+flight_timer:               # per battery pack, persisted to $MHD_LOGS/flight_timer.json
+  warn_s: 300               # 5:00: warning flag and event
+  land_s: 390               # 6:30: automatic landing (fires once per flight; an explicit resume can cancel it)
+
+wrong_way:                  # PLAN 4.5 step 5
+  enabled: true
+  window_thetas: 1.5        # compare bearing change over 1.5 x theta (theta from config/autopilot.yaml)
+  min_change_rad: 0.15      # both observed and predicted change must exceed this, with opposite signs
+
+tilt:
+  max_hold_s: 3.0           # a tilt_up/tilt_down command stops by itself after this long (UI may die mid-press)
+
+faults:
+  land_after_s: 2.0         # tick exceptions for this long in a row: the fallback also re-asserts land
+
+twin_headless_bypass: false # TWIN ONLY: skip UI-heartbeat checks for headless test runs.
+                            # The governor refuses to start in real mode when this is true.
+
+tick_log: true              # per-tick JSON lines in $MHD_LOGS/control-*.jsonl (written off the RC thread)
