@@ -66,9 +66,12 @@ Its test controls (`POST /mock/control`) can do the following:
 To run the tests (about 90 s), use the commands below. They start the mock on 8601 and 8602 and vite on 5273, run Chrome through Playwright (`channel="chrome"`, profile in `$MHD_HOME/.cache/chrome-ui`), and stop everything when they finish.
 
 ```bash
-$MHD_PY -m pytest tests/ui -v
+$MHD_PY -m pytest tests/ui -v                       # everything, about 2 min
+$MHD_PY -m pytest tests/ui -m "not browser"         # the 46 tests without Chrome, about 4 s
 UI_GOV_TREE=$MHD_TREE $MHD_PY -m pytest tests/ui/test_ui_gov_backend.py -v   # once the backend is merged here
 ```
+
+Test files are all named `test_ui_*.py`, and shared helpers live in `tests/ui/ui_harness.py` (never `from conftest import`). Every workstream has its own `tests/<ws>/conftest.py` and there is no `__init__.py`, so both rules avoid name clashes after the merge.
 
 `UI_HEADED=1` shows the browser while the tests run.
 
@@ -190,10 +193,10 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 | `test_ui_browser.py` | 33 | See the list below. |
 | `test_ui_production.py` | 3 | The minified build (`--base /ui/`), served same-origin by the mock: worker chunk present, heartbeat 5 Hz from one socket, Esc, Space and L work, HTTP fallback works, only the configured backend URL is in the bundle, and a page reload costs under 1 s of heartbeat. |
 | `test_ui_latency.py` | 1 | Measurements below, with loose regression bounds. |
-| `test_screenshots.py` | 2 | Twin and real screenshots. |
-| `test_mock_backend.py` | 11 | The mock validates and judges messages correctly, latches E-STOP, needs the exact ARM phrase, and its masks stay inside their boxes. |
-| `test_contract_mirror.py` | 25 | `src/lib/contracts.ts` matches the pydantic models: field names, command names, event kinds, enums, literals. |
-| `test_frontend_static.py` | 10 | `npm run build`, `eslint --max-warnings 0`, one backend URL, no speed/profile/plugin code, only the worker sends `hb`, every button is a `UiButton`, the followed thing is always called "subject", no web fonts, loopback dev server. |
+| `test_ui_screenshots.py` | 2 | Twin and real screenshots. |
+| `test_ui_mock_backend.py` | 11 | The mock validates and judges messages correctly, latches E-STOP, needs the exact ARM phrase, and its masks stay inside their boxes. |
+| `test_ui_contract_mirror.py` | 25 | `src/lib/contracts.ts` matches the pydantic models: field names, command names, event kinds, enums, literals. |
+| `test_ui_static.py` | 10 | `npm run build`, `eslint --max-warnings 0`, one backend URL, no speed/profile/plugin code, only the worker sends `hb`, every button is a `UiButton`, the followed thing is always called "subject", no web fonts, loopback dev server. |
 | `test_ui_gov_backend.py` | 6 (opt-in) | Real governor backend in twin mode with no twin: telemetry renders, no ARM needed in twin, TAKEOFF shows "no video", the governor sees the worker heartbeat (`hb_age` under 600 ms), Esc E-STOPs the governor and reset works, `POST /command` passes CORS, no contract errors in the backend log. |
 
 The 33 browser tests check that:

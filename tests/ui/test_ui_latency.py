@@ -14,7 +14,10 @@ import time
 
 import httpx
 
-from conftest import LOG_DIR
+from ui_harness import LOG_DIR
+import pytest
+
+pytestmark = pytest.mark.browser
 
 
 def sel(testid: str) -> str:

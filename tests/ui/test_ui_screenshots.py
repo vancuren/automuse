@@ -7,7 +7,10 @@ from __future__ import annotations
 import shutil
 import time
 
-from conftest import SHARED
+from ui_harness import SHARED
+import pytest
+
+pytestmark = pytest.mark.browser
 
 SHOTS: list[str] = []
 

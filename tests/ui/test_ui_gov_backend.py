@@ -19,10 +19,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from conftest import LOG_DIR, UI_URL, port_free, stop, wait_http
+from ui_harness import LOG_DIR, UI_URL, port_free, stop, wait_http
 
 GOV_TREE = os.environ.get("UI_GOV_TREE")
-pytestmark = pytest.mark.skipif(not GOV_TREE, reason="set UI_GOV_TREE to a tree with the patched backend")
+pytestmark = [pytest.mark.browser,
+              pytest.mark.skipif(not GOV_TREE, reason="set UI_GOV_TREE to a tree with the patched backend")]
 
 BACKEND_PORT = 8603
 BACKEND_URL = f"http://127.0.0.1:{BACKEND_PORT}"
@@ -89,7 +90,7 @@ def gov_vite(gov_backend):
 def gov_page(gov_vite):
     from playwright.sync_api import sync_playwright
 
-    from conftest import CHROME_PROFILE
+    from ui_harness import CHROME_PROFILE
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(str(CHROME_PROFILE), channel="chrome", headless=True,
                                                    viewport={"width": 1920, "height": 1080})
@@ -152,7 +153,7 @@ def test_no_contract_errors_in_backend_log(gov_backend, gov_page):
 def test_screenshot_on_the_real_backend(gov_backend, gov_page):
     import shutil
 
-    from conftest import SCREENS, SHARED
+    from ui_harness import SCREENS, SHARED
     SCREENS.mkdir(parents=True, exist_ok=True)
     SHARED.mkdir(parents=True, exist_ok=True)
     time.sleep(1.5)

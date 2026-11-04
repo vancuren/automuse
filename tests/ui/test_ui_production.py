@@ -10,7 +10,9 @@ import time
 
 import pytest
 
-from conftest import FRONTEND, LOG_DIR, MOCK_SCRIPT, Mock, port_free, stop, wait_http
+from ui_harness import FRONTEND, LOG_DIR, MOCK_SCRIPT, Mock, port_free, stop, wait_http
+
+pytestmark = pytest.mark.browser
 
 PROD_PORT = 8602
 PROD_URL = f"http://127.0.0.1:{PROD_PORT}"

@@ -9,6 +9,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.browser
+
 HB = {"type": "hb", "client": "ui"}
 
 
