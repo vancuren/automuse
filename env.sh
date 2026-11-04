@@ -20,9 +20,10 @@ export PLAYWRIGHT_BROWSERS_PATH="$MHD_HOME/.cache/ms-playwright"
 export MHD_MODELS="$MHD_HOME/.cache/models"
 export MHD_TOOLS="$MHD_HOME/tools"
 export MHD_LOGS="$MHD_TREE/logs"
+export TMPDIR="$MHD_HOME/.cache/tmp"   # pytest tmp_path, ffmpeg, tempfile: all inside the project
 export MHD_PY="$MHD_HOME/.venv/bin/python"        # core: backend, governor, twin, training data
 export MHD_ML_PY="$MHD_HOME/ml/.venv/bin/python"  # ml: perception (SAM 3.1 MLX), agent, Glimmer
 export PYTHONPATH="$MHD_TREE/src${PYTHONPATH:+:$PYTHONPATH}"
-mkdir -p "$MHD_HOME/.cache" "$MHD_MODELS" "$MHD_TOOLS" "$MHD_LOGS"
+mkdir -p "$MHD_HOME/.cache/tmp" "$MHD_HOME/.cache/locks" "$MHD_HOME/media/shared" "$MHD_MODELS" "$MHD_TOOLS" "$MHD_LOGS"
 # Secrets (gitignored). Never echo them.
 if [ -f "$MHD_HOME/.env" ]; then set -a; . "$MHD_HOME/.env"; set +a; fi
