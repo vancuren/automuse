@@ -223,9 +223,19 @@ $MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000 --intent auto \
 (cd turbodrone/frontend && npm ci && npm run dev)   # open http://127.0.0.1:5173, hold Space to talk
 ```
 
-**The real drone.** Follow [docs/RUNBOOK.md](docs/RUNBOOK.md) (being written tonight): props-off
-Session A first, then `scripts/run_backend.sh --mode real`, a production UI build, ARM, and a second
-person on LAND and E-STOP. Never fly near people who have not agreed to it.
+**The real drone.** Follow [docs/RUNBOOK.md](docs/RUNBOOK.md) (being written tonight by the ops
+workstream). In short:
+
+1. From the terminal app that will launch the backend (macOS grants Local Network permission per
+   app): `$MHD_PY scripts/preflight.py` checks the drone Wi-Fi, routes, internet and video.
+2. Props off: `$MHD_PY scripts/session_a.py` walks through Session A (flags, latency, field of view,
+   link loss) and ends with GO or NO-GO. No props-on flight without GO.
+3. `scripts/run_backend.sh --mode real`, then the production UI:
+   `cd turbodrone/frontend && VITE_BACKEND_URL=http://localhost:8000 VITE_AXES_RELEASE_MESSAGE=1 npm run build && npx vite preview`.
+   Type ARM in the UI.
+4. Perception (with `--hfov-deg` from Session A) and the agent, as above.
+5. A second person keeps a hand on LAND (L) and E-STOP (Esc). Never fly near people who have not
+   agreed to it.
 
 **Tests:** `$MHD_PY -m pytest tests/gov tests/twin tests/train tests/ui tests/docs` and
 `$MHD_ML_PY -m pytest tests/percep tests/agent`. Before publishing: `$MHD_PY scripts/secret_scan.py`.
