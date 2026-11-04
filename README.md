@@ -231,8 +231,8 @@ scripts/run_stack.sh --mode real                                # flights; run s
 ```
 
 `--agent-extra "--intent glimmer"` makes the local LoRA answer every command (see below). PLAN.md
-stops the local LLM during real flights to keep the Mac's GPU and memory free; docs/RUNBOOK.md has
-the flight-day choice.
+stops the twin, the renderer and the local LLM during real flights; docs/RUNBOOK.md has the
+flight-day choice.
 
 **The full stack by hand** (one terminal each):
 
