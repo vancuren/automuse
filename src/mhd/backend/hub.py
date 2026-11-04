@@ -133,9 +133,9 @@ class Hub:
         self.gov = governor
         self.frames = FrameStore(env.flight_mode, on_frame=self.gov.note_frame)
         self.model = install_governor(self.gov)
-        logger.warning("[hub] governor installed: FLIGHT_MODE=%s DRONE_IP=%s (armed=%s, headless_bypass=%s, "
-                       "camera_only=%s)", env.flight_mode, env.drone_ip, self.gov.armed,
-                       self.gov.cfg.twin_headless_bypass, self.camera_only)
+        logger.warning("[hub] governor installed: FLIGHT_MODE=%s DRONE_IP=%s board=%s (armed=%s, "
+                       "headless_bypass=%s, camera_only=%s)", env.flight_mode, env.drone_ip, env.board,
+                       self.gov.armed, self.gov.cfg.twin_headless_bypass, self.camera_only)
         return self.model
 
     @property
@@ -154,12 +154,19 @@ class Hub:
 
         Camera-only mode: an adapter with no socket at all. The governor still builds every RC
         packet (twin behavior), and nothing is ever sent, to any address, not even loopback.
+        MHD_BOARD=lewei (real mode only): the raw 20-byte X69 payload to 192.168.0.1:50000, no wrapper,
+        no keepalive, plus a telemetry reader for the drone's downlink.
         """
-        from mhd.governor.turbodrone_glue import CameraOnlyRcAdapter, GovernedX69LgRcAdapter
+        from mhd.governor.turbodrone_glue import CameraOnlyRcAdapter, GovernedX69LgRcAdapter, LeweiRcAdapter
+        board = self.env.board if self.env is not None else "x69_lg"
         if self.camera_only:
             self.rc_adapter = CameraOnlyRcAdapter(drone_ip, control_port, local_port=local_port)
             logger.warning("[hub] CAMERA ONLY (real camera, NO FLIGHT): RC adapter without a socket; "
                            "no RC packet or keepalive is sent to any address")
+        elif board == "lewei":
+            self.rc_adapter = LeweiRcAdapter(drone_ip, control_port, local_port=local_port)
+            logger.warning("[hub] Lewei board: raw 20-byte X69 payload to %s:%s (no wrapper, no keepalive)",
+                           drone_ip, control_port)
         else:
             self.rc_adapter = GovernedX69LgRcAdapter(drone_ip, control_port, local_port=local_port)
         return self.rc_adapter
@@ -578,6 +585,9 @@ class Hub:
                 flags.append("rc_send_errors")
             if not s["keepalive_alive"] or s["keepalive_age_ms"] > 3000.0:
                 flags.append("keepalive_stale")
+        if ad is not None and hasattr(ad, "fc_telemetry"):
+            # Lewei board downlink (battery volts, status byte, age): informational only.
+            extra.update({k: v for k, v in ad.fc_telemetry().items() if v is not None})
         return flags, extra
 
     def telemetry_json(self) -> str:

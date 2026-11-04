@@ -327,6 +327,19 @@ def test_camera_only_banner_keeps_takeoff_and_drops_the_chase_view(ui, mock_back
     ui.wait_for_selector(f'{sel("mode-banner")}[data-mode="twin"]', timeout=3000)
 
 
+def test_lewei_battery_volts_show_in_the_pack_timer(ui, mock_backend):
+    # MHD_BOARD=lewei: the backend adds the flight controller's battery reading to latency_ms.
+    assert ui.locator(sel("fc-battery")).count() == 0, "no reading, nothing shown"
+    mock_backend.control(flight_mode="real", extra_latency={"fc_battery_v": 3.9, "fc_status": 8.0,
+                                                            "fc_telemetry_age": 40.0})
+    ui.wait_for_selector(sel("fc-battery"), timeout=3000)
+    assert ui.inner_text(sel("fc-battery")) == "3.9 V"
+    assert "fc_" not in ui.inner_text(sel("latency-bars")), "fc_* are not latencies"
+    mock_backend.control(extra_latency={"fc_battery_v": 3.3})
+    ui.wait_for_selector(f'{sel("fc-battery")} >> text=3.3 V', timeout=3000)
+    assert "amber" in (ui.get_attribute(sel("fc-battery"), "class") or "")
+
+
 def test_stick_keys_are_ignored_while_typing_arm(ui, mock_backend):
     mock_backend.control(flight_mode="real")
     ui.wait_for_selector(sel("arm-input"), timeout=2000)

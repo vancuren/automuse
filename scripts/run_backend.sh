@@ -5,6 +5,9 @@
 #                          [--rtsp-url rtsp://127.0.0.1:8554/live/ch00_1] [--headless] [--host 127.0.0.1]
 #                          [--logs DIR]   (default $MHD_LOGS: control-*.jsonl and flight_timer.json)
 #   scripts/run_backend.sh --mode real [--port 8000]          # DRONE_IP=172.16.11.1, RTSP from the drone
+#   scripts/run_backend.sh --mode real --board lewei [--rtsp-url rtsp://127.0.0.1:8554/live/ch00_1]
+#       our X69 unit's Lewei board: MHD_BOARD=lewei, DRONE_IP=192.168.0.1, CONTROL_PORT=50000 (raw 20-byte
+#       payload), video from scripts/lewei_bridge.py on loopback. Refused with --mode twin / --camera.
 #   scripts/run_backend.sh --camera [--rtsp-url rtsp://127.0.0.1:8554/live/ch00_1] [--port 8000]
 #       REAL CAMERA, NO FLIGHT: twin mode (DRONE_IP=127.0.0.1) with MHD_CAMERA_ONLY=1, video from the
 #       Lewei bridge on loopback, configs from config/camera/; the RC adapter has no socket and sends
@@ -23,10 +26,10 @@ TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$TREE/env.sh"
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
 
 MODE="" PORT="" CONTROL_PORT="" LOCAL_CONTROL_PORT="" RTSP_URL="" HEADLESS=0 HOST="127.0.0.1" LOGS=""
-GOV_CFG_ARG="" AP_CFG_ARG="" DRY_RUN=0 CAMERA=0
+GOV_CFG_ARG="" AP_CFG_ARG="" DRY_RUN=0 CAMERA=0 BOARD=x69_lg
 # Camera-only mode: no RC socket exists, so this port is never used. It is still not the twin's RC port
 # (23458), so even a bug could not steer a twin that happens to run on this Mac.
 CAMERA_CONTROL_PORT=23999
@@ -42,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --autopilot-config) AP_CFG_ARG="$2"; shift 2 ;;
     --headless) HEADLESS=1; shift ;;
     --camera) CAMERA=1; shift ;;
+    --board) BOARD="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --logs) LOGS="$2"; shift 2 ;;
     --host) HOST="$2"; shift 2 ;;
@@ -70,6 +74,14 @@ real_config() {   # real_config governor|autopilot FILE -> prints the absolute p
   echo "$f"
 }
 
+case "$BOARD" in x69_lg|lewei) ;; *) echo "run_backend.sh: --board x69_lg|lewei, got '$BOARD'" >&2; exit 2 ;; esac
+if [[ -n "${MHD_BOARD:-}" && "${MHD_BOARD}" != "$BOARD" ]]; then
+  echo "run_backend.sh: MHD_BOARD=${MHD_BOARD} is set in the shell but the board is $BOARD: pass --board ${MHD_BOARD}" \
+       "(or unset MHD_BOARD)" >&2; exit 2
+fi
+if [[ "$BOARD" == lewei && ( "$MODE" != real || "$CAMERA" == 1 ) ]]; then
+  echo "run_backend.sh: --board lewei is the real drone's flight board: only with --mode real (not twin, not --camera)" >&2; exit 2
+fi
 if [[ "$CAMERA" == 1 ]]; then
   # Real camera, no flight: always twin mode. Refuse anything that hints at the real drone or an RC link.
   if [[ -n "$MODE" && "$MODE" != twin ]]; then
@@ -104,8 +116,22 @@ case "$MODE" in
       *) echo "run_backend.sh: MHD_CAMERA_ONLY=${MHD_CAMERA_ONLY} is set in the shell: refusing --mode real" \
               "(camera-only runs use --camera)" >&2; exit 2 ;;
     esac
-    export FLIGHT_MODE=real DRONE_IP=172.16.11.1
-    if [[ -n "$RTSP_URL" ]]; then export X69_LG_RTSP_URL="$RTSP_URL"; else unset X69_LG_RTSP_URL; fi
+    if [[ "$BOARD" == lewei ]]; then
+      # Our X69 unit's Lewei board: the raw payload to 192.168.0.1:50000, video from the loopback bridge.
+      if [[ -n "$CONTROL_PORT" && "$CONTROL_PORT" != 50000 ]]; then
+        echo "run_backend.sh: --board lewei uses CONTROL_PORT 50000, not $CONTROL_PORT" >&2; exit 2
+      fi
+      export FLIGHT_MODE=real MHD_BOARD=lewei DRONE_IP=192.168.0.1 CONTROL_PORT=50000
+      export X69_LG_RTSP_URL="${RTSP_URL:-rtsp://127.0.0.1:8554/live/ch00_1}"
+      case "$X69_LG_RTSP_URL" in
+        rtsp://127.0.0.1:*|rtsp://127.0.0.1/*|rtsp://localhost:*|rtsp://localhost/*) ;;
+        *) echo "run_backend.sh: --board lewei takes the video from the loopback bridge, got --rtsp-url $X69_LG_RTSP_URL" >&2; exit 2 ;;
+      esac
+    else
+      export FLIGHT_MODE=real DRONE_IP=172.16.11.1
+      unset MHD_BOARD
+      if [[ -n "$RTSP_URL" ]]; then export X69_LG_RTSP_URL="$RTSP_URL"; else unset X69_LG_RTSP_URL; fi
+    fi
     if [[ -n "${GOVERNOR_CONFIG:-}${AUTOPILOT_CONFIG:-}" ]]; then
       echo "run_backend.sh: real mode ignores GOVERNOR_CONFIG/AUTOPILOT_CONFIG from the shell" >&2
     fi
@@ -125,7 +151,7 @@ if [[ "$HEADLESS" == 1 ]]; then export GOVERNOR_TWIN_HEADLESS=1; else unset GOVE
 PORT="${PORT:-8000}"
 if [[ -n "$LOGS" ]]; then mkdir -p "$LOGS"; export MHD_LOGS="$(cd "$LOGS" && pwd)"; fi
 
-echo "[run_backend] tree=$TREE logs=$MHD_LOGS mode=$FLIGHT_MODE drone=$DRONE_IP:$CONTROL_PORT rtsp=${X69_LG_RTSP_URL:-<drone default>} http=$HOST:$PORT headless=$HEADLESS camera_only=${MHD_CAMERA_ONLY:-0}" >&2
+echo "[run_backend] tree=$TREE logs=$MHD_LOGS mode=$FLIGHT_MODE board=${MHD_BOARD:-x69_lg} drone=$DRONE_IP:$CONTROL_PORT rtsp=${X69_LG_RTSP_URL:-<drone default>} http=$HOST:$PORT headless=$HEADLESS camera_only=${MHD_CAMERA_ONLY:-0}" >&2
 [[ "$CAMERA" == 1 ]] && echo "[run_backend] CAMERA ONLY (real camera, NO FLIGHT): MHD_CAMERA_ONLY=1, the RC adapter has no socket and sends nothing" >&2
 echo "[run_backend] governor config=${GOVERNOR_CONFIG:-config/governor.yaml} autopilot config=${AUTOPILOT_CONFIG:-config/autopilot.yaml}" >&2
 if [[ "$DRY_RUN" == 1 ]]; then echo "[run_backend] dry run: not starting" >&2; exit 0; fi

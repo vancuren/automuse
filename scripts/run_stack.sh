@@ -9,11 +9,16 @@
 #
 #   scripts/run_stack.sh --mode real [--config-dir config/real] [--glimmer local]
 #   scripts/run_stack.sh --mode real --no-perception --no-agent          # Session A / B: backend + UI
+#   scripts/run_stack.sh --mode real --board lewei [--config-dir config]  # our X69 unit (Lewei board)
 #   scripts/run_stack.sh --mode twin [--scenario s1] [--latency-ms 500] [--perception oracle]
 #   scripts/run_stack.sh --mode camera [--bridge-extra "--low-def"]       # REAL CAMERA, NO FLIGHT
 #
 # Options (defaults in brackets):
 #   --mode real|twin|camera    required
+#   --board x69_lg|lewei       real mode: the drone's board [x69_lg]. lewei: flight control is the raw X69
+#                              payload to 192.168.0.1:50000 and the video comes from the Lewei bridge, so
+#                              mediamtx and scripts/lewei_bridge.py start FIRST and stop LAST (the drone
+#                              powers itself off a few minutes after its video stops)
 #   --config-dir DIR           governor.yaml + autopilot.yaml [real: config, twin: config/twin,
 #                              camera: config/camera]
 #   --port N                   backend HTTP port [8000]
@@ -33,7 +38,7 @@
 #   --twin-ports HTTP,RC,RTSP  [8766,23458,8554]    --scenario s1..s6 [s1]    --latency-ms N [500]
 #   --headless                 no UI heartbeat needed (twin only)    --no-renderer   placeholder video
 #   --chrome-profile DIR       renderer Chrome profile [$MHD_HOME/.cache/chrome-twin]
-#   camera only (real camera, NO flight: the drone's Lewei camera board feeds the pipeline):
+#   camera mode and real --board lewei (the drone's Lewei camera board feeds the pipeline):
 #   --rtsp-port N              loopback mediamtx RTSP port [8554]
 #   --bridge-extra "ARGS"      extra scripts/lewei_bridge.py flags, e.g. "--low-def"
 #   --camera-wait S            seconds to wait for the bridge to publish [60]
@@ -53,10 +58,11 @@ die() { echo "run_stack: $*" >&2; exit 2; }
 
 MODE="" CONFIG_DIR="" PORT=8000 UI_PORT=5173 UI=1 PERCEPTION=sam_mlx AGENT=auto AGENT_EXTRA="" GLIMMER=none
 BUILD=1 LOGS="" TWIN_PORTS="" SCENARIO=s1 LATENCY=500 HEADLESS=0 RENDERER=1 CHROME_PROFILE="" TWIN_OPT=0 DRY=0
-RTSP_PORT=8554 BRIDGE_EXTRA="" CAMERA_WAIT=60 CAMERA_OPT=0
+RTSP_PORT=8554 BRIDGE_EXTRA="" CAMERA_WAIT=60 CAMERA_OPT=0 BOARD=x69_lg
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="$2"; shift 2 ;;
+    --board) BOARD="$2"; shift 2 ;;
     --config-dir) CONFIG_DIR="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --ui-port) UI_PORT="$2"; shift 2 ;;
@@ -90,9 +96,15 @@ case "$PERCEPTION" in sam_mlx|sam_api|oracle|none) ;; *) die "--perception sam_m
 case "$AGENT" in auto|glimmer|keyword|local|none) ;; *) die "--agent auto|glimmer|keyword|local|none" ;; esac
 [[ "$AGENT" == glimmer && "$GLIMMER" != local ]] && die "--agent glimmer needs --glimmer local"
 case "$GLIMMER" in local|none) ;; *) die "--glimmer local|none" ;; esac
-if [[ "$MODE" == camera ]]; then
-  [[ "$PERCEPTION" == oracle ]] && die "CAMERA mode refuses --perception oracle (twin ground truth; there is no twin)"
-  [[ "$TWIN_OPT" == 1 ]] && die "CAMERA mode refuses twin options (--twin-ports, --scenario, --latency-ms, --no-renderer, --chrome-profile)"
+case "$BOARD" in x69_lg|lewei) ;; *) die "--board x69_lg|lewei" ;; esac
+[[ "$BOARD" == lewei && "$MODE" != real ]] && die "--board lewei is the real drone's flight board: only with --mode real"
+BRIDGE_RUN=0                # mediamtx + the Lewei bridge: camera mode, and the real drone with the Lewei board
+[[ "$MODE" == camera || "$BOARD" == lewei ]] && BRIDGE_RUN=1
+if [[ "$BRIDGE_RUN" == 1 ]]; then
+  if [[ "$MODE" == camera ]]; then
+    [[ "$PERCEPTION" == oracle ]] && die "CAMERA mode refuses --perception oracle (twin ground truth; there is no twin)"
+    [[ "$TWIN_OPT" == 1 ]] && die "CAMERA mode refuses twin options (--twin-ports, --scenario, --latency-ms, --no-renderer, --chrome-profile)"
+  fi
   [[ "$RTSP_PORT" =~ ^[0-9]+$ ]] && (( RTSP_PORT >= 1024 && RTSP_PORT <= 65535 )) || die "--rtsp-port must be 1024..65535"
   [[ "$CAMERA_WAIT" =~ ^[0-9]+$ ]] && (( CAMERA_WAIT >= 1 )) || die "--camera-wait must be a whole number of seconds >= 1"
   case " $BRIDGE_EXTRA " in
@@ -106,7 +118,7 @@ if [[ "$MODE" == camera ]]; then
     else die "$BRIDGE is missing: merge the Lewei camera bridge first"; fi
   fi
 elif [[ "$CAMERA_OPT" == 1 ]]; then
-  die "--rtsp-port, --bridge-extra and --camera-wait are camera-mode options (--mode camera)"
+  die "--rtsp-port, --bridge-extra and --camera-wait are options of --mode camera and --mode real --board lewei"
 fi
 if [[ -z "$CONFIG_DIR" ]]; then
   case "$MODE" in real) CONFIG_DIR="config" ;; twin) CONFIG_DIR="config/twin" ;; camera) CONFIG_DIR="config/camera" ;; esac
@@ -127,7 +139,7 @@ if [[ "$MODE" == real ]]; then
     echo "run_stack: WARNING: a twin server is running; stop it for real flights (GPU/CPU load)" >&2
   fi
 fi
-for p in "$PORT" $([[ "$UI" == 1 ]] && echo "$UI_PORT") $([[ "$MODE" == camera ]] && echo "$RTSP_PORT"); do
+for p in "$PORT" $([[ "$UI" == 1 ]] && echo "$UI_PORT") $([[ "$BRIDGE_RUN" == 1 ]] && echo "$RTSP_PORT"); do
   if lsof -nP -iTCP:"$p" -sTCP:LISTEN -t >/dev/null 2>&1; then die "port $p is already in use (another stack?)"; fi
 done
 HFOV="$("$MHD_PY" -c "from mhd.governor.config import load_autopilot_config as l; print(l('$AP_CFG').camera.hfov_deg)" 2>/dev/null)" \
@@ -226,12 +238,13 @@ CAFF=""
 if [[ "$DRY" != 1 ]]; then caffeinate -dimsu -w $$ >/dev/null 2>&1 & CAFF=$!; fi
 
 {
-  echo "mode=$MODE config=$CONFIG_DIR hfov=$HFOV port=$PORT ui=$UI:$UI_PORT perception=$PERCEPTION agent=$AGENT glimmer=$GLIMMER"
+  echo "mode=$MODE board=$BOARD config=$CONFIG_DIR hfov=$HFOV port=$PORT ui=$UI:$UI_PORT perception=$PERCEPTION agent=$AGENT glimmer=$GLIMMER"
   echo "MHD_CAPTURE_OFFSET_MS=${MHD_CAPTURE_OFFSET_MS:-<unset>} tree=$TREE"
   git -C "$TREE" log -1 --format='commit %h %s' 2>/dev/null
 } >> "$STACK_LOG"
 log "mode $MODE, configs $CONFIG_DIR (HFOV $HFOV), logs $RUN"
 [[ "$MODE" == real ]] && log "REAL DRONE: run scripts/preflight.py first; MHD_CAPTURE_OFFSET_MS=${MHD_CAPTURE_OFFSET_MS:-unset}"
+[[ "$BOARD" == lewei ]] && log "REAL DRONE, Lewei board: flight control to 192.168.0.1:50000; video via scripts/lewei_bridge.py -> mediamtx on 127.0.0.1:$RTSP_PORT (started first, stopped last)"
 [[ "$MODE" == camera ]] && log "REAL CAMERA, NO FLIGHT: Lewei camera -> scripts/lewei_bridge.py -> mediamtx on 127.0.0.1:$RTSP_PORT; the backend sends no RC packets (MHD_CAMERA_ONLY=1)"
 
 wait_http() {               # wait_http URL SECONDS NAME
@@ -301,10 +314,12 @@ if [[ "$MODE" == twin ]]; then
   RTSP_URL="rtsp://127.0.0.1:$T_RTSP/live/ch00_1"
 fi
 
-# ------------------------------------------------------------------------------- camera (real camera, NO flight)
-# No twin and no renderer: mediamtx with the twin's loopback, TCP-only, RTSP-only config, then the Lewei
-# bridge (camera board -> H.264 with wall-clock pts -> RTSP on loopback). The backend comes after it.
-if [[ "$MODE" == camera ]]; then
+# ------------------------------------------------------------------------------- Lewei camera bridge
+# Camera mode (real camera, NO flight) and the real drone with the Lewei board. No twin and no renderer:
+# mediamtx with the twin's loopback, TCP-only, RTSP-only config, then the Lewei bridge (camera board ->
+# H.264 with wall-clock pts -> RTSP on loopback). The backend comes after it. The bridge runs for the
+# whole session: the drone powers itself off a few minutes after its video stream stops.
+if [[ "$BRIDGE_RUN" == 1 ]]; then
   RTSP_URL="rtsp://127.0.0.1:$RTSP_PORT/live/ch00_1"
   MTX_CFG="$RUN/mediamtx_$RTSP_PORT.yml"
   if [[ "$DRY" != 1 ]]; then
@@ -338,6 +353,8 @@ elif [[ "$MODE" == camera ]]; then      # twin mode + MHD_CAMERA_ONLY=1: no RC s
   B_ARGS=(--camera --port "$PORT" --governor-config "$GOV_CFG" --autopilot-config "$AP_CFG"
           --logs "$RUN/backend" --rtsp-url "$RTSP_URL")
   [[ "$HEADLESS" == 1 ]] && B_ARGS+=(--headless)
+elif [[ "$BOARD" == lewei ]]; then      # real mode, Lewei board: 192.168.0.1:50000, video from the bridge
+  B_ARGS+=(--board lewei --rtsp-url "$RTSP_URL")
 fi
 if [[ "$DRY" == 1 ]]; then              # the backend launcher's own checks (real: config/ or config/real/ only)
   (cd "$TREE" && bash scripts/run_backend.sh "${B_ARGS[@]}" --dry-run) 2>&1 | sed 's/^/    /' | tee -a "$STACK_LOG" >&2
@@ -410,6 +427,7 @@ echo
 log "UP: backend http://127.0.0.1:$PORT  $([[ "$UI" == 1 ]] && echo "UI http://127.0.0.1:$UI_PORT (open it in its own Chrome window)")"
 [[ "$MODE" == twin ]] && log "twin http://127.0.0.1:$T_HTTP (chase: /chase)  RTSP $RTSP_URL"
 [[ "$MODE" == camera ]] && log "REAL CAMERA, NO FLIGHT: RTSP $RTSP_URL from scripts/lewei_bridge.py; no RC packets are sent"
+[[ "$BOARD" == lewei ]] && log "REAL DRONE, Lewei board: RC to 192.168.0.1:50000; video $RTSP_URL from scripts/lewei_bridge.py (keep it running)"
 log "Ctrl-C stops everything (the backend lands first). Logs: $RUN"
 while true; do
   check_stop

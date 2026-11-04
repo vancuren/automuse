@@ -50,7 +50,7 @@ def test_camera_dry_run_starts_mediamtx_and_the_bridge_and_never_the_twin(tmp_pa
     assert "--mode" not in b and "--control-port" not in b
     assert "config/camera/governor.yaml" in b and "config/camera/autopilot.yaml" in b
     # run_backend.sh's own dry run, printed by run_stack: camera-only twin, loopback, the camera configs
-    assert "mode=twin drone=127.0.0.1:23999" in out and f"rtsp={URL}" in out and "camera_only=1" in out
+    assert "mode=twin board=x69_lg drone=127.0.0.1:23999" in out and f"rtsp={URL}" in out and "camera_only=1" in out
     assert "governor config=" in out and "config/camera/governor.yaml" in out
     p = cmds["perception"]
     assert "--mask-counter off" in p and "--hfov-deg 75.0" in p and "--backend ws://127.0.0.1:8171" in p
@@ -92,7 +92,7 @@ def test_camera_refuses_the_oracle_twin_options_and_a_second_rtsp_url():
 
 def test_camera_options_belong_to_camera_mode_and_camera_configs_never_fly():
     rc, out = run("--mode", "twin", "--dry-run", "--rtsp-port", "8673")
-    assert rc == 2 and "camera-mode options" in out
+    assert rc == 2 and "options of --mode camera and --mode real --board lewei" in out
     # The real stack refuses config/camera (twin_only, "TWIN calibration") before it starts anything.
     rc, out = run("--mode", "real", "--dry-run", "--config-dir", "config/camera")
     assert rc == 2 and "REAL mode refuses" in out and "would start" not in out

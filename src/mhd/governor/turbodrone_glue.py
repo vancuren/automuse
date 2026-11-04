@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 import math
+import select
+import socket
 import sys
 
 import threading
@@ -453,3 +455,154 @@ class CameraOnlyRcAdapter(GovernedX69LgRcAdapter):
             stats["rc_suppressed"] = self.rc_suppressed
         stats["camera_only"] = True
         return stats
+
+
+# ------------------------------------------------------------------------------------ Lewei board
+
+FC_TELEMETRY_LEN = 10
+FC_TELEMETRY_START = 0x66
+
+
+def _udp_socket() -> socket.socket:
+    """The Lewei adapter's UDP socket. A function so tests can hand in a fake: no test may reach a drone."""
+    return socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+
+def parse_fc_telemetry(data: bytes) -> Optional[tuple[float, int, bytes]]:
+    """One Lewei flight-controller downlink packet, 10 bytes: 66 VV S2 S3 S4 S5 S6 S7 S8 CK, where
+    CK = XOR of bytes 1..8, VV = battery voltage in 0.1 V and S2 = status flags (0x00 idle, 0x08 seen
+    while the motors ran after the takeoff flag). Returns (volts, status, bytes 3..8), or None."""
+    if len(data) != FC_TELEMETRY_LEN or data[0] != FC_TELEMETRY_START:
+        return None
+    ck = 0
+    for b in data[1:9]:
+        ck ^= b
+    if ck != data[9]:
+        return None
+    return data[1] / 10.0, data[2], bytes(data[3:9])
+
+
+class LeweiRcAdapter(GovernedX69LgRcAdapter):
+    """MHD_BOARD=lewei: our X69 unit's Lewei Wi-Fi board (FLIGHT_MODE=real only, see mhd.backend.modes).
+
+    Verified on the drone (props off, 2026-11-04): flight control is UDP to 192.168.0.1:50000 with
+    exactly the 20-byte X69 flight-controller payload that build_control_payload() makes
+    (66 14 RR PP TT YY F1 F2 00x10 XOR 99), sent raw: no `ca 47 d5 00` + length wrapper and no D1
+    keepalive. Same governor model, payload builder and one-shot flag handling as the X69 adapter.
+
+    There is no keepalive on this board, so keepalive_last_ok means "the last RC send succeeded": a dead
+    Wi-Fi still shows as rc_send_errors and, 3 s later, keepalive_stale. The socket is non-blocking, so
+    a send can never stall the 25 Hz RC tick. A daemon thread reads the drone's ~20 Hz downlink on the
+    same socket (it replies from :50000 to our source port) for telemetry only: battery volts, status
+    byte, age, good/bad counts. Nothing here feeds a governor decision.
+    """
+
+    def __init__(self, drone_ip: str = "192.168.0.1", control_port: int = 50000, *, local_port: int = 0,
+                 sock=None) -> None:
+        # Not X69LgRcProtocolAdapter.__init__: it would start the D1 keepalive sender.
+        self._init_link_state()
+        self.drone_ip = drone_ip
+        self.control_port = int(control_port)
+        self.local_port = local_port
+        self.debug_packets = False
+        self.packet_counter = 0
+        self.speed_scale_by_index = {0: 0.55, 1: 0.75, 2: 1.0}   # upstream's table; the governor pins 2
+        self.sock = sock if sock is not None else _udp_socket()
+        self._bind_socket(local_port)            # upstream helper: binds only when local_port > 0
+        self.sock.setblocking(False)
+        self._fc_lock = threading.Lock()
+        self.fc_ok = 0
+        self.fc_bad = 0
+        self.fc_battery_v: Optional[float] = None
+        self.fc_status: Optional[int] = None
+        self.fc_rest: Optional[bytes] = None
+        self.fc_last_rx: Optional[float] = None
+        self._reader_stop = threading.Event()
+        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True, name="LeweiFcTelemetry")
+        self._reader_thread.start()
+
+    # ----------------------------------------------------------------------------------- uplink
+    def build_control_packet(self, drone_model) -> bytes:
+        return self.build_control_payload(drone_model)   # the bare 20 bytes: no wrapper on this board
+
+    def send_control_packet(self, packet: bytes) -> None:
+        if self._pause_until and self._drop_for_pause():
+            return                                   # debug RC pause (real mode: ON_GROUND, <= 15 s)
+        try:
+            self.sock.sendto(packet, (self.drone_ip, self.control_port))
+        except OSError as exc:                       # Wi-Fi gone (EHOSTUNREACH...) or a full buffer
+            with self._stats_lock:
+                self.rc_errors += 1
+                self.rc_last_error = f"{type(exc).__name__}({exc.errno})"
+            now = time.monotonic()
+            if now - self._rc_last_log >= 5.0:
+                self._rc_last_log = now
+                logger.error("[rc] Lewei RC packet send failed (%d so far): %r", self.rc_errors, exc)
+            return
+        with self._stats_lock:
+            self.rc_sent += 1
+            self.keepalive_last_ok = time.monotonic()   # no keepalive here: a good RC send is the sign of life
+        if self.debug_packets:
+            self.packet_counter += 1
+            logger.debug("[lewei-rc] #%05d %s", self.packet_counter, packet.hex(" "))
+
+    def _keepalive_loop(self) -> None:               # never started; there is no keepalive on this board
+        return None
+
+    # --------------------------------------------------------------------------------- downlink
+    def on_fc_packet(self, data: bytes, addr, now: Optional[float] = None) -> bool:
+        """One datagram from the socket: counted good only if it is from the drone and well formed."""
+        from_drone = tuple(addr[:2]) == (self.drone_ip, self.control_port)
+        parsed = parse_fc_telemetry(data) if from_drone else None
+        with self._fc_lock:
+            if parsed is None:
+                self.fc_bad += 1
+                return False
+            self.fc_ok += 1
+            self.fc_battery_v, self.fc_status, self.fc_rest = parsed
+            self.fc_last_rx = time.monotonic() if now is None else now
+        return True
+
+    def _reader_loop(self) -> None:
+        while not self._reader_stop.is_set():
+            try:
+                ready, _, _ = select.select([self.sock], [], [], 0.2)
+            except (OSError, ValueError, TypeError):  # socket closed by stop()
+                if self._reader_stop.wait(0.2):
+                    return
+                continue
+            if not ready:
+                continue
+            try:
+                data, addr = self.sock.recvfrom(256)
+            except BlockingIOError:
+                continue
+            except OSError:
+                if self._reader_stop.wait(0.05):
+                    return
+                continue
+            self.on_fc_packet(data, addr)
+
+    def fc_telemetry(self) -> dict:
+        """Informational telemetry fields (hub telemetry latency_ms; never a governor input)."""
+        with self._fc_lock:
+            age = None if self.fc_last_rx is None else round((time.monotonic() - self.fc_last_rx) * 1000.0, 1)
+            return {"fc_battery_v": self.fc_battery_v, "fc_status": self.fc_status, "fc_telemetry_age": age,
+                    "fc_packets_ok": self.fc_ok, "fc_packets_bad": self.fc_bad}
+
+    def link_stats(self) -> dict:
+        with self._stats_lock:
+            return {"rc_sent": self.rc_sent, "rc_errors": self.rc_errors,
+                    "keepalive_sent": 0, "keepalive_errors": 0,
+                    "keepalive_age_ms": round((time.monotonic() - self.keepalive_last_ok) * 1000.0, 1),
+                    "keepalive_alive": True}    # no keepalive thread: the age above is the link's health
+
+    def stop(self) -> None:
+        self._reader_stop.set()
+        if self._reader_thread.is_alive():
+            self._reader_thread.join(timeout=1.0)
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
