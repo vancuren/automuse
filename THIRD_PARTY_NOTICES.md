@@ -103,7 +103,7 @@ the license classifiers). Packages with the most weight in the project:
 | sherpa-onnx | Apache-2.0 | Omnilingual ASR and the silero VAD |
 | transformers, torch | Apache-2.0; torch: `Apache-2.0 AND ... AND BSD-3-Clause AND ...` (see below) | MMS-TTS |
 | opencv-contrib-python | Apache-2.0 | RTSP decode, VitTrack, KCF, CSRT, ArUco |
-| fastapi, uvicorn, starlette, pydantic, websockets, httpx | MIT / BSD-3-Clause | backend, twin, and every client (the Meta Model API, Fireworks and `mlx_lm.server` are called with httpx) |
+| fastapi, uvicorn, starlette, pydantic, websockets, httpx | MIT / BSD-3-Clause | backend, twin, and every client: httpx for the Meta Model API, Fireworks and `mlx_lm.server`; websockets for the Voice Transcribe realtime stream and the backend sockets |
 | playwright | Apache-2.0 | drives Chrome for the twin renderer and the UI tests |
 | numpy, matplotlib, pyyaml, pillow, sounddevice, soundfile | BSD-3-Clause and others / matplotlib license / MIT / MIT-CMU / MIT / BSD-3-Clause | numerics, charts, config, images, audio |
 
