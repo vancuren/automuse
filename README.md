@@ -36,8 +36,9 @@ agreed to be filmed, and it calls the person or thing it follows the *subject*.
 
 1. **You speak.** Push-to-talk audio streams to Muse Voice Transcribe. The final transcript arrives
    about 0.23 s after you stop talking.
-2. **A model picks the mission; it never flies.** Our LoRA-tuned Muse Glimmer 30B and Muse Spark 1.3
-   race to turn the transcript into a mission that must validate against a fixed JSON schema:
+2. **A model picks the mission; it never flies.** Our LoRA-tuned Muse Glimmer 30B turns the
+   transcript into a mission that must validate against a fixed JSON schema, with Muse Spark 1.3
+   racing it as a fallback:
    `{"action":"follow","subject_phrase":"person in blue shirt","category":"person","color":"blue",...}`.
    Clarify and refuse answers are spoken and change nothing in flight.
 3. **SAM 3.1 finds the subject** in the newest frame from the words alone, 1-2 times a second.
@@ -218,10 +219,15 @@ scripts/run_backend.sh --mode twin --governor-config config/twin/governor.yaml \
     --autopilot-config config/twin/autopilot.yaml
 $MHD_ML_PY -m mhd_ml.perception.service --backend ws://127.0.0.1:8000 --detector sam_mlx --tracker auto
 scripts/serve_glimmer.sh          # Glimmer + LoRA on 127.0.0.1:8080, about 17 GB
-$MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000 --intent auto \
+$MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000 --intent glimmer \
     --glimmer-url http://127.0.0.1:8080/v1 --glimmer-model default_model
 (cd turbodrone/frontend && npm ci && npm run dev)   # open http://127.0.0.1:5173, hold Space to talk
 ```
+
+`--intent glimmer` uses the fine-tuned Glimmer alone (the keyword grammar answers if it fails).
+`--intent auto` also races Muse Spark 1.3 and keeps Glimmer's answer only if it is valid within
+2.5 s, which suits a cloud-hosted Glimmer; the local LoRA takes about 4 s, so Spark usually answers
+first.
 
 **The real drone.** Follow [docs/RUNBOOK.md](docs/RUNBOOK.md) (being written tonight by the ops
 workstream). In short:
