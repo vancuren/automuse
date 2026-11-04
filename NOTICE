@@ -26,9 +26,10 @@ November 2026 (the operator UI in turbodrone/frontend, the backend web_server.py
 and the removed follow plugin). THIRD_PARTY_NOTICES.md lists them, and
 `git diff 1aff2b5 HEAD -- turbodrone/` shows every change.
 
-Everything outside turbodrone/ was written during the Meta Global AI Developer
-Hackathon, November 3-4, 2026, and is licensed under the Apache License,
-Version 2.0 (see LICENSE). The code was written with AI assistance (Claude Code).
+Everything outside turbodrone/, except the license texts in LICENSE and licenses/,
+was written during the Meta Global AI Developer Hackathon, November 3-4, 2026, and
+is licensed under the Apache License, Version 2.0 (see LICENSE). The code was
+written with AI assistance (Claude Code).
 
 This product uses third-party models and libraries under their own licenses; see
 THIRD_PARTY_NOTICES.md. The SAM 3.1 weights and meta-sam-parser are under the SAM
