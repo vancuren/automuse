@@ -166,7 +166,7 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 | `test_screenshots.py` | 2 | Twin and real screenshots. |
 | `test_mock_backend.py` | 11 | The mock validates and judges messages correctly, latches E-STOP, needs the exact ARM phrase, and its masks stay inside their boxes. |
 | `test_contract_mirror.py` | 25 | `src/lib/contracts.ts` matches the pydantic models: field names, command names, event kinds, enums, literals. |
-| `test_frontend_static.py` | 10 | `npm run build`, `eslint --max-warnings 0`, one backend URL, no speed/profile/plugin code, only the worker sends `hb`, every button is a `UiButton`, no "target", no web fonts, loopback dev server. |
+| `test_frontend_static.py` | 10 | `npm run build`, `eslint --max-warnings 0`, one backend URL, no speed/profile/plugin code, only the worker sends `hb`, every button is a `UiButton`, the followed thing is always called "subject", no web fonts, loopback dev server. |
 | `test_ui_gov_backend.py` | 6 (opt-in) | Real governor backend in twin mode with no twin: telemetry renders, no ARM needed in twin, TAKEOFF shows "no video", the governor sees the worker heartbeat (`hb_age` under 600 ms), Esc E-STOPs the governor and reset works, `POST /command` passes CORS, no contract errors in the backend log. |
 
 The 26 browser tests check that:
