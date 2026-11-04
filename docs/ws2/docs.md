@@ -68,10 +68,10 @@ hit reports only the variable name and the file or commit. It also flags credent
    Follow Drone · Operator"). Renaming touches README.md, NOTICE, docs/SUBMISSION.md and the UI title.
 2. **The README says exactly what each run covers.** `scripts/e2e_twin.py` posts the follow Mission
    over HTTP; it does not speak, so the Results table says "a follow mission posted to the backend".
-   The claim that the whole chain runs with voice rests on the demo workstream's S1 take at 03:24
-   (`logs/demo-20261104-032416-s1/demo_result.json` in its worktree: Voice Transcribe, the Glimmer
-   LoRA in 4.03 s, FOLLOW, a spoken "land"), shown as the README's hero still and in results.md 1d.
-   The caption says the command was voiced by `say`.
+   The claim that the whole chain runs with voice rests on the demo workstream's S1 takes at 03:24
+   and 03:36 (`logs/demo-<stamp>-s1/demo_result.json` in its worktree: Voice Transcribe, the Glimmer
+   LoRA in about 4.0 s, FOLLOW, a spoken "land"), shown as the README's hero still (03:36 take) and
+   in results.md 1d. The caption says the command was voiced by `say`.
 3. **Newest numbers win.** Test counts come from docs/STATUS.md at 03:10 (governor 185, agent 200,
    perception 60), not the workstream docs (179, 199, 61).
 4. **Results shown in the README:** the last three SAM runs (02:58-03:02), not the earlier S1 run
@@ -107,8 +107,9 @@ hit reports only the variable name and the file or commit. It also flags credent
   step 3 lists them).
 - **The demo stills and video are the demo workstream's.** README.md shows
   `docs/img/demo_s1_2_voice_mission_follow.png`, `demo_s1_chase_follow.png` and
-  `demo_s2_crossing_follow.png`, which existed (uncommitted) in the ws2/demo worktree at 03:33. If that
-  workstream renames or drops them, fix the three image links.
+  `demo_s2_crossing_follow.png`, committed on ws2/demo (`3ee6018`, the final S1 take at 03:36). They
+  resolve once ws2/demo is merged; if that workstream renames them, fix the three image links. The
+  video itself (VIDEO_LINK) is cut by the owner from `media/demo/` and the morning's flights.
 - **`docs/RUNBOOK.md`** (linked from README "Run it") is the ops workstream's and is not merged yet.
 - **`scripts/demo_twin.py` and `scripts/run_stack.sh`** are described as "being written tonight";
   their flags are not documented in the README.
