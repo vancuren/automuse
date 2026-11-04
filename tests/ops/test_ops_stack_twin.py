@@ -127,3 +127,82 @@ def test_stack_twin_end_to_end(tmp_path):
             except subprocess.TimeoutExpired:
                 os.killpg(proc.pid, signal.SIGKILL)
         out.close()
+
+
+def test_stack_in_a_terminal_restarts_a_killed_backend_and_stops_on_ctrl_c():
+    """Under a real pseudo-terminal (as the owner runs it): kill -9 the backend (Session A link-loss
+    test 1), press Enter in the launcher window to restart it, then Ctrl-C (byte 0x03 -> SIGINT from
+    the tty driver to the foreground group)."""
+    import pty
+    import threading
+    for p in (BACKEND, T_HTTP, T_RTSP):
+        assert not port_busy(p), f"port {p} busy"
+    run = TREE / "logs" / f"ops-test/stack-pty-{time.strftime('%H%M%S')}"
+    run.mkdir(parents=True, exist_ok=True)
+    argv = ["bash", "scripts/run_stack.sh", "--mode", "twin", "--twin-ports", f"{T_HTTP},{T_RC},{T_RTSP}",
+            "--port", str(BACKEND), "--no-ui", "--perception", "none", "--agent", "none", "--no-renderer",
+            "--logs", str(run)]
+    pid, fd = pty.fork()
+    if pid == 0:                                   # child: the pty is its controlling terminal
+        os.chdir(TREE)
+        os.execvp("bash", argv)
+    buf = bytearray()
+    stop = threading.Event()
+
+    def drain():
+        while not stop.is_set():
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                return
+            if not data:
+                return
+            buf.extend(data)
+    th = threading.Thread(target=drain, daemon=True)
+    th.start()
+    report = {}
+    try:
+        wait(lambda: b"UP:" in buf, 120, "the stack to come up")
+        b1 = int(subprocess.run(["lsof", "-nP", f"-iTCP:{BACKEND}", "-sTCP:LISTEN", "-t"], capture_output=True,
+                                text=True).stdout.split()[0])
+        os.kill(b1, signal.SIGKILL)
+        wait(lambda: b"press Enter in THIS window" in buf, 10, "the dead-backend banner")
+        os.write(fd, b"\n")
+        wait(lambda: state()["flight_state"] == "ON_GROUND", 40, "the restarted backend")
+        b2 = int(subprocess.run(["lsof", "-nP", f"-iTCP:{BACKEND}", "-sTCP:LISTEN", "-t"], capture_output=True,
+                                text=True).stdout.split()[0])
+        report["backend_pids"] = [b1, b2]
+        assert b2 != b1
+        t0 = time.monotonic()
+        os.write(fd, b"\x03")                      # Ctrl-C at the terminal
+        status = None
+        end = time.monotonic() + 45
+        while status is None and time.monotonic() < end:
+            done, st = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = st
+            else:
+                time.sleep(0.1)
+        assert status is not None, "the launcher did not exit within 45 s of Ctrl-C"
+        report["exit_s"] = round(time.monotonic() - t0, 2)
+        report["exit_status"] = status
+        time.sleep(1)
+        report["ports_still_busy"] = [p for p in (BACKEND, T_HTTP, T_RTSP) if port_busy(p)]
+        (run / "check.json").write_text(json.dumps(report, indent=1))
+        (run / "terminal.txt").write_bytes(bytes(buf))
+        print(json.dumps(report, indent=1))
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+        assert not report["ports_still_busy"]
+        assert b"restarted backend" in buf and b"stopped. logs:" in buf
+    finally:
+        stop.set()
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        for pat in (f"http-port {T_HTTP}", f"--port {BACKEND}"):  # never leave a twin or backend behind
+            subprocess.run(["pkill", "-f", pat])
+        try:
+            os.close(fd)
+        except OSError:
+            pass

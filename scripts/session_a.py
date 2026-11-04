@@ -984,9 +984,9 @@ class Session:
             self.stop_proc(self.backend_proc, signal.SIGKILL)
             self.start_twin_backend()
         else:
-            io.do("restart the backend in its window (up-arrow, Enter), or: scripts/run_stack.sh --mode real "
-                  "--no-perception --no-agent")
-            io.enter("press Enter when it is back up")
+            io.do("restart the backend: press Enter in the run_stack.sh window (it restarts it with the same "
+                  "settings), or run the command run_stack printed in another window")
+            io.enter("press Enter here when it is back up")
         self.need_backend(st)
         if not self.auto and behavior == "kept spinning":
             if io.yn("motors still spinning? (sends E-STOP)", default=True):
