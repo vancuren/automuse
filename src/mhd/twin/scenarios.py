@@ -25,13 +25,115 @@ from mhd.contracts import FRAME_H, FRAME_W, Box, TruthActor
 SCENARIO_DIR = Path(__file__).resolve().parents[3] / "config" / "twin" / "scenarios"
 MAX_WALK_SPEED = 0.3     # m/s: the subject is asked to walk at 0.3 m/s or slower (PLAN 4.4)
 
-# Person envelope: (height fraction, half width, half depth) in meters for a 1.74 m person.
-# The renderer builds its people inside this envelope (arms at the sides, stride at the feet).
-PERSON_PROFILE = [
-    (0.00, 0.13, 0.22), (0.27, 0.15, 0.17), (0.52, 0.19, 0.13), (0.72, 0.24, 0.13),
-    (0.82, 0.25, 0.12), (0.88, 0.10, 0.11), (0.95, 0.10, 0.11), (1.00, 0.08, 0.09),
-]
-PERSON_REF_HEIGHT = 1.74
+# Person skeleton for a 1.74 m person (scaled by height). Duplicated in twin/web/js/world.js (SKEL);
+# the renderer animates exactly these joints, and the truth box is computed from the same forward
+# kinematics, so boxes follow the walking stride. tests/twin/test_scenarios.py checks the copy.
+PERSON_SKELETON = dict(
+    refH=1.74, hipY=0.92, hipX=0.095, thigh=0.45, thighR=0.075, shin=0.42, shinR=0.058,
+    footW=0.10, footH=0.075, footL=0.26, footDy=-0.02, footDz=-0.06,
+    pelvisY=0.06, torsoY=0.33, torsoH=0.46, torsoRTop=0.19, torsoRBot=0.165, torsoZ=0.62,
+    chestY=0.56, neckY=0.6, headY=0.703, headR=0.105, headSy=1.12, headSx=0.92,
+    shoulderX=0.215, shoulderY=0.53, shoulderAbd=0.06, upperArm=0.30, upperArmR=0.052,
+    elbow=0.29, forearm=0.26, forearmR=0.045, hand=0.29,
+    stride=0.95, hipSwing=0.38, kneeBase=0.08, kneeSwing=0.5, kneeRest=0.03, ankleSwing=0.15,
+    armSwing=0.3, elbowBase=0.18, elbowSwing=0.12, bob=0.012,
+)
+PERSON_REF_HEIGHT = PERSON_SKELETON["refH"]
+
+
+def gait_angles(dist: float, speed: float) -> dict:
+    """Joint angles (rad) from distance walked, identical to gaitAngles() in world.js."""
+    K = PERSON_SKELETON
+    w = 1.0 if speed > 0.01 else 0.0
+    ph = (dist / K["stride"]) * math.pi * 2
+    out = {"bob": K["bob"] * abs(math.cos(ph)) * w, "legs": {}, "arms": {}}
+    for side in (-1, 1):
+        p = ph + (math.pi if side > 0 else 0.0)
+        out["legs"][side] = {
+            "hip": -K["hipSwing"] * math.sin(p) * w,
+            "knee": -((K["kneeBase"] + K["kneeSwing"] * max(0.0, math.sin(p - 1.2))) * w + K["kneeRest"]),
+            "ankle": K["ankleSwing"] * max(0.0, -math.sin(p)) * w,
+        }
+        pa = ph + (0.0 if side > 0 else math.pi)
+        out["arms"][side] = {
+            "shoulder": -K["armSwing"] * math.sin(pa) * w,
+            "elbow": (K["elbowBase"] + K["elbowSwing"] * max(0.0, -math.sin(pa))) * (0.4 + 0.6 * w),
+        }
+    return out
+
+
+def _rx(v, a):
+    x, y, z = v
+    c, s = math.cos(a), math.sin(a)
+    return (x, y * c - z * s, y * s + z * c)
+
+
+def _rz(v, a):
+    x, y, z = v
+    c, s = math.cos(a), math.sin(a)
+    return (x * c - y * s, x * s + y * c, z)
+
+
+def _add(a, b):
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def _limb_points(a, b, r) -> list:
+    pts = []
+    for t in (0.0, 0.5, 1.0):
+        c = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
+        pts += [(c[0] + r, c[1], c[2]), (c[0] - r, c[1], c[2]), (c[0], c[1], c[2] + r), (c[0], c[1], c[2] - r)]
+    pts += [(b[0], b[1] - r, b[2])]
+    return pts
+
+
+def person_local_points(dist: float, speed: float) -> tuple[list, float]:
+    """Surface sample points in the renderer's body frame (x right, y up, -z forward), unscaled,
+    and the vertical bob. Mirrors buildPerson()/animatePerson() in world.js."""
+    K = PERSON_SKELETON
+    g = gait_angles(dist, speed)
+    hy = K["hipY"]
+    pts = []
+    # head and hair
+    hc = (0.0, hy + K["headY"], 0.0)
+    rx_, ry_, rz_ = K["headR"] * K["headSx"], K["headR"] * K["headSy"], K["headR"]
+    pts += [_add(hc, d) for d in ((rx_, 0, 0), (-rx_, 0, 0), (0, ry_, 0), (0, -ry_, 0), (0, 0, rz_), (0, 0, -rz_))]
+    pts.append((0.0, hy + K["headY"] + 0.12, 0.0))
+    # torso (tapered elliptical cylinder), chest cap, pelvis box
+    for y, r in ((hy + K["torsoY"] - K["torsoH"] / 2, K["torsoRBot"]), (hy + K["torsoY"] + K["torsoH"] / 2, K["torsoRTop"])):
+        for k in range(8):
+            a = 2 * math.pi * k / 8
+            pts.append((r * math.cos(a), y, r * K["torsoZ"] * math.sin(a)))
+    pts.append((0.0, hy + K["chestY"] + K["torsoRTop"] * 0.42, 0.0))
+    for dx in (-0.17, 0.17):
+        for dy in (-0.10, 0.10):
+            for dz in (-0.105, 0.105):
+                pts.append((dx, hy + K["pelvisY"] + dy, dz))
+    # legs
+    for side in (-1, 1):
+        a = g["legs"][side]
+        hip = (side * K["hipX"], hy, 0.0)
+        knee = _add(hip, _rx((0.0, -K["thigh"], 0.0), a["hip"]))
+        th = a["hip"] + a["knee"]
+        ankle = _add(knee, _rx((0.0, -K["shin"], 0.0), th))
+        pts += _limb_points(hip, knee, K["thighR"]) + _limb_points(knee, ankle, K["shinR"])
+        tf = th + a["ankle"]
+        for dx in (-K["footW"] / 2, K["footW"] / 2):
+            for dy in (-K["footH"] / 2, K["footH"] / 2):
+                for dz in (-K["footL"] / 2, K["footL"] / 2):
+                    pts.append(_add(ankle, _rx((dx, K["footDy"] + dy, K["footDz"] + dz), tf)))
+    # arms
+    for side in (-1, 1):
+        a = g["arms"][side]
+        sh = (side * K["shoulderX"], hy + K["shoulderY"], 0.0)
+
+        def R(v, side=side, a=a):
+            return _rx(_rz(v, side * K["shoulderAbd"]), a["shoulder"])
+        elbow = _add(sh, R((0.0, -K["elbow"], 0.0)))
+        hand = _add(sh, R(_add((0.0, -K["elbow"], 0.0), _rx((0.0, -K["hand"], 0.0), a["elbow"]))))
+        pts += _limb_points(sh, elbow, K["upperArmR"]) + _limb_points(elbow, hand, K["forearmR"])
+        pts += [(sh[0] + side * 0.062, sh[1], sh[2]), (sh[0], sh[1] + 0.062, sh[2])]
+    return pts, g["bob"]
 
 
 @dataclass
@@ -130,13 +232,13 @@ class Actor:
         pts = []
         if self.kind == "person":
             s = self.height_m / PERSON_REF_HEIGHT
-            for frac, hw, hdp in PERSON_PROFILE:
-                z = frac * self.height_m
-                for k in range(8):
-                    a = 2 * math.pi * k / 8
-                    lx, ly = hw * s * math.cos(a), hdp * s * math.sin(a)
-                    pts.append((x + right[0] * lx + fwd[0] * ly, y + right[1] * lx + fwd[1] * ly, z))
-                pts.append((x, y, z))
+            local, bob = person_local_points(st.get("dist", 0.0), st.get("speed", 0.0))
+            for lx, ly, lz in local:
+                # renderer body frame: x right, y up, -z forward; scaled about the feet
+                r_, f_ = s * lx, -s * lz
+                # points a bent foot pushes below the ground are hidden by it: clamp to the ground
+                pts.append((x + right[0] * r_ + fwd[0] * f_, y + right[1] * r_ + fwd[1] * f_,
+                            max(0.0, s * ly + bob)))
         else:
             length, width, height = self.size_m
             for lx in (-width / 2, 0.0, width / 2):

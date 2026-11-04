@@ -107,7 +107,20 @@ function skyTexture() {
 }
 
 // ---------------------------------------------------------------- people
-const PERSON_REF_H = 1.74;
+// Skeleton for a 1.74 m person (scaled by height_m / 1.74). These numbers are duplicated in
+// src/mhd/twin/scenarios.py (PERSON_SKELETON), which computes the ground-truth boxes from the same
+// forward kinematics; tests/twin/test_scenarios.py guards the copy. Change both together.
+export const SKEL = {
+  refH: 1.74, hipY: 0.92, hipX: 0.095, thigh: 0.45, thighR: 0.075, shin: 0.42, shinR: 0.058,
+  footW: 0.10, footH: 0.075, footL: 0.26, footDy: -0.02, footDz: -0.06,
+  pelvisY: 0.06, torsoY: 0.33, torsoH: 0.46, torsoRTop: 0.19, torsoRBot: 0.165, torsoZ: 0.62,
+  chestY: 0.56, neckY: 0.6, headY: 0.703, headR: 0.105, headSy: 1.12, headSx: 0.92,
+  shoulderX: 0.215, shoulderY: 0.53, shoulderAbd: 0.06, upperArm: 0.30, upperArmR: 0.052,
+  elbow: 0.29, forearm: 0.26, forearmR: 0.045, hand: 0.29,
+  stride: 0.95, hipSwing: 0.38, kneeBase: 0.08, kneeSwing: 0.5, kneeRest: 0.03, ankleSwing: 0.15,
+  armSwing: 0.3, elbowBase: 0.18, elbowSwing: 0.12, bob: 0.012,
+};
+const PERSON_REF_H = SKEL.refH;
 
 function mat(color, rough = 0.85, extra = {}) {
   return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.0, ...extra });
@@ -124,6 +137,7 @@ function limb(radius, length, material) {
 
 export function buildPerson(desc) {
   const c = desc.colors || {};
+  const K = SKEL;
   const shirt = mat(c.shirt || '#1f4fc4', 0.82);
   const pants = mat(c.pants || '#333333', 0.9);
   const skin = mat(c.skin || '#c58c6d', 0.6);
@@ -132,85 +146,95 @@ export function buildPerson(desc) {
   const s = (desc.height_m || PERSON_REF_H) / PERSON_REF_H;
 
   const root = new THREE.Group();
-  const body = new THREE.Group();          // everything above the feet; bobs while walking
+  const body = new THREE.Group();          // the whole figure; bobs while walking
   body.scale.setScalar(s);
   root.add(body);
-
-  const hipY = 0.92;
-  // pelvis
+  const hipY = K.hipY;
   const pelvis = new THREE.Mesh(new RoundedBoxGeometry(0.34, 0.2, 0.21, 3, 0.07), pants);
-  pelvis.position.y = hipY + 0.06; pelvis.castShadow = true; body.add(pelvis);
-  // torso: tapered, elliptical cross-section
-  const torsoG = new THREE.CylinderGeometry(0.19, 0.165, 0.5, 20, 1);
-  torsoG.scale(1, 1, 0.62);
+  pelvis.position.y = hipY + K.pelvisY; pelvis.castShadow = true; body.add(pelvis);
+  const torsoG = new THREE.CylinderGeometry(K.torsoRTop, K.torsoRBot, K.torsoH, 20, 1);
+  torsoG.scale(1, 1, K.torsoZ);           // elliptical cross-section
   const torso = new THREE.Mesh(torsoG, shirt);
-  torso.position.y = hipY + 0.36; torso.castShadow = true; body.add(torso);
-  const chest = new THREE.Mesh(new THREE.SphereGeometry(0.19, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), shirt);
-  chest.scale.set(1, 0.42, 0.62); chest.position.y = hipY + 0.6; chest.castShadow = true; body.add(chest);
-  // collar, neck, head, hair
+  torso.position.y = hipY + K.torsoY; torso.castShadow = true; body.add(torso);
+  const chest = new THREE.Mesh(new THREE.SphereGeometry(K.torsoRTop, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), shirt);
+  chest.scale.set(1, 0.42, K.torsoZ); chest.position.y = hipY + K.chestY; chest.castShadow = true; body.add(chest);
   const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.058, 0.1, 12), skin);
-  neck.position.y = hipY + 0.68; body.add(neck);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.105, 24, 18), skin);
-  head.scale.set(0.92, 1.12, 1.0); head.position.y = hipY + 0.82; head.castShadow = true; body.add(head);
+  neck.position.y = hipY + K.neckY; body.add(neck);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(K.headR, 24, 18), skin);
+  head.scale.set(K.headSx, K.headSy, 1.0); head.position.y = hipY + K.headY; head.castShadow = true; body.add(head);
   const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.112, 24, 14, 0, Math.PI * 2, 0, Math.PI * 0.55), hair);
-  hairCap.scale.set(0.95, 1.1, 1.04); hairCap.position.y = hipY + 0.835; hairCap.rotation.x = 0.25; body.add(hairCap);
+  hairCap.scale.set(0.95, 1.08, 1.04); hairCap.position.set(0, hipY + K.headY + 0.003, 0.006); hairCap.rotation.x = 0.25;
+  body.add(hairCap);
   const nose = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), skin);
-  nose.position.set(0, hipY + 0.81, -0.103); body.add(nose);
+  nose.position.set(0, hipY + K.headY - 0.01, -0.103); body.add(nose);
   for (const ex of [-0.035, 0.035]) {
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.011, 8, 6), mat('#1a1a1a', 0.3));
-    eye.position.set(ex, hipY + 0.84, -0.094); body.add(eye);
+    eye.position.set(ex, hipY + K.headY + 0.02, -0.094); body.add(eye);
   }
-
-  // legs: hip pivot -> thigh -> knee pivot -> shin -> foot
+  // legs: hip pivot -> thigh -> knee pivot -> shin -> ankle pivot -> shoe
   const legs = [];
   for (const side of [-1, 1]) {
-    const hip = new THREE.Group(); hip.position.set(side * 0.095, hipY, 0); body.add(hip);
-    hip.add(limb(0.075, 0.45, pants));
-    const knee = new THREE.Group(); knee.position.y = -0.45; hip.add(knee);
-    knee.add(limb(0.058, 0.42, pants));
-    const ankle = new THREE.Group(); ankle.position.y = -0.42; knee.add(ankle);
-    const foot = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.075, 0.26, 2, 0.03), shoes);
-    foot.position.set(0, -0.02, -0.06); foot.castShadow = true; ankle.add(foot);
+    const hip = new THREE.Group(); hip.position.set(side * K.hipX, hipY, 0); body.add(hip);
+    hip.add(limb(K.thighR, K.thigh, pants));
+    const knee = new THREE.Group(); knee.position.y = -K.thigh; hip.add(knee);
+    knee.add(limb(K.shinR, K.shin, pants));
+    const ankle = new THREE.Group(); ankle.position.y = -K.shin; knee.add(ankle);
+    const foot = new THREE.Mesh(new RoundedBoxGeometry(K.footW, K.footH, K.footL, 2, 0.03), shoes);
+    foot.position.set(0, K.footDy, K.footDz); foot.castShadow = true; ankle.add(foot);
     legs.push({ hip, knee, ankle, side });
   }
   // arms: shoulder pivot -> upper arm -> elbow pivot -> forearm -> hand (long sleeves)
   const arms = [];
   for (const side of [-1, 1]) {
-    const sh = new THREE.Group(); sh.position.set(side * 0.215, hipY + 0.57, 0); body.add(sh);
+    const sh = new THREE.Group(); sh.position.set(side * K.shoulderX, hipY + K.shoulderY, 0); body.add(sh);
     const cap = new THREE.Mesh(new THREE.SphereGeometry(0.062, 14, 10), shirt); cap.castShadow = true; sh.add(cap);
-    sh.add(limb(0.052, 0.3, shirt));
-    const el = new THREE.Group(); el.position.y = -0.29; sh.add(el);
-    el.add(limb(0.045, 0.26, shirt));
+    sh.add(limb(K.upperArmR, K.upperArm, shirt));
+    const el = new THREE.Group(); el.position.y = -K.elbow; sh.add(el);
+    el.add(limb(K.forearmR, K.forearm, shirt));
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10), skin);
-    hand.scale.set(0.8, 1.1, 0.6); hand.position.y = -0.29; hand.castShadow = true; el.add(hand);
-    sh.rotation.z = side * 0.06;          // arms hang slightly away from the body
+    hand.scale.set(0.8, 1.1, 0.6); hand.position.y = -K.hand; hand.castShadow = true; el.add(hand);
+    sh.rotation.z = side * K.shoulderAbd;  // arms hang slightly away from the body
     arms.push({ sh, el, side });
   }
-  root.userData = { kind: 'person', body, legs, arms, walk: 0 };
+  root.userData = { kind: 'person', body, legs, arms };
   return root;
+}
+
+// Joint angles from the distance walked; stateless, so the Python truth can reproduce them.
+// + rotation.x swings a hanging limb forward (toward local -z, the facing direction).
+export function gaitAngles(dist, speed) {
+  const K = SKEL;
+  const w = speed > 0.01 ? 1 : 0;
+  const ph = (dist / K.stride) * Math.PI * 2;
+  const out = { bob: K.bob * Math.abs(Math.cos(ph)) * w, legs: {}, arms: {} };
+  for (const side of [-1, 1]) {
+    const p = ph + (side > 0 ? Math.PI : 0);
+    out.legs[side] = {
+      hip: -K.hipSwing * Math.sin(p) * w,
+      knee: -((K.kneeBase + K.kneeSwing * Math.max(0, Math.sin(p - 1.2))) * w + K.kneeRest),
+      ankle: K.ankleSwing * Math.max(0, -Math.sin(p)) * w,
+    };
+    const pa = ph + (side > 0 ? 0 : Math.PI);
+    out.arms[side] = {
+      shoulder: -K.armSwing * Math.sin(pa) * w,
+      elbow: (K.elbowBase + K.elbowSwing * Math.max(0, -Math.sin(pa))) * (0.4 + 0.6 * w),
+    };
+  }
+  return out;
 }
 
 function animatePerson(obj, st) {
   const u = obj.userData;
-  const moving = st.speed > 0.01 ? 1 : 0;
-  u.walk += (moving - u.walk) * 0.25;                     // ease between standing and walking
-  const w = u.walk;
-  const stride = 0.95;                                    // meters per full gait cycle at a slow walk
-  const ph = (st.dist / stride) * Math.PI * 2;
+  const g = gaitAngles(st.dist, st.speed);
   for (const leg of u.legs) {
-    const p = ph + (leg.side > 0 ? Math.PI : 0);
-    const swing = Math.sin(p);
-    // + rotation.x swings a hanging limb forward (toward local -z, the facing direction)
-    leg.hip.rotation.x = -0.38 * swing * w;
-    leg.knee.rotation.x = -((0.08 + 0.5 * Math.max(0, Math.sin(p - 1.2))) * w + 0.03);   // knees bend backward
-    leg.ankle.rotation.x = 0.15 * Math.max(0, -swing) * w;
+    const a = g.legs[leg.side];
+    leg.hip.rotation.x = a.hip; leg.knee.rotation.x = a.knee; leg.ankle.rotation.x = a.ankle;
   }
   for (const arm of u.arms) {
-    const p = ph + (arm.side > 0 ? 0 : Math.PI);
-    arm.sh.rotation.x = -0.3 * Math.sin(p) * w;
-    arm.el.rotation.x = (0.18 + 0.12 * Math.max(0, -Math.sin(p))) * (0.4 + 0.6 * w);     // elbows bend forward
+    const a = g.arms[arm.side];
+    arm.sh.rotation.x = a.shoulder; arm.el.rotation.x = a.elbow;
   }
-  u.body.position.y = 0.012 * Math.abs(Math.cos(ph)) * w;
+  u.body.position.y = g.bob;
 }
 
 // ---------------------------------------------------------------- cars
