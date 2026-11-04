@@ -57,7 +57,7 @@ def test_twin_mode_takes_the_twin_configs():
 def test_camera_runs_twin_mode_with_camera_only_and_the_camera_configs():
     rc, err = dry("--camera")
     assert rc == 0, err
-    assert "mode=twin drone=127.0.0.1:23999 rtsp=rtsp://127.0.0.1:8554/live/ch00_1" in err
+    assert "mode=twin board=x69_lg drone=127.0.0.1:23999 rtsp=rtsp://127.0.0.1:8554/live/ch00_1" in err
     assert "camera_only=1" in err and "CAMERA ONLY (real camera, NO FLIGHT)" in err
     assert "governor config=config/camera/governor.yaml autopilot config=config/camera/autopilot.yaml" in err
     assert "dry run: not starting" in err
@@ -89,3 +89,37 @@ def test_camera_only_from_the_shell_never_reaches_real_or_plain_twin_mode():
     assert rc == 2 and "MHD_CAMERA_ONLY=1 is set in the shell: refusing --mode real" in err
     rc, err = dry("--mode", "twin", env_extra={"MHD_CAMERA_ONLY": "1"})
     assert rc == 0 and "camera_only=0" in err          # only --camera turns it on
+
+
+# ---------------------------------------------------------------- --board lewei (our X69 unit)
+
+def test_real_lewei_targets_the_lewei_board_and_the_loopback_bridge():
+    rc, err = dry("--mode", "real", "--board", "lewei")
+    assert rc == 0, err
+    assert ("mode=real board=lewei drone=192.168.0.1:50000 rtsp=rtsp://127.0.0.1:8554/live/ch00_1" in err
+            and "camera_only=0" in err)
+    assert "governor config=config/governor.yaml autopilot config=config/autopilot.yaml" in err
+    rc, err = dry("--mode", "real", "--board", "lewei", "--rtsp-url", "rtsp://127.0.0.1:8650/live/ch00_1",
+                  "--governor-config", "config/governor.yaml")
+    assert rc == 0 and "rtsp=rtsp://127.0.0.1:8650/live/ch00_1" in err and "config/governor.yaml" in err
+    rc, err = dry("--mode", "real")                                     # the default board is unchanged
+    assert rc == 0 and "board=x69_lg drone=172.16.11.1:23458" in err
+
+
+def test_lewei_refusals():
+    cases = [(("--mode", "twin", "--board", "lewei"), "only with --mode real"),
+             (("--camera", "--board", "lewei"), "only with --mode real"),
+             (("--board", "lewei"), "only with --mode real"),
+             (("--mode", "real", "--board", "bogus"), "--board x69_lg|lewei"),
+             (("--mode", "real", "--board", "lewei", "--control-port", "23458"), "CONTROL_PORT 50000"),
+             (("--mode", "real", "--board", "lewei", "--rtsp-url", "rtsp://192.168.0.1/live/ch00_1"), "loopback bridge"),
+             (("--mode", "real", "--board", "lewei", "--governor-config", "config/twin/governor.yaml"),
+              "only from config/ or config/real/"),
+             (("--mode", "real", "--board", "lewei", "--headless"), "twin-only")]
+    for args, msg in cases:
+        rc, err = dry(*args)
+        assert rc == 2 and msg in err, (args, err)
+    rc, err = dry("--mode", "real", env_extra={"MHD_BOARD": "lewei"})     # a stray shell value never wins
+    assert rc == 2 and "pass --board lewei" in err
+    rc, err = dry("--mode", "real", "--board", "lewei", env_extra={"MHD_CAMERA_ONLY": "1"})
+    assert rc == 2 and "MHD_CAMERA_ONLY" in err
