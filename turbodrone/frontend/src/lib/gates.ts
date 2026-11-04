@@ -15,6 +15,17 @@ const TAKEOFF_BLOCKING_FLAGS: Record<string, string> = {
 };
 
 /**
+ * Camera-only runs (scripts/run_stack.sh --mode camera): twin mode with the drone's real camera and
+ * no RC packets at all. The backend says so with this safety flag (src/mhd/backend/modes.py
+ * CAMERA_ONLY_FLAG); it is not in TAKEOFF_BLOCKING_FLAGS, so it never blocks the (simulated) takeoff.
+ */
+export const CAMERA_ONLY_FLAG = "camera_only";
+
+export function isCameraOnly(telemetry: Telemetry | null): boolean {
+  return telemetry?.flight_mode === "twin" && (telemetry.safety_flags ?? []).includes(CAMERA_ONLY_FLAG);
+}
+
+/**
  * Why TAKEOFF is disabled, or null when it is allowed (new in this fork).
  * Takeoff needs a live control link, fresh telemetry, the drone on the ground, and in real
  * mode the operator must have typed ARM this session (telemetry.armed). The backend enforces

@@ -312,6 +312,21 @@ def test_real_banner_and_arm_gate(ui, mock_backend):
     ui.wait_for_selector(f'{sel("flight-state")}[data-state="TAKING_OFF"]', timeout=2000)
 
 
+def test_camera_only_banner_keeps_takeoff_and_drops_the_chase_view(ui, mock_backend):
+    # scripts/run_stack.sh --mode camera: twin mode plus the backend's camera_only flag.
+    mock_backend.control(extra_flags=["camera_only"])
+    ui.wait_for_selector(f'{sel("mode-banner")}[data-mode="camera"]', timeout=3000)
+    assert "REAL CAMERA – NO FLIGHT" in ui.inner_text(sel("mode-banner"))
+    ui.wait_for_selector(sel("chase-view"), state="detached", timeout=3000)
+    assert ui.is_enabled(sel("takeoff-btn")), "camera_only must not block the simulated takeoff"
+    assert ui.locator(sel("arm-gate")).count() == 0
+    # The flag means nothing outside twin mode: real telemetry always shows the REAL banner.
+    mock_backend.control(flight_mode="real")
+    ui.wait_for_selector(f'{sel("mode-banner")}[data-mode="real"]', timeout=3000)
+    mock_backend.control(flight_mode="twin", extra_flags=[])
+    ui.wait_for_selector(f'{sel("mode-banner")}[data-mode="twin"]', timeout=3000)
+
+
 def test_stick_keys_are_ignored_while_typing_arm(ui, mock_backend):
     mock_backend.control(flight_mode="real")
     ui.wait_for_selector(sel("arm-input"), timeout=2000)

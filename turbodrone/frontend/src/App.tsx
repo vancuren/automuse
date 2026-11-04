@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { BACKEND_URL, TWIN_CHASE_URL, URLS } from "./config";
+import { isCameraOnly } from "./lib/gates";
 import { useAgentLink } from "./hooks/useAgentLink";
 import { useControls } from "./hooks/useControls";
 import { useHeartbeat } from "./hooks/useHeartbeat";
@@ -72,7 +73,8 @@ function App() {
     else if (wasOpen.current) wasOpen.current = false;
   }, [controls.linkStatus]);
 
-  const twin = tlm.telemetry?.flight_mode === "twin";
+  // Camera-only runs are twin mode with the real camera and no twin server: no chase view.
+  const twin = tlm.telemetry?.flight_mode === "twin" && !isCameraOnly(tlm.telemetry);
 
   // Heartbeat trouble while the control link itself is fine: the worker is dead or its socket
   // is down, or the governor says it is not getting our heartbeat. Give the worker 3 s to start.

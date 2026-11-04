@@ -1,9 +1,11 @@
 import type { Telemetry } from "../lib/contracts";
+import { isCameraOnly } from "../lib/gates";
 import type { LinkStatus } from "../lib/reconnectingSocket";
 
 /**
  * Full-width banners at the top of the screen (new in this fork):
- *  1. REAL / TWIN, from telemetry.flight_mode. Unknown until telemetry arrives.
+ *  1. REAL / TWIN, from telemetry.flight_mode. Unknown until telemetry arrives. Twin mode with the
+ *     camera_only flag (real camera, no RC packets) gets its own amber REAL CAMERA – NO FLIGHT banner.
  *  2. DISCONNECTED while the control socket is down (auto-reconnect is running).
  *  3. NO TELEMETRY while telemetry is stale.
  */
@@ -21,6 +23,20 @@ export function ModeBanner({ telemetry, stale }: { telemetry: Telemetry | null; 
           Loiley X69 · props live · {telemetry?.armed ? "ARMED" : "takeoff locked until ARM"}
         </span>
         {stale && <span className="text-sm text-yellow-200">(last known)</span>}
+      </div>
+    );
+  }
+  if (mode === "twin" && isCameraOnly(telemetry)) {
+    return (
+      <div
+        data-testid="mode-banner"
+        data-mode="camera"
+        className="flex h-10 shrink-0 items-center justify-center gap-4 bg-amber-400 text-lg font-black uppercase tracking-[0.3em] text-amber-950"
+      >
+        <span>REAL CAMERA – NO FLIGHT</span>
+        <span className="text-sm font-semibold tracking-[0.2em] text-amber-900">
+          live drone camera · flight simulated by the governor · no RC packets sent
+        </span>
       </div>
     );
   }
