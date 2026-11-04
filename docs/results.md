@@ -126,24 +126,26 @@ deliberately slow back-off, so the box grew while the drone backed up (`wrong_wa
 default; the 1 m backward-travel budget and the standoff rule bound that case, and the forward half
 (the blind runaway) stays on.
 
-### 1d. The whole chain with voice (demo take, S1)
+### 1d. The whole chain with voice (demo takes, S1)
 
 The demo workstream's `scripts/demo_twin.py` runs the same stack plus the voice agent, the Glimmer
 server and the operator UI (production build, real UI heartbeat, so not headless). The operator's
-command is a `say` recording fed into the agent's microphone input. Take `demo-20261104-032416-s1`
-(03:24 ET; `logs/demo-20261104-032416-s1/demo_result.json` in the ws2/demo worktree):
+command is a `say` recording fed into the agent's microphone input. Source:
+`logs/demo-<stamp>-s1/demo_result.json` in the ws2/demo worktree. The README stills come from the
+03:36 take.
 
-| Step | Result |
-|---|---|
-| Spoken: "Drone, follow the person in the blue shirt." | Muse Voice Transcribe final: "drone, follow the person in the blue shirt." (177.5 ms ASR time) |
-| Mission | from `glimmer-30b+lora` (our LoRA on the Mac) in 4,029.7 ms: follow, "person in blue shirt", person, blue, medium |
-| Button release to the mission card in the UI | 4.3 s |
-| Mission card to autopilot FOLLOW | 0.53 s |
-| Following (36.6 s window) | subject in frame 100% of 915 frames, bearing RMS 0.084 rad (max 0.132), locked 100%, 0 frames on another actor, FOLLOW throughout |
-| Whole run (56.4 s scored) | bearing RMS 0.125 rad, lock rate 0.953, 0 identity switches |
-| Spoken: "Okay drone, please land now." | the local listener heard "oky drone please land now", decoded in 270.1 ms, and the governor went to LANDING |
+| | Take 03:24 (`demo-20261104-032416-s1`) | Take 03:36 (`demo-20261104-033642-s1`, final) |
+|---|---|---|
+| Spoken: "Drone, follow the person in the blue shirt." | Muse Voice Transcribe final in 177.5 ms ASR time | same transcript, 184.1 ms |
+| Mission from `glimmer-30b+lora` (our LoRA on the Mac) | 4,029.7 ms: follow, "person in blue shirt", person, blue, medium | 4,038.5 ms, the same mission |
+| Button release to the mission card in the UI | 4.3 s | 4.3 s |
+| Mission card to autopilot FOLLOW | 0.53 s | 0.53 s |
+| Follow window (36.6 s) | 915 frames: subject in frame 100%, bearing RMS 0.084 rad (max 0.132), locked 100%, 0 frames on another actor | 916 frames: subject in frame 100%, bearing RMS 0.082 rad (max 0.118), locked 98.9%, 0 frames on another actor |
+| Whole scored run | 56.4 s: bearing RMS 0.125 rad, lock rate 0.953, 0 identity switches | 56.9 s: bearing RMS 0.124 rad, lock rate 0.899, 0 identity switches |
+| Spoken: "Okay drone, please land now." | the local listener heard "oky drone please land now" (decoded in 270.1 ms); LANDING via voice | the same (260.7 ms); LANDING via voice |
 
-Final numbers for the demo takes are the demo workstream's (docs/ws2/demo.md once merged).
+The S2 takes and the final numbers for every take are the demo workstream's (docs/ws2/demo.md once
+merged).
 
 ## 2. Perception gates (G0, G1, G2)
 
