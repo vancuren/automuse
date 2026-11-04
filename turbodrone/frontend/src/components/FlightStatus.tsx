@@ -26,7 +26,7 @@ export function FlightStateBadges({ telemetry, stale }: { telemetry: Telemetry |
       <span
         data-testid="flight-state"
         data-state={telemetry.flight_state}
-        className={`rounded-lg px-4 py-1.5 text-xl font-black tracking-[0.18em] ${
+        className={`whitespace-nowrap rounded-lg px-4 py-1.5 text-xl font-black tracking-[0.18em] ${
           telemetry.flight_state === "ESTOPPED" ? "animate-pulse" : ""
         }`}
         style={{ background: fs.bg, color: fs.fg }}
@@ -36,7 +36,7 @@ export function FlightStateBadges({ telemetry, stale }: { telemetry: Telemetry |
       <span
         data-testid="autopilot-state"
         data-state={telemetry.autopilot_state}
-        className="rounded-lg border-2 px-3 py-1 text-base font-bold tracking-[0.14em]"
+        className="whitespace-nowrap rounded-lg border-2 px-3 py-1 text-base font-bold tracking-[0.14em]"
         style={{ borderColor: apColor, color: apColor }}
       >
         AUTOPILOT {telemetry.autopilot_state}
@@ -107,7 +107,7 @@ export function PackTimer({
             data-testid={`pack-${id}`}
             disabled={!onGround || id === telemetry?.pack_id}
             onClick={() => onPackSwap(id)}
-            className={`rounded px-2 py-0.5 text-[11px] font-semibold ${
+            className={`whitespace-nowrap rounded px-2 py-0.5 text-[11px] font-semibold ${
               id === telemetry?.pack_id
                 ? "bg-slate-600 text-white"
                 : onGround
@@ -127,7 +127,7 @@ export function PackTimer({
 function Dot({ ok, warn }: { ok: boolean; warn?: boolean }) {
   return (
     <span
-      className={`inline-block h-2.5 w-2.5 rounded-full ${ok ? "bg-emerald-400" : warn ? "bg-amber-400" : "bg-red-500"}`}
+      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${ok ? "bg-emerald-400" : warn ? "bg-amber-400" : "bg-red-500"}`}
     />
   );
 }
@@ -143,22 +143,24 @@ export function LinkChips({
 }: {
   control: LinkStatus;
   hbOpen: boolean;
-  hbRate: number;
+  hbRate: number | null;
   telemetryStale: boolean;
-  telemetryRate: number;
+  telemetryRate: number | null;
   agent: LinkStatus;
 }) {
-  const chip = "flex items-center gap-1.5 rounded-md bg-slate-900 px-2 py-1 font-mono text-[11px] text-slate-300";
+  const chip =
+    "flex items-center gap-1.5 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 font-mono text-[11px] text-slate-300";
+  const hbOk = hbOpen && (hbRate === null || hbRate > 3.5);
   return (
     <div data-testid="link-chips" className="grid grid-cols-2 gap-1">
       <span className={chip} data-testid="link-control" data-status={control}>
         <Dot ok={control === "open"} /> CTRL {control}
       </span>
       <span className={chip} data-testid="link-hb">
-        <Dot ok={hbOpen && hbRate > 3.5} warn={hbOpen} /> HB {hbRate.toFixed(1)} Hz
+        <Dot ok={hbOk} warn={hbOpen} /> HB {hbRate === null ? "–" : hbRate.toFixed(1)} Hz
       </span>
       <span className={chip} data-testid="link-telemetry">
-        <Dot ok={!telemetryStale} /> TLM {telemetryRate} Hz
+        <Dot ok={!telemetryStale} /> TLM {telemetryRate === null ? "–" : telemetryRate} Hz
       </span>
       <span className={chip} data-testid="link-agent" data-status={agent}>
         <Dot ok={agent === "open"} warn={agent === "connecting"} /> VOICE {agent}

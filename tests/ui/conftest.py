@@ -203,3 +203,7 @@ def screens_dir() -> Path:
     SCREENS.mkdir(parents=True, exist_ok=True)
     SHARED.mkdir(parents=True, exist_ok=True)
     return SCREENS
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: runs npm (build or lint)")

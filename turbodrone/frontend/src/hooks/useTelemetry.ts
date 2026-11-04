@@ -10,7 +10,7 @@ export interface TelemetryLink {
   telemetry: Telemetry | null; // last message received (may be stale)
   status: LinkStatus;
   stale: boolean;
-  rateHz: number;
+  rateHz: number | null; // messages in the last second; null until measured
 }
 
 /** Subscribes to /ws/telemetry (Telemetry at 10 Hz). New in this fork. */
@@ -18,7 +18,7 @@ export function useTelemetry(): TelemetryLink {
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
   const [status, setStatus] = useState<LinkStatus>("connecting");
   const [stale, setStale] = useState(true);
-  const [rateHz, setRateHz] = useState(0);
+  const [rateHz, setRateHz] = useState<number | null>(null);
   const lastAt = useRef(0);
   const count = useRef(0);
 

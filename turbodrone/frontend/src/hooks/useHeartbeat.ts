@@ -4,7 +4,7 @@ import { URLS } from "../config";
 export interface HeartbeatStatus {
   open: boolean;
   sent: number;
-  rateHz: number;
+  rateHz: number | null; // null until the worker has measured a full second
 }
 
 /**
@@ -12,7 +12,7 @@ export interface HeartbeatStatus {
  * reports its status about once a second. New in this fork.
  */
 export function useHeartbeat(): HeartbeatStatus {
-  const [status, setStatus] = useState<HeartbeatStatus>({ open: false, sent: 0, rateHz: 0 });
+  const [status, setStatus] = useState<HeartbeatStatus>({ open: false, sent: 0, rateHz: null });
 
   useEffect(() => {
     const worker = new Worker(new URL("../workers/heartbeat.worker.ts", import.meta.url), {
@@ -21,7 +21,11 @@ export function useHeartbeat(): HeartbeatStatus {
     worker.onmessage = (ev: MessageEvent) => {
       const d = ev.data as Partial<HeartbeatStatus> & { type?: string };
       if (d?.type === "status") {
-        setStatus({ open: Boolean(d.open), sent: Number(d.sent ?? 0), rateHz: Number(d.rateHz ?? 0) });
+        setStatus({
+          open: Boolean(d.open),
+          sent: Number(d.sent ?? 0),
+          rateHz: typeof d.rateHz === "number" ? d.rateHz : null,
+        });
       }
     };
     worker.postMessage({ type: "start", url: URLS.control });

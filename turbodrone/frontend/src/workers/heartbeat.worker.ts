@@ -19,16 +19,22 @@ let sock: ReconnectingSocket | null = null;
 let hbTimer: ReturnType<typeof setInterval> | null = null;
 let statusTimer: ReturnType<typeof setInterval> | null = null;
 let sent = 0;
-let sentAtLastStatus = 0;
-let lastStatusAt = 0;
+let sentAtLastMeasure = 0;
+let lastMeasureAt = 0;
+let rateHz: number | null = null; // null until the first full one-second window
 
 function postStatus(): void {
-  const now = performance.now();
-  const dt = (now - lastStatusAt) / 1000;
-  const rateHz = dt > 0 ? (sent - sentAtLastStatus) / dt : 0;
-  sentAtLastStatus = sent;
-  lastStatusAt = now;
   self.postMessage({ type: "status", open: sock?.isOpen() ?? false, sent, rateHz });
+}
+
+/** Once a second: measure the send rate over the last window, then report. */
+function measure(): void {
+  const now = performance.now();
+  const dt = (now - lastMeasureAt) / 1000;
+  rateHz = dt > 0 ? (sent - sentAtLastMeasure) / dt : 0;
+  sentAtLastMeasure = sent;
+  lastMeasureAt = now;
+  postStatus();
 }
 
 function start(url: string): void {
@@ -41,8 +47,8 @@ function start(url: string): void {
   hbTimer = setInterval(() => {
     if (sock?.send(HEARTBEAT)) sent += 1;
   }, HB_PERIOD_MS);
-  lastStatusAt = performance.now();
-  statusTimer = setInterval(postStatus, 1000);
+  lastMeasureAt = performance.now();
+  statusTimer = setInterval(measure, 1000);
 }
 
 function stop(): void {

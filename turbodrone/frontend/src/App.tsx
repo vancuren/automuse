@@ -49,6 +49,15 @@ function App() {
     agent.agentMissionAt > tlmMissionAt;
   const mission = agentIsNewer ? agent.agentMission : tlmMission ?? agent.agentMission;
 
+  // Look-alike picker: once the autopilot follows, or the mission changes, the question is moot.
+  const apState = tlm.telemetry?.autopilot_state ?? null;
+  const { clearCandidates } = agent;
+  useEffect(() => {
+    if (apState === "FOLLOW") clearCandidates();
+  }, [apState, clearCandidates]);
+  const candidates =
+    agent.candidates && (!tlmMissionId || agent.candidates.mission_id === tlmMissionId) ? agent.candidates : null;
+
   // Reopen the MJPEG stream when the control link comes back after a drop.
   const [videoKey, setVideoKey] = useState(0);
   const wasOpen = useRef<boolean | null>(null);
@@ -102,7 +111,7 @@ function App() {
             mjpegUrl={URLS.mjpeg}
             telemetry={tlm.telemetry}
             stale={tlm.stale}
-            candidates={agent.candidates}
+            candidates={candidates}
             selected={agent.selected}
             onSelect={agent.selectCandidate}
             reconnectKey={videoKey}
@@ -122,7 +131,7 @@ function App() {
           </div>
         </div>
 
-        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto">
+        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto [&>*]:shrink-0">
           <VoicePanel
             ptt={agent.ptt}
             partial={agent.partial}
@@ -131,7 +140,7 @@ function App() {
             pttError={agent.pttError}
           />
           <MissionCard mission={mission} provisional={agentIsNewer} />
-          <CandidatePicker candidates={agent.candidates} selected={agent.selected} onSelect={agent.selectCandidate} />
+          <CandidatePicker candidates={candidates} selected={agent.selected} onSelect={agent.selectCandidate} />
           {twin && <ChaseView url={TWIN_CHASE_URL} />}
         </aside>
       </main>

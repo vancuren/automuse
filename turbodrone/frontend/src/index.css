@@ -2,7 +2,7 @@
 
 /*
  * Operator UI theme. No web fonts: during real flights the Mac's Wi-Fi is on the drone and
- * internet comes from a phone tether, so the UI must not depend on fonts.googleapis.com.
+ * internet comes from a phone tether, so the UI must not depend on web fonts from the internet.
  */
 html,
 body {

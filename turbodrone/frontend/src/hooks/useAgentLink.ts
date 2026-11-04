@@ -21,7 +21,8 @@ export interface VoiceLine {
 }
 
 const MAX_LINES = 30;
-const CANDIDATES_TTL_MS = 20000;
+/** Candidate boxes are a snapshot of one frame: drop them before they drift far from the scene. */
+const CANDIDATES_TTL_MS = 10000;
 
 /**
  * The /ws/agent?role=ui link (new in this fork): push-to-talk events out, transcript, intent,
@@ -108,6 +109,9 @@ export function useAgentLink() {
     return () => clearTimeout(t);
   }, [candidates, candidatesAt]);
 
+  /** The tie was resolved elsewhere (autopilot is following, or a new mission started). */
+  const clearCandidates = useCallback(() => setCandidates(null), []);
+
   const sendEvent = useCallback((ev: AgentEvent): boolean => {
     return sockRef.current?.send(ev) ?? false;
   }, []);
@@ -160,5 +164,6 @@ export function useAgentLink() {
     pttDown,
     pttUp,
     selectCandidate,
+    clearCandidates,
   };
 }
