@@ -50,7 +50,7 @@ Tests on `integration`, all passing (730 in total, counting the opt-in UI and fu
 |---|---|
 | governor | 224 |
 | twin | 65 |
-| UI | 90, plus 6 against the real backend |
+| UI | 89, plus 6 against the real backend |
 | perception | 60 |
 | voice agent | 200 |
 | training | 38 |
