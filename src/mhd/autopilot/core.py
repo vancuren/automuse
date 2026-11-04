@@ -465,14 +465,19 @@ def _follow_sticks(w: dict, params: AutopilotConfig, now_ms: float, conf_age_now
         if pitch > 0:
             framed = (y1 >= g.edge_margin_frac * H and y2 <= (1.0 - g.edge_margin_frac) * H
                       and bh < g.max_box_h_frac * H)
-            w["dbg_gate"] = "forward" if (trusted and framed) else "yaw_only"
-            pitch = min(pitch, fw.cap) if (trusted and framed) else 0.0
+            near_enough = bw >= g.min_box_w_frac * W
+            w["dbg_gate"] = ("forward" if (trusted and framed and near_enough)
+                             else "too_far" if (trusted and framed) else "yaw_only")
+            pitch = min(pitch, fw.cap) if (trusted and framed and near_enough) else 0.0
         elif pitch < 0:
             w["dbg_gate"] = "back" if trusted else "yaw_only"
             pitch = max(pitch, -fw.cap * fw.back_cap_ratio) if trusted else 0.0
         else:
             w["dbg_gate"] = "hold"
-    if pitch < 0 and w["backward_m"] >= fw.backward_budget_m:
+    if pitch < 0 and fw.backward_budget_m <= 0:
+        pitch = 0.0                     # backing disabled: under a reversed sign it flies toward them
+        w["dbg_gate"] = "no_backing"
+    elif pitch < 0 and w["backward_m"] >= fw.backward_budget_m:
         pitch = 0.0
         w["dbg_gate"] = "backward_budget"
         if not w["budget_exhausted_announced"]:

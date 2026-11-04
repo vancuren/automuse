@@ -355,6 +355,11 @@ $MHD_PY scripts/apply_sysid.py --feedforward on --write        # feed-forward on
 Rules:
 - One person stays on LAND and E-STOP.
 - The subject walks at 0.3 m/s or less, beside the flight line.
+  - The forward cap is about 0.38 m/s (modeled until Session B measures it).
+  - A faster walker makes the box shrink while the drone flies forward, which latches `wrong_way:pitch`. Press Resume.
+- Keep about 5 m clear behind the drone. Under a reversed pitch sign, "forward" flies it backward until the wrong-way check stops it: within about 2 m in the closed-loop tests.
+- The autopilot never backs up and never flies toward a person. When someone walks up to it, it holds.
+- It follows forward only a subject within about 6 m (box at least 64 px wide). Farther away, it only turns.
 - Stop at the first surprise.
 
 If you are working solo:
@@ -393,10 +398,11 @@ $MHD_PY scripts/apply_sysid.py --yaw-only off --write                     # keep
 $MHD_PY scripts/apply_sysid.py --yaw-gain-scale 1.0 --write               # only after a steady run
 ```
 Restart the stack between changes: press Ctrl-C with the drone landed, then run the same command again.
-- Pass: it closes in smoothly, and backs up slowly when the subject walks toward it.
-  - It moves forward only when the whole subject is in frame.
-  - Backing up is limited to **0.5 m per flight**. A new mission or Resume does not refill it.
-  - Closer than about 2 m (box over 85 % of the frame height or 60 % of its width), it only **hovers**. It never backs away by itself (integration's 04:09 safety review). The subject steps back to make it follow again.
+- Pass: it closes in smoothly, and holds when the subject walks toward it.
+  - It moves forward only when the whole subject is in frame and within about 6 m.
+  - It **never backs up**: autopilot backing is off (`forward.backward_budget_m: 0`, safety review 3). Under a reversed pitch sign, backing is the only way it could fly toward a person.
+  - Closer than about 2 m (box over 85 % of the frame height or 60 % of its width), it only hovers.
+  - The subject steps back to make it follow again.
 
 **4.3 The full loop**, to record:
 ```bash
@@ -436,7 +442,7 @@ Safety flags (the Safety panel):
 | `heartbeat_missing` | no UI heartbeat for 1.5 s | all sticks neutral; land after 5 s |
 | `video_stale` | video lag beyond the best case is over 0.7 s | autopilot neutral; land after 2 s |
 | `obs_stale` | perception is late or dead | autopilot neutral |
-| `wrong_way`, `wrong_way:yaw`, `wrong_way:pitch`, `wrong_way:frozen_box` | the drone moved against its command, or the box froze while turning. For pitch, a short probe (pitch held at 0) runs first, so a subject who simply walked away faster does not latch it. | hover, latched until **Resume**; land and check the signs (3.3) |
+| `wrong_way`, `wrong_way:yaw`, `wrong_way:pitch`, `wrong_way:frozen_box` | the drone moved against its command, or the box froze while turning. For pitch: the box shrank while it flew forward, which also happens when the subject walks away faster than the drone can follow. | hover, latched until **Resume**; land and check the signs (3.3) |
 | `autopilot_paused` | voice "stop" or hover, Pause, or a mission spoken before the last stop | press Resume, or say a new follow |
 | `landing:<cause>` | why it is landing: `ui_land`, `http_land`, `agent_land`, `model_land`, `heartbeat_lost`, `video_frozen`, `flight_timer`, `estop_reset` | press **Landed** after touchdown; Resume cancels |
 | `flight_timer_warn` | 5:00 on this pack | land soon |
@@ -461,6 +467,9 @@ Safety flags (the Safety panel):
 | Mission acked `"paused": true` | it was spoken before the last stop, land or takeoff | press Resume, or say it again |
 | FIND, then GIVE_UP after 25 s | the subject was not seen | better light; say the shirt color; face the subject |
 | `wrong_way:yaw` right after FOLLOW | yaw sign reversed, or K far off | land; redo 3.3 and 3.6; check `wire.sign.yaw` |
+| `wrong_way:pitch` | the pitch sign is reversed, or the subject walked away faster than the drone can follow (about 0.38 m/s) | first forward move of the flight: land, then check sysid's `pitch direction` line and 3.3. Otherwise walk slower and press Resume |
+| FOLLOW, but it never moves forward | the subject is more than about 6 m away (gate `too_far` in the control log), or not fully in frame | walk back toward the drone |
+| The mission is gone after a landing | touchdown ends the mission | say the follow command again after takeoff |
 | Voice not heard | Microphone permission, or prop noise | `mic_check`; use a headset mic (`--agent-extra "--mic-rate 16000"` for Bluetooth) |
 | `run_stack: port 8000 is already in use` | an old backend is still running | `lsof -nP -iTCP:8000 -sTCP:LISTEN`; Ctrl-C it in its window |
 | A component EXITED banner in run_stack | that process died; see `logs/stack-<time>-real/<name>.log` | backend: restart it with the printed command (the drone gets no RC until then) |

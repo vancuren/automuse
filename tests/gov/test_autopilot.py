@@ -9,6 +9,7 @@ from mhd.contracts import AutopilotState as S
 from mhd.governor.config import load_autopilot_config, replace
 
 P = load_autopilot_config()
+PB = replace(P, **{"forward.backward_budget_m": 0.5})   # backing allowed (off by default since review 3)
 
 
 class Driver:
@@ -176,8 +177,8 @@ def test_forward_only_when_gated():
 
 def test_forward_cap_and_size_deadband():
     d = Driver()
-    d.run(1.3, cx=640, w=20, h=300)                       # tiny: very far
-    assert math.isclose(d.step(d.obs(cx=640, w=20, h=300))["pitch"], P.forward.cap)
+    d.run(1.3, cx=640, w=70, h=300)                       # small: far (but within the 64 px gate)
+    assert math.isclose(d.step(d.obs(cx=640, w=70, h=300))["pitch"], P.forward.cap)
     d2 = Driver()
     w_ref = P.forward.ref_width_frac.medium * 1280
     d2.run(1.3, cx=640, w=w_ref * 1.05, h=300)            # within the +/-0.08 deadband
@@ -197,7 +198,7 @@ def test_standoff_hovers_and_never_backs_off_by_default():
 
 
 def test_standoff_back_off_when_configured_stops_at_the_budget():
-    p = replace(P, **{"forward.standoff.back_off_pitch": 0.08})
+    p = replace(PB, **{"forward.standoff.back_off_pitch": 0.08})
     d = Driver(p)
     big = dict(cx=640, w=800, h=650, cy=360)
     d.run(1.3, **big)
@@ -208,21 +209,21 @@ def test_standoff_back_off_when_configured_stops_at_the_budget():
     # the 0.5 m budget runs out: 0.08 x 127 x 0.012 = 0.12 m/s -> ~4 s
     d.run(6.0, **big)
     assert d.step(d.obs(**big))["pitch"] == 0
-    assert d.s.backward_m >= P.forward.backward_budget_m == 0.5
+    assert d.s.backward_m >= p.forward.backward_budget_m == 0.5
     assert any(e["kind"] == "safety" for e in d.events)
 
 
 def test_backward_budget_is_not_refilled_by_forward_travel_or_a_new_mission():
-    d = Driver()
+    d = Driver(PB)
     near = dict(cx=640, w=180, h=400)       # closer than the 128 px reference: backs up on the size error
     d.run(1.3, **near)
     assert d.s.mode == S.follow and d.step(d.obs(**near))["pitch"] < 0
     d.run(4.0, **near)                      # 0.125 x 127 x 0.012 = 0.19 m/s: 0.5 m in ~2.6 s
     assert d.step(d.obs(**near))["pitch"] == 0 and d.s.dbg_gate == "backward_budget"
     used = d.s.backward_m
-    assert used >= P.forward.backward_budget_m
-    for i in range(50):                     # the subject drifts away: 2 s of forward flight
-        d.step(d.obs(cx=640, w=180 - 2.4 * i, h=400 - 4 * i))
+    assert used >= PB.forward.backward_budget_m
+    for i in range(50):                     # the subject drifts away (to 90 px): 2 s of forward flight
+        d.step(d.obs(cx=640, w=180 - 1.8 * i, h=400 - 3 * i))
     assert d.applied["pitch"] > 0
     assert d.s.backward_m >= used           # forward travel does not refill the budget
     s2 = autopilot_start(d.s, "m2", d.t)
@@ -266,7 +267,7 @@ def test_box_jumps_are_not_debounced():
 
 
 def test_a_growing_box_passes_the_width_filter_at_once():
-    d = Driver()
+    d = Driver(PB)
     d.run(1.3, cx=640, w=110, h=330)                 # farther than the reference: forward
     assert d.step(d.obs(cx=640, w=110, h=330))["pitch"] > 0
     out = d.step(d.obs(cx=640, w=170, h=400))        # suddenly closer (ratio 1.55: not a jump)
@@ -335,3 +336,26 @@ def test_width_lowpass_damps_a_gait_swing_in_the_size_error():
     flips = lambda xs: sum(1 for a, b in zip(xs, xs[1:]) if a * b < 0)
     assert flips(filt) <= flips(raw)
     assert max(abs(x) for x in filt) < max(abs(x) for x in raw)
+
+
+def test_the_autopilot_never_backs_up_by_default():
+    # Review 3: backing is the autopilot's only path toward the person under a reversed pitch sign.
+    assert P.forward.backward_budget_m == 0.0
+    d = Driver()
+    near = dict(cx=700, w=200, h=450)                # closer than the reference
+    d.run(1.3, **near)
+    outs = [d.step(d.obs(**near)) for _ in range(100)]
+    assert all(o["pitch"] == 0 for o in outs) and outs[-1]["yaw"] > 0
+    assert d.s.dbg_gate == "no_backing" and d.s.backward_m == 0.0
+    assert not any(e["kind"] == "safety" for e in d.events)
+
+
+def test_forward_only_toward_a_subject_within_about_6_m():
+    d = Driver()
+    far = dict(cx=700, w=60, h=180)                  # 60 px < 0.05 W: a person about 6.3 m away
+    d.run(1.3, **far)
+    out = d.step(d.obs(**far))
+    assert out["pitch"] == 0 and out["yaw"] > 0 and d.s.dbg_gate == "too_far"
+    d.step(d.obs(cx=700, w=66, h=200))               # 66 px: within the gate
+    assert d.step(d.obs(cx=700, w=66, h=200))["pitch"] > 0
+

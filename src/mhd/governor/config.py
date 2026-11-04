@@ -181,10 +181,11 @@ class WrongWayCfg:
     # Pitch probe: before latching a pitch hover, hold pitch at 0 (yaw keeps tracking) and compare how
     # fast the box shrinks (or grows) without our own forward (back) motion. Faster: the subject is
     # outpacing a correct drone, so follow again (at most pitch_probe_max_clears times per mission).
-    # Slower or unclear: latch the hover as before. Under a reversed sign the probe is a hover as
-    # well, so it adds no travel toward or away from the subject. pitch_probe_window_s 0 = off.
+    # Slower or unclear: latch the hover as before. pitch_probe_window_s 0 = off, the default: a
+    # third review (logs/review3/) showed a passive hold cannot tell a reversed sign from a subject
+    # that starts walking, turns or stops and goes during it (4-18 m runaways after false clears).
     pitch_probe_settle_s: float = 1.0    # let the drone stop before measuring
-    pitch_probe_window_s: float = 1.5    # measure the box rate over this long (medians at both ends)
+    pitch_probe_window_s: float = 0.0    # measure the box rate over this long (medians at both ends)
     pitch_probe_margin: float = 0.02     # log-width per s by which the rate must get worse to clear
     pitch_probe_max_clears: int = 2
     # Frozen box: the same box (within frozen_box_px) for frozen_box_s while we turned >= frozen_box_min_turn_rad.
@@ -361,6 +362,10 @@ class GateCfg:
     max_box_h_frac: float = 0.8
     max_abs_bearing_rad: float = 0.4
     max_confirm_age_s: float = 1.5
+    # Forward only toward a subject whose box is at least this fraction of the frame width (0.05 =
+    # 64 px, a person about 5.9 m away). Beyond that a reversed pitch sign is too slow for the
+    # wrong-way check to see (review 3: 11-23 m runaways from far starts). 0 = off.
+    min_box_w_frac: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -394,7 +399,8 @@ class ForwardCfg:
     kp: float = 0.6
     cap: float = 0.25
     back_cap_ratio: float = 0.5
-    backward_budget_m: float = 0.5  # backward travel per flight; forward travel does not refill it
+    backward_budget_m: float = 0.0  # backward travel per flight (0 = the autopilot never backs up);
+                                    # forward travel does not refill it
     gate: GateCfg = GateCfg()
     standoff: StandoffCfg = StandoffCfg()
     ref_width_frac: RefWidthCfg = RefWidthCfg()
@@ -465,6 +471,8 @@ class AutopilotConfig:
             raise ConfigError("forward.standoff.back_off_pitch must be 0..0.2")
         if not 0.0 <= self.forward.backward_budget_m <= 2.0:
             raise ConfigError("forward.backward_budget_m must be 0..2")
+        if not 0.0 <= self.forward.gate.min_box_w_frac <= 0.3:
+            raise ConfigError("forward.gate.min_box_w_frac must be 0..0.3")
         if self.lifecycle.search.max_deg > 180:
             raise ConfigError("lifecycle.search.max_deg must be <= 180")
         if not (self.camera.frame_w == 1280 and self.camera.frame_h == 720):

@@ -162,15 +162,24 @@ sticks on the wire in 0.42-0.44 s.
   for 1.5 s: all sticks neutral; for 5 s: land. Human input counts as zero 0.25 s after the last key.
   A flight timer warns at 5:00 and lands at 6:30. Ctrl-C lands first (first land packet 3 ms after
   the signal).
-- **Wrong-way checks.** If the subject's bearing moves against the commanded yaw, if the box keeps
-  shrinking while the drone flies forward near its cap, or if the box freezes while the drone turns,
-  it hovers until you press Resume.
+- **Wrong-way checks.** These latch a hover until you press Resume:
+  - the subject's bearing moves against the commanded yaw;
+  - the box keeps shrinking while the drone flies forward;
+  - the box freezes while the drone turns.
+
+  What the reviews added:
+  - Two more adversarial reviews tested a reversed pitch sign in closed loop: 360 combinations of speed (0.5-1.5x), deadband and latency.
+  - These limits came out of them:
+    - the autopilot never backs up, because that is its only path toward a person under a reversed sign;
+    - it flies forward only toward a subject within about 6 m, because a farther runaway is too slow to see.
+  - Result: a reversed drone never moved toward the person, and was stopped within 2.2 m.
 - **Caps.** First-flight autopilot caps: yaw 38 and pitch 32 wire counts out of 127, roll and throttle
-  0. Forward motion only when the box is clear of the top and bottom edges, near the center, and
-  confirmed by SAM within the last 1.5 s; otherwise the autopilot only turns.
+  0. Forward motion only when the box is clear of the top and bottom edges, near the center,
+  within about 6 m (at least 64 px wide), and confirmed by SAM within the last 1.5 s; otherwise
+  the autopilot only turns. It never backs up.
 - **Real mode is gated.** `FLIGHT_MODE=twin|real` has no default; twin mode refuses any non-loopback
-  address. Real mode accepts only the drone's address (172.16.11.1), and the operator types ARM once
-  per session. No props-on flight happens until Session A (props off) has checked the flags, link
+  address. Real mode accepts only the drone's address (172.16.11.1), refuses the twin's configs
+  (`twin_only: true`), and the operator types ARM once per session. No props-on flight happens until Session A (props off) has checked the flags, link
   loss, latency and field of view. The real-drone configs (`config/*.yaml`) stay conservative, with
   feed-forward off, until Session B measures the drone; the twin uses its own calibration
   (`config/twin/`).

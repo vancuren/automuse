@@ -110,9 +110,11 @@ wrong_way:                  # PLAN 4.5 step 5, plus pitch and frozen-box checks 
   yaw_min_ratio: 0.3        # yaw: observed change at least this fraction of the predicted one
                             # (low until Session B measures K: still latches at 0.7 x K, 6-count deadband)
   pitch_probe_settle_s: 1.0 # pitch probe: before latching, hold pitch at 0 (yaw still tracks) and compare the
-  pitch_probe_window_s: 1.5 # subject's recession over this window with the rate before. Receding FASTER by
+  pitch_probe_window_s: 0.0 # subject's recession over this window with the rate before. Receding FASTER by
   pitch_probe_margin: 0.02  # this much (fraction of the distance per s) = it outpaces a correct drone:
-  pitch_probe_max_clears: 2 # follow again, at most this often per mission. Otherwise latch. Window 0 = off.
+  pitch_probe_max_clears: 2 # follow again, at most this often per mission. Otherwise latch. Window 0 = off:
+                            # OFF (review 3, logs/review3/): a subject that starts walking, turns or stops
+                            # during the hold fools it into resuming under a reversed sign.
   frozen_box_s: 2.0         # the very same box (within frozen_box_px) for this long while we turned at
   frozen_box_px: 0.5        # least frozen_box_min_turn_rad: stuck tracker or repeating camera frame
   frozen_box_min_turn_rad: 0.15

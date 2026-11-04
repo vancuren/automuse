@@ -482,6 +482,11 @@ class Governor:
             # Landed: confirm_touchdown while AIRBORNE used to silence every safety landing.
             if st == FlightState.landing:
                 self._set_state(FlightState.on_ground, now)
+                # Touchdown ends the mission: a new flight needs a new spoken follow, and the
+                # autopilot no longer cycles FIND/CONFIRM on the ground (demo finding).
+                self._ap = autopilot_stop(self._ap, now)
+                self._pitch_probe = None
+                self._mission = None
                 return ok()
             return no("not_landing")
         if cmd == "pause":
@@ -856,7 +861,12 @@ class Governor:
             self._ap_fault_until = now + self.cfg.autopilot.fault_neutral_s * 1000.0
             return dict(ZERO)
         self._ap = new_state
+        speak = self._state == FlightState.airborne and not self._ap_paused
         for ev in events:
+            # Spoken lines only while the autopilot may fly: during a landing or a pause its state
+            # machine keeps running and used to say "I lost the subject. Looking around." (demo).
+            if ev.get("kind") == "announce" and not speak:
+                continue
             self.events.append(ev)
         self._ap_last_sticks = clean
         return clean

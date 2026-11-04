@@ -453,8 +453,8 @@ def test_pitch_wrong_way_hovers(rig):
     outs = [r.tick() for _ in range(r.ticks_for(12.0))]
     flagged = lambda o: "pitch_probe" in o.safety_flags or "wrong_way:pitch" in o.safety_flags  # noqa: E731
     held = next((i for i, o in enumerate(outs) if flagged(o)), None)
-    # The condition fires within a few seconds; the pitch probe holds pitch at once, and since
-    # holding still stops the shrinking, it latches the hover about 3.5 s later.
+    # The condition fires within a few seconds and latches the hover (the pitch probe is off by
+    # default; when on, it holds pitch at once and latches about 3.5 s later).
     assert held is not None and held * TICK_MS / 1000.0 <= 6.0
     latched = next((i for i, o in enumerate(outs) if "wrong_way:pitch" in o.safety_flags), None)
     assert latched is not None and (latched - held) * TICK_MS / 1000.0 <= 4.5
@@ -523,7 +523,7 @@ def test_box_growing_while_backing_locks_out_backing_without_a_hover(rig):
     # A person walking up to a correctly backing drone, or a reversed pitch sign flying it toward
     # them: either way the box grows while it backs up. Review (2026-11-04): check it, and stop all
     # autopilot backing for the rest of the mission instead of latching a hover.
-    r = rig()
+    r = rig(ap_overrides={"forward.backward_budget_m": 0.5})     # backing is off by default
     r.following(cx=640, w=200, h=500)         # closer than the reference: the autopilot backs up
     r.obs_fn = _approaching_subject(r)
     outs = [r.tick() for _ in range(r.ticks_for(8.0))]
@@ -538,7 +538,8 @@ def test_box_growing_while_backing_locks_out_backing_without_a_hover(rig):
 
 
 def test_backward_check_can_be_switched_off(rig):
-    r = rig(gov_overrides={"wrong_way.pitch_check_backward": False})
+    r = rig(gov_overrides={"wrong_way.pitch_check_backward": False},
+            ap_overrides={"forward.backward_budget_m": 0.5})
     r.following(cx=640, w=200, h=500)
     r.obs_fn = _approaching_subject(r)
     outs = [r.tick() for _ in range(r.ticks_for(6.0))]
@@ -566,8 +567,14 @@ def _probe_starts(outs):
     return sum(1 for a, b in zip(outs, outs[1:]) if "pitch_probe" in b.safety_flags and "pitch_probe" not in a.safety_flags)
 
 
+PROBE_ON = {"wrong_way.pitch_probe_window_s": 1.5}                  # the probe is off by default since review 3
+
+
+NO_FAR_GATE = {"forward.gate.min_box_w_frac": 0.0}   # these walkers outrun the 64 px gate
+
+
 def test_pitch_probe_clears_when_the_subject_outpaces_a_correct_drone(rig):
-    r = rig()
+    r = rig(gov_overrides=PROBE_ON, ap_overrides=NO_FAR_GATE)
     r.following(cx=640, w=110, h=330)
     plant = _Plant(r, d0=375.0 / 110, u=0.6)          # walks away faster than the 0.38 m/s cap
     r.obs_fn = plant
@@ -579,7 +586,7 @@ def test_pitch_probe_clears_when_the_subject_outpaces_a_correct_drone(rig):
 
 
 def test_pitch_probe_latches_when_holding_still_stops_the_shrink(rig):
-    r = rig()
+    r = rig(gov_overrides=PROBE_ON)
     r.following(cx=640, w=110, h=330)
     r.obs_fn = _Plant(r, d0=375.0 / 110, u=0.0, sign=-1.0)   # stationary subject, reversed pitch sign
     outs = [r.tick() for _ in range(r.ticks_for(12.0))]
@@ -591,13 +598,22 @@ def test_pitch_probe_latches_when_holding_still_stops_the_shrink(rig):
 
 
 def test_pitch_probe_clears_are_limited_per_mission(rig):
-    r = rig()
+    r = rig(gov_overrides=PROBE_ON, ap_overrides=NO_FAR_GATE)
     r.following(cx=640, w=110, h=330)
     r.obs_fn = _Plant(r, d0=375.0 / 110, u=1.2)      # far faster than the drone can follow
     outs = [r.tick() for _ in range(r.ticks_for(40.0))]
     max_clears = r.g.cfg.wrong_way.pitch_probe_max_clears
     assert _probe_starts(outs) == max_clears
     assert "wrong_way:pitch" in outs[-1].safety_flags
+
+
+def test_default_config_never_backs_up_toward_an_approaching_subject(rig):
+    r = rig()
+    r.following(cx=640, w=200, h=500)
+    r.obs_fn = _approaching_subject(r)
+    outs = [r.tick() for _ in range(r.ticks_for(6.0))]
+    assert all(o.wire["pitch"] >= 128 for o in outs)
+    assert r.g.cfg.wrong_way.pitch_probe_window_s == 0.0
 
 
 def test_twin_only_configs_are_refused_in_real_mode(tmp_path):
@@ -911,3 +927,23 @@ def test_sysid_abort_reasons():
     assert "LANDING" in _abort_reason(dict(ok, flight_state="LANDING"), st, "yaw", 0.5)
     twin = dict(ok, flight_mode="twin", latency_ms={})
     assert _abort_reason(twin, st, "yaw", 0.5) is None
+
+
+def test_no_spoken_lines_while_landing_and_the_mission_ends_at_touchdown(rig):
+    # Demo findings: after a voice land the autopilot said "I lost the subject. Looking around."
+    # while landing, then cycled FIND/CONFIRM on the ground.
+    r = rig()
+    r.following(cx=640, w=128, h=380)
+    r.g.drain_events()
+    assert r.g.command("land").ok
+    r.obs_fn = None                                   # the subject is gone from the view
+    r.run(6.0)
+    evs = r.g.drain_events()
+    assert any(e.get("kind") == "state" and e.get("to") == "LOST" for e in evs)   # it still notices
+    assert not any(e.get("kind") == "announce" for e in evs)                     # but says nothing
+    assert r.g.command("confirm_touchdown").ok
+    assert r.g.autopilot.mode.value == "IDLE"
+    r.steady_obs(cx=640, w=128, h=380, score=0.5)
+    r.run(3.0)
+    assert not any(e.get("kind") == "state" for e in r.g.drain_events())       # no FIND/CONFIRM flapping
+

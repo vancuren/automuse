@@ -1,9 +1,10 @@
 """Closed loop with a REAL-mode governor and the base configs (config/*.yaml): the plant's pitch sign
 is reversed relative to the config, the drone is 30 % slower or faster per count than modeled, and it
-has a firmware deadband the config compensates (Session B) or does not. Review, 2026-11-04: the
-forward check must stop a reversed sign within about 1.5 m, and the drone must never travel more
-than about 0.7 m toward the person. With a correct sign, a stationary subject never trips anything.
-See closed_loop_sim.py for the plant and camera model.
+has a firmware deadband the config compensates (Session B) or does not. Reviews 2 and 3
+(2026-11-04, logs/review2/, logs/review3/): the forward check must stop a reversed sign within
+about 1.5 m (2 m with an unmeasured deadband), the 64 px gate keeps far subjects out of the check's
+blind zone, and with autopilot backing off the drone never moves toward the person. With a correct
+sign, a stationary subject never trips anything. See closed_loop_sim.py for the model.
 """
 from __future__ import annotations
 
@@ -36,20 +37,30 @@ def test_reversed_pitch_forward_runaway_latches_within_1_5_m(spec, tmp_path):
 
 
 def test_reversed_pitch_with_an_uncompensated_deadband_stays_bounded(tmp_path):
-    # Slowest case: a 6-count firmware deadband nobody measured. The drift is too slow for any
-    # 2 s window, but stays bounded and latches eventually.
+    # Slowest case: a 6-count firmware deadband nobody measured. The drift can be too slow for any
+    # 2 s window; the wrong-way latch or the 64 px forward gate stops it within 2 m.
     for speed in SPEEDS:
         r = sim("stat:3.5", tmp_path, speed=speed, db=(6, 0), dur=150.0)
         assert r["max_away_m"] <= 2.0, (speed, r["max_away_m"])
-        assert r["ww_reason"] == "wrong_way:pitch", (speed, r)
+
+
+@pytest.mark.parametrize("spec", ["stat:6.5", "stat:9.0"])
+def test_reversed_pitch_never_flies_forward_toward_a_far_subject(spec, tmp_path):
+    # Beyond the 64 px gate (a person farther than about 5.9 m) the autopilot only turns, so the
+    # check's blind zone for far subjects (review 3: 11-23 m runaways) is never entered.
+    for speed in (0.5, 1.0, 1.5):
+        r = sim(spec, tmp_path, speed=speed, dur=40.0)
+        assert r["max_away_m"] <= 0.1 and r["travel_toward_m"] <= 0.05, (spec, speed, r)
 
 
 @pytest.mark.parametrize("spec", ["stat:2.0", "stat:2.5", "walk:4.0:0.5:1.5"])
-def test_reversed_pitch_never_carries_the_drone_far_toward_the_person(spec, tmp_path):
-    for speed, db in itertools.product(SPEEDS, DEADBANDS + ((6, 0),)):
+def test_reversed_pitch_never_moves_the_drone_toward_the_person(spec, tmp_path):
+    # The autopilot never backs up (forward.backward_budget_m 0): backing is its only way toward
+    # the person under a reversed sign. Even 1.5x faster than modeled and with any deadband.
+    for speed, db in itertools.product(SPEEDS + (1.5,), DEADBANDS + ((6, 0),)):
         r = sim(spec, tmp_path, speed=speed, db=db)
-        assert r["travel_toward_m"] <= 0.7, (spec, speed, db, r["travel_toward_m"])
-        assert r["min_dist_m"] >= 1.3, (spec, speed, db, r["min_dist_m"])
+        assert r["travel_toward_m"] <= 0.02, (spec, speed, db, r["travel_toward_m"])
+        assert r["min_dist_m"] >= 1.45, (spec, speed, db, r["min_dist_m"])
 
 
 @pytest.mark.parametrize("spec", ["stat:2.5", "stat:3.5"])

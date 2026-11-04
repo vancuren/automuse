@@ -73,7 +73,7 @@ PRESETS = {
     "s2": dict(scenario="s2", subject="person in blue shirt", category="person", color="blue",
                command="Drone, follow the person in the blue shirt.", still_scn_s="32,53",
                readme={"scn_53s": "crossing_follow"}),
-    "s3": dict(scenario="s3", subject="green car", category="vehicle", color="green",
+    "s3": dict(scenario="s3", subject="green car", category="car", color="green",
                command="Drone, follow the green car.",
                readme={"2_voice_mission_follow": "2_voice_mission_follow"}),
 }

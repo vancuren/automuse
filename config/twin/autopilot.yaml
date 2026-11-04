@@ -32,14 +32,17 @@ forward:
   kp: 0.6                   # normalized pitch per unit of deadbanded e_s
   cap: 0.40                 # TWIN: forward cap (normalized); the governor caps again in counts (51)
   back_cap_ratio: 0.5       # backward speed is at most half the forward cap
-  backward_budget_m: 0.5    # backward travel per flight (missions and resumes keep the count; forward
-                            # travel does not refill it; open loop on plant.forward_speed_per_count)
+  backward_budget_m: 0.0    # backward travel per flight; 0 = the autopilot never backs up (review 3: backing
+                            # is its only way toward the person under a reversed pitch sign, and the budget
+                            # is open loop). Missions and resumes keep the count; forward travel never refills it.
   size_lowpass_s: 0.6       # box width filter for e_s (gait): a growing box passes at once, shrinking is low-passed
   gate:                     # forward motion only when ALL hold; otherwise yaw-only
     edge_margin_frac: 0.02  # box at least 2% of H from the top and bottom edges
     max_box_h_frac: 0.8     # box height under 0.8 H
     max_abs_bearing_rad: 0.4
     max_confirm_age_s: 1.5  # last detector confirmation under 1.5 s old
+    min_box_w_frac: 0.05    # box at least 5% of W wide (64 px: a person within about 5.9 m). Farther, a
+                            # reversed pitch sign recedes too slowly for the wrong-way check (review 3)
   standoff:                 # too close: hover (no back-off: under a reversed pitch sign it would fly
     max_box_h_frac: 0.85    # toward the person; review 2026-11-04)
     max_box_w_frac: 0.6
