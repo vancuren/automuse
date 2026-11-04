@@ -35,17 +35,34 @@ def test_heartbeat_is_5hz_from_a_single_socket(ui, mock_backend):
     assert max(gaps(hbs)) < 400, f"worst heartbeat gap {max(gaps(hbs)):.0f} ms"
 
 
-def test_heartbeat_keeps_going_while_the_page_main_thread_is_blocked(ui, mock_backend):
-    """Only a Web Worker can keep sending while the page's own thread is frozen."""
+def test_heartbeat_keeps_going_through_a_2s_main_thread_stall(ui, mock_backend):
+    """Page timers cannot run during a stall; the worker's heartbeat does (a 2 s stall would
+    already cost 1.5 s of governor neutral if the page sent it)."""
     time.sleep(0.5)
     t0 = mock_backend.now_ms()
-    ui.evaluate("() => { const t = performance.now(); while (performance.now() - t < 2500) {} }")
+    ui.evaluate("() => { const t = performance.now(); while (performance.now() - t < 2000) {} }")
     t1 = mock_backend.now_ms()
     hbs = mock_backend.of_type("hb", "ws", since_ms=t0)
     during = [e for e in hbs if e["t_ms"] <= t1]
-    assert t1 - t0 >= 2400
-    assert len(during) >= 10, f"only {len(during)} heartbeats during a 2.5 s main-thread block"
+    assert t1 - t0 >= 1900
+    assert len(during) >= 8, f"only {len(during)} heartbeats during a 2 s main-thread block"
     assert max(gaps(during)) < 450
+
+
+def test_heartbeat_stops_when_the_page_is_hung_and_resumes_after(ui, mock_backend):
+    """A hung page cannot E-STOP, so after 3 s without an answer to the worker's pings the
+    heartbeat stops and the governor's timeout takes over (neutral, then land)."""
+    time.sleep(0.5)
+    t0 = mock_backend.now_ms()
+    ui.evaluate("() => { const t = performance.now(); while (performance.now() - t < 5500) {} }")
+    t1 = mock_backend.now_ms()
+    time.sleep(1.0)
+    hbs = mock_backend.of_type("hb", "ws", since_ms=t0 - 1000)
+    worst = max(gaps(hbs))
+    assert worst >= 1500, f"heartbeat never paused during a 5.5 s hang (worst gap {worst:.0f} ms)"
+    stopped_at = next(a["t_ms"] for a, b in zip(hbs, hbs[1:]) if b["t_ms"] - a["t_ms"] == worst)
+    assert 2500 <= stopped_at - t0 <= 3800, f"stopped {stopped_at - t0:.0f} ms into the hang"
+    assert [e for e in hbs if e["t_ms"] > t1], "heartbeat did not resume after the hang"
 
 
 # ── Sticks ───────────────────────────────────────────────────────────────────────────────────
@@ -438,3 +455,49 @@ def test_a_worker_that_cannot_start_never_takes_the_dashboard_down(ui, browser_c
     assert mock_backend.wait_for(lambda: mock_backend.commands("estop"))
     assert page.is_enabled(sel("estop-btn")) and page.is_enabled(sel("land-btn"))
     page.close()
+
+
+# ── Review fixes ────────────────────────────────────────────────────────────────────────────
+
+def test_ptt_with_the_voice_link_down_never_shows_listening(ui, browser_ctx):
+    page = browser_ctx.new_page()
+    page.add_init_script("""
+        const RealWS = window.WebSocket;
+        window.WebSocket = function (url, protocols) {
+            if (String(url).includes('/ws/agent')) url = 'ws://127.0.0.1:9/ws/agent';
+            return new RealWS(url, protocols);
+        };
+        window.WebSocket.prototype = RealWS.prototype;
+        Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+    """)
+    page.goto(ui.url)
+    page.wait_for_selector(f'{sel("link-control")}[data-status="open"]', timeout=10000)
+    page.keyboard.down("Space")
+    page.wait_for_selector(f'{sel("voice-panel")} >> text=Voice link down: not listening', timeout=2000)
+    assert page.get_attribute(sel("ptt-indicator"), "data-active") == "0"
+    page.keyboard.up("Space")
+    page.close()
+
+
+def test_space_types_in_the_arm_box_instead_of_recording(ui, mock_backend):
+    mock_backend.control(flight_mode="real")
+    ui.wait_for_selector(sel("arm-input"), timeout=2000)
+    ui.click(sel("arm-input"))
+    ui.keyboard.type("a m")
+    assert ui.input_value(sel("arm-input")) == "A M"
+    time.sleep(0.3)
+    assert mock_backend.of_type("agent_event") == [], "Space in the ARM box started push-to-talk"
+
+
+def test_land_right_after_takeoff_is_resent_and_not_hidden(ui, mock_backend):
+    """TAKEOFF then LAND before telemetry moves, over a socket nobody reads: ON_GROUND must not
+    count as 'landed', so LAND goes over HTTP too; the late takeoff check must not hide it."""
+    mock_backend.control(ws_mode="deaf")
+    ui.click(sel("takeoff-btn"))
+    ui.keyboard.press("KeyL")
+    assert mock_backend.wait_for(lambda: mock_backend.commands("land", "http"), timeout_s=3.0), \
+        "LAND was not re-sent over HTTP after a recent takeoff"
+    time.sleep(1.0)  # past the takeoff's 1.2 s acceptance check
+    text = ui.inner_text(sel("last-command"))
+    assert text.startswith("LAND") and "NOT ACCEPTED" not in text, text
+    mock_backend.control(ws_mode="normal")

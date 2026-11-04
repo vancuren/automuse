@@ -53,6 +53,7 @@ const CANDIDATES_TTL_MS = 10000;
 export function useAgentLink() {
   const sockRef = useRef<ReconnectingSocket | null>(null);
   const pttRef = useRef(false);
+  const pttUpPendingRef = useRef(false); // a release that could not be delivered yet
   const nextId = useRef(1);
 
   const [status, setStatus] = useState<LinkStatus>("connecting");
@@ -82,7 +83,13 @@ export function useAgentLink() {
   useEffect(() => {
     const sock = new ReconnectingSocket({
       url: URLS.agent,
-      onStatus: setStatus,
+      onStatus: (s) => {
+        setStatus(s);
+        // The agent must never keep recording because a release was lost while we were offline.
+        if (s === "open" && pttUpPendingRef.current && sockRef.current?.send({ type: "agent_event", kind: "ptt_up" })) {
+          pttUpPendingRef.current = false;
+        }
+      },
       onMessage: (msg) => {
         if (isCandidates(msg)) {
           setCandidates(msg);
@@ -174,11 +181,14 @@ export function useAgentLink() {
   /** Push-to-talk pressed (Space or the on-screen button). Repeats are ignored. */
   const pttDown = useCallback(() => {
     if (pttRef.current) return;
+    if (!sendEvent({ type: "agent_event", kind: "ptt_down" })) {
+      setPttError("Voice link down: not listening");
+      return; // never show LISTENING when nobody is listening
+    }
     pttRef.current = true;
     setPtt(true);
     setPartial("");
-    const ok = sendEvent({ type: "agent_event", kind: "ptt_down" });
-    setPttError(ok ? null : "Voice link down: not listening");
+    setPttError(null);
   }, [sendEvent]);
 
   /** Push-to-talk released (also called on blur so the agent never records forever). */
@@ -186,8 +196,10 @@ export function useAgentLink() {
     if (!pttRef.current) return;
     pttRef.current = false;
     setPtt(false);
-    const ok = sendEvent({ type: "agent_event", kind: "ptt_up" });
-    if (!ok) setPttError("Voice link down: release not delivered");
+    if (!sendEvent({ type: "agent_event", kind: "ptt_up" })) {
+      pttUpPendingRef.current = true; // re-sent as soon as the socket reopens
+      setPttError("Voice link down: release will be sent on reconnect");
+    }
   }, [sendEvent]);
 
   /** Operator picked a look-alike: Select goes to perception through the backend. */

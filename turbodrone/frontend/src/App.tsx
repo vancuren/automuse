@@ -47,7 +47,8 @@ function App() {
     agent.agentMission !== null &&
     agent.agentMission.mission_id !== tlmMissionId &&
     agent.agentMissionAt > tlmMissionAt;
-  const mission = agentIsNewer ? agent.agentMission : tlmMission ?? agent.agentMission;
+  // Telemetry clearing its mission (null) clears the card too, unless the agent spoke since.
+  const mission = agentIsNewer ? agent.agentMission : tlmMission;
 
   // Look-alike picker: once the autopilot follows, or the mission changes, the question is moot.
   const apState = tlm.telemetry?.autopilot_state ?? null;

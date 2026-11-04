@@ -80,13 +80,20 @@ function inputAllowed(): boolean {
   return document.visibilityState === "visible" && document.hasFocus();
 }
 
-/** Does telemetry show that a safety command took effect? */
-function safetyConfirmed(command: CommandName, state: FlightState | null): boolean {
+/**
+ * Does telemetry show that a safety command took effect? ON_GROUND counts for LAND only when
+ * no takeoff was sent recently: right after TAKEOFF, telemetry may still say ON_GROUND while
+ * the governor is already taking off.
+ */
+function safetyConfirmed(command: CommandName, state: FlightState | null, takeoffRecent = false): boolean {
   if (state === null) return false;
   if (command === "estop") return state === "ESTOPPED";
-  if (command === "land") return state === "LANDING" || state === "ON_GROUND" || state === "ESTOPPED";
+  if (command === "land") return state === "LANDING" || state === "ESTOPPED" || (state === "ON_GROUND" && !takeoffRecent);
   return true;
 }
+
+/** How long after a TAKEOFF an ON_GROUND telemetry state is not trusted as "landed". */
+const TAKEOFF_RECENT_MS = 5000;
 
 export function useControls(opts: { flightState: FlightState | null }) {
   /* ------- mutable refs (read by timers and listeners) ------- */
@@ -101,9 +108,14 @@ export function useControls(opts: { flightState: FlightState | null }) {
   // confirmed at any moment after it was sent is never re-sent, even if the state moved on
   // (for example an E-STOP followed quickly by a reset).
   const confirmedAtRef = useRef<Record<string, number>>({});
+  const takeoffSentAtRef = useRef(-Infinity);
+  const sendSeqRef = useRef(0); // bumps on every command sent: late reports must not hide newer ones
+  const takeoffRecent = () => performance.now() - takeoffSentAtRef.current < TAKEOFF_RECENT_MS;
   useEffect(() => {
     for (const command of SAFETY_COMMANDS) {
-      if (safetyConfirmed(command, opts.flightState)) confirmedAtRef.current[command] = performance.now();
+      if (safetyConfirmed(command, opts.flightState, performance.now() - takeoffSentAtRef.current < TAKEOFF_RECENT_MS)) {
+        confirmedAtRef.current[command] = performance.now();
+      }
     }
   }, [opts.flightState]);
 
@@ -169,6 +181,8 @@ export function useControls(opts: { flightState: FlightState | null }) {
     (command: CommandName, extra: { arm_phrase?: string; pack_id?: string } = {}): boolean => {
       const msg = buildCommand(command, extra);
       const safety = SAFETY_COMMANDS.has(command);
+      const seq = ++sendSeqRef.current;
+      if (command === "takeoff") takeoffSentAtRef.current = performance.now();
 
       if (sockRef.current?.send(msg)) {
         report({ command, channel: "ws", ok: true, detail: "sent on control socket" });
@@ -176,6 +190,7 @@ export function useControls(opts: { flightState: FlightState | null }) {
           // Commands over the socket get no reply: watch telemetry to tell the operator
           // when the governor refused (no video, no heartbeat, not armed, ...).
           setTimeout(() => {
+            if (sendSeqRef.current !== seq) return; // a newer command's report is showing
             if (flightStateRef.current === "ON_GROUND") {
               report({ command, channel: "ws", ok: false, detail: "NOT ACCEPTED: still on the ground (see Safety flags)" });
             }
@@ -186,7 +201,7 @@ export function useControls(opts: { flightState: FlightState | null }) {
           // may be open but unread. Send it again over HTTP (both are idempotent).
           const sentAt = performance.now();
           setTimeout(() => {
-            if (safetyConfirmed(command, flightStateRef.current)) return;
+            if (safetyConfirmed(command, flightStateRef.current, takeoffRecent())) return;
             if ((confirmedAtRef.current[command] ?? -1) >= sentAt) return;
             void postCommandWithRetry(msg, 4).then((ok) =>
               report({

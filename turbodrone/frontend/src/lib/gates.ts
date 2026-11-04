@@ -32,7 +32,7 @@ export function takeoffBlocker(
   if (telemetry.flight_state !== "ON_GROUND") return "not on the ground";
   if (telemetry.flight_mode === "real" && !telemetry.armed) return "type ARM first";
   for (const flag of telemetry.safety_flags ?? []) {
-    if (flag in TAKEOFF_BLOCKING_FLAGS) return TAKEOFF_BLOCKING_FLAGS[flag];
+    if (Object.prototype.hasOwnProperty.call(TAKEOFF_BLOCKING_FLAGS, flag)) return TAKEOFF_BLOCKING_FLAGS[flag];
   }
   return null;
 }

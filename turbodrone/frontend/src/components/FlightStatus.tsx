@@ -19,7 +19,12 @@ export function FlightStateBadges({ telemetry, stale }: { telemetry: Telemetry |
       </div>
     );
   }
-  const fs = FLIGHT_STATE_STYLE[telemetry.flight_state] ?? FLIGHT_STATE_STYLE.ON_GROUND;
+  // A state this UI does not know (version skew) must never read as ON GROUND.
+  const fs = FLIGHT_STATE_STYLE[telemetry.flight_state] ?? {
+    bg: "#7c2d12",
+    fg: "#fff7ed",
+    label: `? ${String(telemetry.flight_state)}`,
+  };
   const apColor = AUTOPILOT_COLORS[telemetry.autopilot_state] ?? AUTOPILOT_COLORS.IDLE;
   return (
     <div className="flex items-center gap-2">

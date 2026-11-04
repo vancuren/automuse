@@ -9,8 +9,8 @@ export interface HeartbeatStatus {
 }
 
 /**
- * Starts the heartbeat Web Worker (5 Hz {"type":"hb","client":"ui"} on its own socket) and
- * reports its status about once a second. New in this fork.
+ * Starts the heartbeat Web Worker (5 Hz {"type":"hb","client":"ui"} on its own socket),
+ * answers its liveness pings, and reports its status about once a second. New in this fork.
  */
 export function useHeartbeat(): HeartbeatStatus {
   const [status, setStatus] = useState<HeartbeatStatus>({ open: false, sent: 0, rateHz: null, error: null });
@@ -29,6 +29,10 @@ export function useHeartbeat(): HeartbeatStatus {
     }
     worker.onmessage = (ev: MessageEvent) => {
       const d = ev.data as Partial<HeartbeatStatus> & { type?: string };
+      if (d?.type === "ping") {
+        worker.postMessage({ type: "pong" }); // "this page is alive": the worker heartbeats only while we answer
+        return;
+      }
       if (d?.type === "status") {
         setStatus({
           open: Boolean(d.open),

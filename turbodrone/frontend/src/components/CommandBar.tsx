@@ -54,13 +54,8 @@ function ArmGate({ telemetry, send, onGround }: { telemetry: Telemetry; send: Se
         />
         <UiButton
           data-testid="arm-btn"
+          type="submit"
           disabled={!ready}
-          onClick={() => {
-            if (ready && send("arm", { arm_phrase: "ARM" })) {
-              setPhrase("");
-              inputRef.current?.blur();
-            }
-          }}
           className={`rounded-md px-3 py-1 text-sm font-black tracking-widest ${
             ready ? "bg-red-600 text-white hover:bg-red-500" : "cursor-not-allowed bg-slate-800 text-slate-600"
           }`}
@@ -192,7 +187,6 @@ export default function CommandBar({
         {real && telemetry && <ArmGate telemetry={telemetry} send={send} onGround={fs === "ON_GROUND"} />}
         <UiButton
           data-testid="land-btn"
-          disabled={!caps.land}
           onPointerDown={onLand}
           title="Land (L). Falls back to HTTP if the socket is down."
           className="flex min-w-[200px] flex-col items-center justify-center rounded-xl border-2 border-orange-300/70 bg-orange-600 px-8 text-white shadow-lg hover:bg-orange-500 active:scale-95"

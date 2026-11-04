@@ -9,7 +9,8 @@ export interface HotkeyHandlers {
 }
 
 /**
- * Safety hotkeys (new in this fork).
+ * Safety hotkeys (new in this fork). Esc always wins; Space and L are ignored while typing in a
+ * text field (the ARM box, which only exists on the ground before arming).
  *
  * The listeners sit on window in the capture phase, so they run before anything else on the
  * page. Space calls preventDefault on keydown and keyup: a focused button can never be
@@ -32,6 +33,7 @@ export function useHotkeys(handlers: HotkeyHandlers): void {
         return;
       }
       if (e.code === "Space") {
+        if (isTypingInField() && !spaceHeld) return; // the ARM box (only shown before takeoff)
         e.preventDefault();
         if (!e.repeat && !spaceHeld) {
           spaceHeld = true;
