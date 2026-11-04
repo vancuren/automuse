@@ -76,13 +76,15 @@ def final_answer(text: str) -> str:
 
 
 def parse_reply(content: Optional[str]) -> Optional[Intent]:
-    """parse_intent on the content; if channel markers leaked into the content, try the final channel."""
+    """Parse like the agent client: the final (to=user) channel first if channel markers are present
+    (mlx_lm.server returns them raw for Glimmer), then the whole content."""
     if not content:
         return None
-    got = parse_intent(content)
-    if got is None and "<|" in content:
+    if "<|message|>" in content:
         got = parse_intent(final_answer(content))
-    return got
+        if got is not None:
+            return got
+    return parse_intent(content)
 
 
 # ----------------------------------------------------------------------------------------------
@@ -375,6 +377,9 @@ def report(a: argparse.Namespace) -> dict:
         # keep the latest record per (set, id)
         latest: dict[tuple, dict] = {}
         for r in recs:
+            if r.get("error") is None and "raw" in r:   # re-parse so every run is scored by the same parser
+                got = parse_reply(r["raw"])
+                r["pred"] = got.model_dump() if got else None
             latest[(r["set"], r["id"])] = r
         by_set: dict[str, list] = {}
         for r in latest.values():

@@ -158,16 +158,23 @@ RESULTS_TABLE
 
 ```bash
 source env.sh
-$MHD_PY training/generate.py --paraphrase          # data (about $0.12 of Spark); or --rebuild from the committed records
-$MHD_PY -m pytest -q tests/train                   # 39 tests
+# data
+$MHD_PY training/generate.py --paraphrase          # templates + Spark paraphrases (about $0.12); writes training/data/
+$MHD_PY training/generate.py --rebuild             # or: re-derive the chat files from the committed records (no network)
+$MHD_ML_PY training/gold_asr.py                    # gold spoken by `say` + Omnilingual ASR -> training/data/gold_asr.jsonl
+$MHD_PY -m pytest -q tests/train                   # tests
+# local training (one Glimmer process at a time)
 training/train_mlx.sh smoke                        # 20 iterations, about 1 minute
-training/train_mlx.sh full                         # about 75 minutes on the M5 Pro
-training/eval_mlx.sh lora --sets test,gold --concurrency 4 --fresh
-LABEL=glimmer-lora-mlx-seq training/eval_mlx.sh lora --sets gold --limit 40 --concurrency 1 --fresh
-training/eval_mlx.sh base --sets test,gold --concurrency 8 --max-tokens 1500 --fresh
-$MHD_PY training/eval.py run --backend spark --label spark-1.3 --sets test,gold --concurrency 6
+training/train_mlx.sh full                         # 2,600 iterations, about 80 minutes on the M5 Pro -> $MHD_MODELS/adapters/glimmer-intent-v1
+# evaluation
+training/run_local_evals.sh                        # waits for training, then LoRA and base on :8580 (quality + sequential latency)
+$MHD_PY training/eval.py run --backend spark --label spark-1.3 --sets test,gold,gold_asr --concurrency 6
+$MHD_PY training/eval.py run --backend fireworks --label glimmer-base-fireworks \
+    --model 'accounts/fireworks/models/muse-glimmer-30b#accounts/$FIREWORKS_ACCOUNT_ID/deployments/glimmer-intent-eval' \
+    --sets test,gold --concurrency 12 --max-tokens 1500   # needs a live deployment (fireworks.py deploy --plain)
 $MHD_PY training/eval.py report                    # docs/eval/{results.json,summary.md,intent_eval.png}
-scripts/serve_glimmer.sh                           # edge mode on :8080
+# serving
+scripts/serve_glimmer.sh                           # edge mode on :8080 (use --port 8580 for tests)
 ```
 
 ## What the integrator must wire up
@@ -176,8 +183,13 @@ scripts/serve_glimmer.sh                           # edge mode on :8080
   process is running). Call `POST http://127.0.0.1:8080/v1/chat/completions` with
   `[{"role":"system","content":GLIMMER_SYSTEM_PROMPT},{"role":"user","content":transcript}]`,
   `"model": "default_model"` (any other name makes mlx_lm.server try to load that path), `temperature 0`,
-  `max_tokens` about 200, and no `chat_template_kwargs`. Parse `choices[0].message.content`
-  with `mhd.intent_spec.parse_intent`. Or use `mhd_ml.glimmer_client.GlimmerClient.edge().intent(text)`.
+  `max_tokens` about 200, and no `chat_template_kwargs`. **mlx_lm 0.32.2 does not split Glimmer's
+  channels**: its Muse response format is keyed to the Muse Spark model type, so `content` arrives raw as
+  `to=self<|message|>Follow by appearance: ...<|eom|><|start|>assistant to=user<|message|>{json}`. Take
+  the text after the last `<|message|>` and parse it with `mhd.intent_spec.parse_intent`.
+  `mhd_ml.glimmer_client.split_channels` does this, and `GlimmerClient.edge().intent(text)` wraps it all.
+  `parse_intent` on the whole string happens to work for the LoRA (its one-line reasoning has no braces),
+  but not reliably for base Glimmer.
   `Mission.model = "glimmer-30b+lora"`.
 - **Agent, cloud mode**: `POST https://api.fireworks.ai/inference/v1/chat/completions`, Bearer
   `FIREWORKS_API_KEY`, model

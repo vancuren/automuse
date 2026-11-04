@@ -33,6 +33,22 @@ DEFAULT_DEPLOYMENT = "glimmer-intent"
 DEFAULT_LORA = "glimmer-intent-v1"
 
 
+def split_channels(content: str) -> tuple[str, Optional[str]]:
+    """Split a raw Glimmer reply into (answer, reasoning).
+
+    mlx_lm 0.32.2's server does not separate Glimmer's channels, so "content" arrives as
+    'to=self<|message|>REASONING<|eom|><|start|>assistant to=user<|message|>{JSON}'. Fireworks already
+    separates them (reasoning_content), in which case content is just the JSON and is returned unchanged.
+    """
+    if "<|message|>" not in content:
+        return content, None
+    answer = content.rsplit("<|message|>", 1)[1].replace("<|eot|>", "").strip()
+    reasoning = None
+    if "to=self<|message|>" in content:
+        reasoning = content.split("to=self<|message|>", 1)[1].split("<|eom|>", 1)[0].strip()
+    return answer, reasoning
+
+
 class GlimmerClient:
     def __init__(self, base_url: str, model: str, api_key: Optional[str] = None, timeout_s: float = 6.0,
                  max_tokens: int = 200, label: str = "glimmer-30b+lora"):
@@ -75,9 +91,12 @@ class GlimmerClient:
             content = msg.get("content") or ""
             info["raw"] = content
             info["reasoning"] = msg.get("reasoning_content") or msg.get("reasoning")
-            got = parse_intent(content)
-            if got is None and "<|message|>" in content:     # channel markers leaked into content
-                got = parse_intent(content.rsplit("<|message|>", 1)[1])
+            answer, reasoning = split_channels(content)
+            if reasoning and not info["reasoning"]:
+                info["reasoning"] = reasoning
+            got = parse_intent(answer)
+            if got is None and answer != content:
+                got = parse_intent(content)
             return got, info
         except httpx.HTTPError as e:
             info["latency_ms"] = round((time.perf_counter() - t0) * 1000, 1)

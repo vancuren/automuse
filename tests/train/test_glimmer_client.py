@@ -57,3 +57,16 @@ def test_cloud_model_string(monkeypatch):
     b = GlimmerClient.cloud(lora=None)
     assert b.model == "accounts/fireworks/models/muse-glimmer-30b#accounts/acct/deployments/glimmer-intent"
     assert b.label == "glimmer-30b"
+
+
+def test_split_channels_mlx_raw_format():
+    from mhd_ml.glimmer_client import split_channels
+    raw = ('to=self<|message|>Draft: {"action": maybe follow}<|eom|><|start|>assistant to=user<|message|>'
+           + JSON + "<|eot|>")
+    answer, reasoning = split_channels(raw)
+    assert answer == JSON and reasoning.startswith("Draft:")
+    assert split_channels(JSON) == (JSON, None)
+    # a brace in the reasoning must not break parsing
+    g = _client(lambda r: httpx.Response(200, json={"choices": [{"message": {"content": raw}}]}))
+    intent, info = g.intent("land")
+    assert intent.action == "land" and info["reasoning"].startswith("Draft:")
