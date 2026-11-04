@@ -186,6 +186,7 @@ source env.sh                     # caches, venvs, models, and tools inside the 
 scripts/sync_envs.sh              # two Python 3.13 venvs: core (.venv) and ML (ml/.venv)
 scripts/fetch_models.sh           # about 22 GB into .cache/models (18 GB is Muse Glimmer); mediamtx into tools/
 (cd twin/web && npm install)      # three.js for the twin renderer
+(cd turbodrone/frontend && npm ci)  # the operator UI
 $MHD_PY scripts/doctor.py         # environment check
 ```
 
@@ -244,7 +245,7 @@ $MHD_ML_PY -m mhd_ml.perception.service --backend ws://127.0.0.1:8000 --detector
 scripts/serve_glimmer.sh          # Glimmer + LoRA on 127.0.0.1:8080, about 17 GB
 $MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000 --intent glimmer \
     --glimmer-url http://127.0.0.1:8080/v1 --glimmer-model default_model
-(cd turbodrone/frontend && npm ci && npm run dev)   # open http://127.0.0.1:5173, hold Space to talk
+(cd turbodrone/frontend && npm run dev)   # open http://127.0.0.1:5173, hold Space to talk
 ```
 
 `--intent glimmer` uses the fine-tuned Glimmer alone (the keyword grammar answers if it fails).
