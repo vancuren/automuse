@@ -2,7 +2,7 @@ import type { SystemEvent } from "../hooks/useAgentLink";
 import type { Telemetry } from "../lib/contracts";
 import Panel from "./Panel";
 
-const RED_WORDS = ["estop", "land", "stale", "missing", "lost", "error", "exception", "wrong", "link", "fail"];
+const RED_WORDS = ["estop", "land", "stale", "missing", "lost", "error", "exception", "wrong", "link", "fail", "fault"];
 
 /** Safety flags raised by the governor (new). Red for anything that neutralizes or lands. */
 export default function SafetyFlags({

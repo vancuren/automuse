@@ -3,6 +3,18 @@ import type { Telemetry } from "./contracts";
 import type { LinkStatus } from "./reconnectingSocket";
 
 /**
+ * Governor safety flags under which the governor refuses takeoff (names from the gov
+ * workstream's governor). Disabling on them only ever makes the button stricter than the
+ * governor, never looser; unknown flag names simply do not block.
+ */
+const TAKEOFF_BLOCKING_FLAGS: Record<string, string> = {
+  video_stale: "no video",
+  heartbeat_missing: "no UI heartbeat",
+  governor_fault: "governor fault",
+  rc_tick_stale: "RC loop stalled",
+};
+
+/**
  * Why TAKEOFF is disabled, or null when it is allowed (new in this fork).
  * Takeoff needs a live control link, fresh telemetry, the drone on the ground, and in real
  * mode the operator must have typed ARM this session (telemetry.armed). The backend enforces
@@ -19,5 +31,8 @@ export function takeoffBlocker(
   if (!telemetry || stale) return "no telemetry";
   if (telemetry.flight_state !== "ON_GROUND") return "not on the ground";
   if (telemetry.flight_mode === "real" && !telemetry.armed) return "type ARM first";
+  for (const flag of telemetry.safety_flags ?? []) {
+    if (flag in TAKEOFF_BLOCKING_FLAGS) return TAKEOFF_BLOCKING_FLAGS[flag];
+  }
   return null;
 }

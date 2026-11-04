@@ -46,6 +46,8 @@ const TX_HZ = 30;
 const GAMEPAD_DEADZONE = 0.15;
 /** How long telemetry gets to confirm LAND / E-STOP before we also send it over HTTP. */
 const SAFETY_CONFIRM_MS = 600;
+/** A takeoff the governor accepted shows TAKING_OFF well within this. */
+const TAKEOFF_CONFIRM_MS = 1200;
 
 /** Keyboard stick map, by physical key (e.code) so Shift/Caps Lock cannot strand a key. */
 const KEY_AXES: Record<string, { axis: keyof Axes; dir: 1 | -1 }> = {
@@ -170,6 +172,15 @@ export function useControls(opts: { flightState: FlightState | null }) {
 
       if (sockRef.current?.send(msg)) {
         report({ command, channel: "ws", ok: true, detail: "sent on control socket" });
+        if (command === "takeoff") {
+          // Commands over the socket get no reply: watch telemetry to tell the operator
+          // when the governor refused (no video, no heartbeat, not armed, ...).
+          setTimeout(() => {
+            if (flightStateRef.current === "ON_GROUND") {
+              report({ command, channel: "ws", ok: false, detail: "NOT ACCEPTED: still on the ground (see Safety flags)" });
+            }
+          }, TAKEOFF_CONFIRM_MS);
+        }
         if (safety) {
           // Belt and braces: if telemetry does not show the command took effect, the socket
           // may be open but unread. Send it again over HTTP (both are idempotent).

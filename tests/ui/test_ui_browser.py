@@ -397,3 +397,21 @@ def test_agent_and_governor_events_go_to_the_right_place(ui, mock_backend):
     ui.wait_for_selector(f'{sel("model-badge")} >> text=muse-spark-1.3', timeout=2000)
     assert "identity_request" in ui.inner_text(sel("intent-json"))
     assert "2.31 s" in ui.inner_text(sel("mission-latency"))
+
+
+def test_takeoff_shows_the_governors_refusal_reasons(ui, mock_backend):
+    mock_backend.control(extra_flags=["video_stale"])
+    ui.wait_for_selector(f'{sel("takeoff-blocker")} >> text=no video', timeout=2000)
+    assert ui.is_disabled(sel("takeoff-btn"))
+    mock_backend.control(extra_flags=["heartbeat_missing"])
+    ui.wait_for_selector(f'{sel("takeoff-blocker")} >> text=no UI heartbeat', timeout=2000)
+    mock_backend.control(extra_flags=[])
+    ui.wait_for_selector(f'{sel("takeoff-blocker")} >> text=ready', timeout=2000)
+    assert ui.is_enabled(sel("takeoff-btn"))
+
+
+def test_an_ignored_takeoff_is_reported_as_not_accepted(ui, mock_backend):
+    mock_backend.control(ws_mode="deaf")
+    ui.click(sel("takeoff-btn"))
+    ui.wait_for_selector(f'{sel("last-command")} >> text=NOT ACCEPTED', timeout=3000)
+    mock_backend.control(ws_mode="normal")
