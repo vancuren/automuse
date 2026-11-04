@@ -60,6 +60,14 @@ export function FlightStateBadges({ telemetry, stale }: { telemetry: Telemetry |
   );
 }
 
+/** Lewei board: a battery reading older than this (no reply from the drone) is not shown as live. */
+const FC_STALE_MS = 3000;
+
+function fmtAge(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  return s < 120 ? `${s} s` : `${Math.floor(s / 60)} min`;
+}
+
 /**
  * Per-pack flight timer (new). Amber from VITE_PACK_WARN_S (5:00), red from 30 s before
  * the governor's auto-land at VITE_PACK_LAND_S (6:30). Pack swap only while on the ground.
@@ -83,8 +91,12 @@ export function PackTimer({
   }[level];
   const pct = Math.min(100, (t / PACK_LAND_S) * 100);
   const onGround = !stale && telemetry?.flight_state === "ON_GROUND";
-  // Lewei board only: the flight controller's own battery reading (informational, 0.1 V steps).
+  // Lewei board only: the flight controller's own battery reading (informational, 0.1 V steps). Once the
+  // drone's last reply is over 3 s old (it powered itself off, Wi-Fi gone) the reading is not live: a
+  // grey "—" and its age, never the last volts as if current. No age at all (older backends): as before.
   const volts = telemetry?.latency_ms?.fc_battery_v;
+  const fcAge = telemetry?.latency_ms?.fc_telemetry_age;
+  const fcOldFor = typeof fcAge === "number" && Number.isFinite(fcAge) && fcAge > FC_STALE_MS ? fmtAge(fcAge) : null;
   return (
     <div className="flex items-center gap-2">
       <div
@@ -95,15 +107,30 @@ export function PackTimer({
       >
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Pack {pack}</span>
-          {typeof volts === "number" && Number.isFinite(volts) && (
-            <span
-              data-testid="fc-battery"
-              className={`font-mono text-sm font-bold ${stale ? "text-slate-500" : volts < 3.5 ? "text-amber-300" : "text-slate-200"}`}
-              title="battery voltage reported by the flight controller (Lewei board)"
-            >
-              {volts.toFixed(1)} V
-            </span>
-          )}
+          {typeof volts === "number" &&
+            Number.isFinite(volts) &&
+            (fcOldFor !== null ? (
+              <span
+                data-testid="fc-battery"
+                data-old="1"
+                className="whitespace-nowrap font-mono text-sm font-bold text-slate-500"
+                title={`no reply from the drone for ${fcOldFor}: last reading ${volts.toFixed(1)} V (Lewei board)`}
+              >
+                — V{" "}
+                <span data-testid="fc-battery-age" className="text-[10px] font-normal">
+                  {fcOldFor} ago
+                </span>
+              </span>
+            ) : (
+              <span
+                data-testid="fc-battery"
+                data-old="0"
+                className={`font-mono text-sm font-bold ${stale ? "text-slate-500" : volts < 3.5 ? "text-amber-300" : "text-slate-200"}`}
+                title="battery voltage reported by the flight controller (Lewei board)"
+              >
+                {volts.toFixed(1)} V
+              </span>
+            ))}
           <span className="font-mono text-xl font-bold">{fmtClock(t)}</span>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded bg-slate-800">
