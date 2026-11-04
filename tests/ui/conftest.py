@@ -191,6 +191,8 @@ def ui(browser_ctx, mock_backend):
     page.wait_for_selector('[data-testid="link-control"][data-status="open"]', timeout=15000)
     page.wait_for_selector('[data-testid="flight-state"][data-state="ON_GROUND"]', timeout=15000)
     page.wait_for_selector('[data-testid="link-agent"][data-status="open"]', timeout=15000)
+    # The mock, like the governor, flags heartbeat_missing until the worker's first heartbeat.
+    page.wait_for_selector('[data-testid="takeoff-blocker"] >> text=ready', timeout=15000)
     yield page
     page.close()
     invalid = [e for e in mock_backend.entries() if not e["valid"]]

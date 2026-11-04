@@ -415,3 +415,26 @@ def test_an_ignored_takeoff_is_reported_as_not_accepted(ui, mock_backend):
     ui.click(sel("takeoff-btn"))
     ui.wait_for_selector(f'{sel("last-command")} >> text=NOT ACCEPTED', timeout=3000)
     mock_backend.control(ws_mode="normal")
+
+
+# ── Heartbeat failures are loud ─────────────────────────────────────────────────────────────
+
+def test_governor_reported_heartbeat_loss_shows_a_banner(ui, mock_backend):
+    time.sleep(3.0)  # past the UI's start-up grace
+    mock_backend.control(drop_hb=True)  # backend stops seeing heartbeats -> heartbeat_missing
+    ui.wait_for_selector(f'{sel("heartbeat-banner")} >> text=the governor reports no UI heartbeat', timeout=4000)
+    assert ui.inner_text(sel("takeoff-blocker")) == "no UI heartbeat"
+    mock_backend.control(drop_hb=False)
+    ui.wait_for_selector(sel("heartbeat-banner"), state="detached", timeout=4000)
+
+
+def test_a_worker_that_cannot_start_never_takes_the_dashboard_down(ui, browser_ctx, mock_backend):
+    page = browser_ctx.new_page()
+    page.add_init_script("window.Worker = function () { throw new Error('blocked by test'); };")
+    page.goto(ui.url)
+    page.wait_for_selector(f'{sel("heartbeat-banner")} >> text=heartbeat worker failed', timeout=5000)
+    # Everything else still works, E-STOP first.
+    page.keyboard.press("Escape")
+    assert mock_backend.wait_for(lambda: mock_backend.commands("estop"))
+    assert page.is_enabled(sel("estop-btn")) and page.is_enabled(sel("land-btn"))
+    page.close()

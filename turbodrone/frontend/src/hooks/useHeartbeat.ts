@@ -5,6 +5,7 @@ export interface HeartbeatStatus {
   open: boolean;
   sent: number;
   rateHz: number | null; // null until the worker has measured a full second
+  error: string | null;  // the worker failed to load or crashed
 }
 
 /**
@@ -12,12 +13,20 @@ export interface HeartbeatStatus {
  * reports its status about once a second. New in this fork.
  */
 export function useHeartbeat(): HeartbeatStatus {
-  const [status, setStatus] = useState<HeartbeatStatus>({ open: false, sent: 0, rateHz: null });
+  const [status, setStatus] = useState<HeartbeatStatus>({ open: false, sent: 0, rateHz: null, error: null });
 
   useEffect(() => {
-    const worker = new Worker(new URL("../workers/heartbeat.worker.ts", import.meta.url), {
-      type: "module",
-    });
+    // If the worker cannot even be created, report it; never let it take the dashboard (and
+    // its E-STOP button) down with it.
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("../workers/heartbeat.worker.ts", import.meta.url), {
+        type: "module",
+      });
+    } catch (e) {
+      setStatus((s) => ({ ...s, open: false, rateHz: 0, error: e instanceof Error ? e.message : String(e) }));
+      return;
+    }
     worker.onmessage = (ev: MessageEvent) => {
       const d = ev.data as Partial<HeartbeatStatus> & { type?: string };
       if (d?.type === "status") {
@@ -25,8 +34,13 @@ export function useHeartbeat(): HeartbeatStatus {
           open: Boolean(d.open),
           sent: Number(d.sent ?? 0),
           rateHz: typeof d.rateHz === "number" ? d.rateHz : null,
+          error: null,
         });
       }
+    };
+    // A worker that fails to load or throws sends no heartbeat: the governor will hold, then land.
+    worker.onerror = (ev: ErrorEvent) => {
+      setStatus((s) => ({ ...s, open: false, rateHz: 0, error: ev.message || "heartbeat worker failed" }));
     };
     worker.postMessage({ type: "start", url: URLS.control });
     return () => {

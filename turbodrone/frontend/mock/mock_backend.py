@@ -301,6 +301,8 @@ class Sim:
     mission_seq: int = 0
     utterance_idx: int = 0
     ws_mode: str = "normal"          # normal | down (refuse /ws) | deaf (accept, ignore)
+    drop_hb: bool = False            # ignore heartbeats (the governor would flag heartbeat_missing)
+    land_cause: str = "operator"
     extra_flags: list[str] = field(default_factory=list)
     frame_age_ms: Optional[float] = None   # override for screenshots/tests
     t0: float = field(default_factory=time.monotonic)
@@ -357,6 +359,7 @@ class Sim:
             return False, "not estopped"
         if c == "land":
             if fs in (FS.taking_off, FS.airborne):
+                self.land_cause = "operator"
                 self.set_flight(FS.landing)
                 return True, "landing"
             return True, f"land ignored in {fs.value}"
@@ -413,11 +416,13 @@ class Sim:
             if self.mission and self.mission.intent.action == "follow":
                 self.restart_autopilot()
         elif fs == FS.airborne and self.pack_time_s[self.pack_id] >= PACK_LAND_S:
+            self.land_cause = "flight_timer"
             self.set_flight(FS.landing)  # the governor's per-pack auto-land
         elif self.scenario == "cycle":
             if fs == FS.on_ground and age >= 4.0 and (self.flight_mode == "twin" or self.armed):
                 self.set_flight(FS.taking_off)
             elif fs == FS.airborne and age >= 55.0:
+                self.land_cause = "demo_loop"
                 self.set_flight(FS.landing)
             elif fs == FS.landing and age >= 4.0:
                 self.set_flight(FS.on_ground)  # auto "confirm touchdown" in the demo loop
@@ -487,27 +492,19 @@ class Sim:
             active, sticks = "neutral", {k: 0.0 for k in auto}
         wire = {k: int(max(0, min(255, round(128 + v * 127)))) for k, v in sticks.items()}
 
+        # Flag names follow the real governor (ws/gov src/mhd/governor/core.py).
         flags = list(self.extra_flags)
-        hb_age = now - self.last_hb
-        if hb_age > 5.0:
-            flags.append("ui_heartbeat_missing_land")
-        elif hb_age > 1.5:
-            flags.append("ui_heartbeat_missing_neutral")
-        if fs == FS.estopped:
-            flags.append("estop_latched")
+        if now - self.last_hb > 1.5:
+            flags.append("heartbeat_missing")
         if ap == AP.doubt:
-            flags.append("obs_age_high_hover")
-        if ap in (AP.lost, AP.give_up) and fs == FS.airborne:
-            flags.append("subject_lost_hover")
+            flags.append("obs_stale")
         if self.paused:
             flags.append("autopilot_paused")
         pt = self.pack_time_s.get(self.pack_id, 0.0)
-        if pt >= PACK_LAND_S:
-            flags.append("pack_time_land")
-        elif pt >= PACK_WARN_S:
-            flags.append("pack_time_warn")
-        if self.flight_mode == "real" and not self.armed:
-            flags.append("takeoff_locked_until_arm")
+        if pt >= PACK_WARN_S:
+            flags.append("flight_timer_warn")
+        if fs == FS.landing:
+            flags.append(f"landing:{self.land_cause}")
 
         frame_age = self.frame_age_ms if self.frame_age_ms is not None else round(125 + 35 * math.sin(t * 2.3) + random.uniform(0, 15), 1)
         obs_age = None
@@ -724,7 +721,7 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
                 note = None
                 if valid:
                     kind = msg["type"]
-                    if kind == "hb":
+                    if kind == "hb" and not sim.drop_hb:
                         sim.last_hb = time.monotonic()
                     elif kind == "axes":
                         sim.human = {k: float(msg.get(k, 0.0)) for k in ("throttle", "yaw", "pitch", "roll")}
@@ -853,6 +850,8 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
         if "autopilot_state" in body:
             ap = AutopilotState(body["autopilot_state"])
             sim.set_ap(ap, step=next((i for i, (s, _) in enumerate(AP_SCRIPT) if s == ap), 0))
+        if "drop_hb" in body:
+            sim.drop_hb = bool(body["drop_hb"])
         if "freeze_autopilot" in body:
             sim.freeze_autopilot = bool(body["freeze_autopilot"])
         if "pack_time_s" in body:

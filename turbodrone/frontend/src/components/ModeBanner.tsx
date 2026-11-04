@@ -49,17 +49,36 @@ export function ModeBanner({ telemetry, stale }: { telemetry: Telemetry | null; 
   );
 }
 
+function HeartbeatBanner({ problem }: { problem: string }) {
+  return (
+    <div
+      data-testid="heartbeat-banner"
+      className="flex h-11 w-full shrink-0 animate-pulse items-center justify-center gap-4 bg-red-700 text-xl font-black uppercase tracking-[0.25em] text-white"
+    >
+      <span>NO HEARTBEAT</span>
+      <span className="text-sm font-semibold normal-case tracking-normal text-red-100">
+        {problem} · the governor holds after 1.5 s and lands after 5 s · reload this page
+      </span>
+    </div>
+  );
+}
+
 export function LinkBanner({
   controlStatus,
   attempts,
   telemetryStale,
   backendUrl,
+  heartbeatProblem,
 }: {
   controlStatus: LinkStatus;
   attempts: number;
   telemetryStale: boolean;
   backendUrl: string;
+  heartbeatProblem: string | null; // why the governor is (or will be) missing our heartbeat
 }) {
+  if (heartbeatProblem && heartbeatProblem.startsWith("heartbeat worker failed")) {
+    return <HeartbeatBanner problem={heartbeatProblem} />;
+  }
   if (controlStatus !== "open") {
     return (
       <div
@@ -74,6 +93,7 @@ export function LinkBanner({
       </div>
     );
   }
+  if (heartbeatProblem) return <HeartbeatBanner problem={heartbeatProblem} />;
   if (telemetryStale) {
     return (
       <div

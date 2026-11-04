@@ -70,6 +70,23 @@ function App() {
 
   const twin = tlm.telemetry?.flight_mode === "twin";
 
+  // Heartbeat trouble while the control link itself is fine: the worker is dead or its socket
+  // is down, or the governor says it is not getting our heartbeat. Give the worker 3 s to start.
+  const [startedAt] = useState(() => Date.now());
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => setTick((n) => n + 1), 3100);
+    return () => clearTimeout(t);
+  }, []);
+  const governorMissesHb = !tlm.stale && (tlm.telemetry?.safety_flags ?? []).includes("heartbeat_missing");
+  let heartbeatProblem: string | null = null;
+  if (hb.error) {
+    heartbeatProblem = `heartbeat worker failed: ${hb.error}`;
+  } else if (controls.linkStatus === "open" && Date.now() - startedAt > 3000) {
+    if (!hb.open) heartbeatProblem = "heartbeat socket down";
+    else if (governorMissesHb) heartbeatProblem = "the governor reports no UI heartbeat";
+  }
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#070b14] text-slate-200">
       <ModeBanner telemetry={tlm.telemetry} stale={tlm.stale} />
@@ -78,6 +95,7 @@ function App() {
         attempts={controls.reconnectAttempts}
         telemetryStale={tlm.stale}
         backendUrl={BACKEND_URL}
+        heartbeatProblem={heartbeatProblem}
       />
 
       <header className="flex h-[66px] shrink-0 items-center justify-between gap-4 border-b border-slate-800 px-4">
