@@ -1,6 +1,6 @@
 # Workstream ui: the operator UI
 
-Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 84 tests (plus 6 opt-in tests that run against the real patched backend).
+Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 85 tests (plus 6 opt-in tests that run against the real patched backend).
 
 Screenshots are in `media/ui_screens/` (copied to `$MHD_HOME/media/shared/ui/`):
 - `ui_twin_follow.png`
@@ -101,6 +101,7 @@ UI_GOV_TREE=$MHD_TREE $MHD_PY -m pytest tests/ui/test_ui_gov_backend.py -v   # o
 | W/A/S/D, arrows | axes: pitch/roll, throttle/yaw | Human override. Sent only while a key is held and the window is focused. |
 | PageUp/PageDown, camera ▲▼ | `tilt_up`/`tilt_down`, then `tilt_stop` on release | Hold to tilt. |
 | pack 1 / pack 2 | `pack_swap` | On the ground only. |
+| 1-9 | `Select` | Picks that look-alike, only while the "Which one?" picker is shown. Perception numbers them left to right from 1. |
 
 TAKEOFF is disabled when any of these is true:
 - the control link is down;
@@ -182,11 +183,11 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 
 ## Test results
 
-84 passed and 6 skipped (the opt-in gov tests) in about 110 s at 00:52 ET. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3 and again at 2587456 (00:48).
+85 passed and 6 skipped (the opt-in gov tests) in about 110 s at 00:55 ET. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3 and again at 2587456 (00:48).
 
 | File | Count | Checks |
 |---|---|---|
-| `test_ui_browser.py` | 32 | See the list below. |
+| `test_ui_browser.py` | 33 | See the list below. |
 | `test_ui_production.py` | 3 | The minified build (`--base /ui/`), served same-origin by the mock: worker chunk present, heartbeat 5 Hz from one socket, Esc, Space and L work, HTTP fallback works, only the configured backend URL is in the bundle, and a page reload costs under 1 s of heartbeat. |
 | `test_ui_latency.py` | 1 | Measurements below, with loose regression bounds. |
 | `test_screenshots.py` | 2 | Twin and real screenshots. |
@@ -195,7 +196,7 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 | `test_frontend_static.py` | 10 | `npm run build`, `eslint --max-warnings 0`, one backend URL, no speed/profile/plugin code, only the worker sends `hb`, every button is a `UiButton`, the followed thing is always called "subject", no web fonts, loopback dev server. |
 | `test_ui_gov_backend.py` | 6 (opt-in) | Real governor backend in twin mode with no twin: telemetry renders, no ARM needed in twin, TAKEOFF shows "no video", the governor sees the worker heartbeat (`hb_age` under 600 ms), Esc E-STOPs the governor and reset works, `POST /command` passes CORS, no contract errors in the backend log. |
 
-The 32 browser tests check that:
+The 33 browser tests check that:
 - the heartbeat runs at 5 Hz from a single socket, survives a 2 s main-thread stall, stops about 3 s into a hang and resumes after it;
 - a Worker that cannot start shows NO HEARTBEAT while E-STOP still works;
 - governor-reported heartbeat loss shows the banner and locks TAKEOFF;
@@ -218,7 +219,7 @@ The 32 browser tests check that:
 - stick keys and L are ignored while typing, and Esc still works there;
 - Space types in the ARM box;
 - push-to-talk with the voice link down never shows LISTENING;
-- the candidate picker sends `Select`;
+- the candidate picker sends `Select` by click, and by digit key only while it is shown;
 - mask colors follow the autopilot state;
 - the pack timer goes amber and red, and pack swap works;
 - the footer credit is present;

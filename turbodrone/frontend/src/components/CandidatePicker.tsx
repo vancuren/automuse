@@ -14,7 +14,7 @@ export default function CandidatePicker({
 }) {
   if (!candidates || candidates.items.length === 0) return null;
   return (
-    <Panel title="Which one?" testId="candidate-picker" caption="look-alikes tie · click to choose">
+    <Panel title="Which one?" testId="candidate-picker" caption="look-alikes tie · click or press its number">
       <div className="flex flex-wrap gap-2">
         {candidates.items.map((c) => (
           <UiButton

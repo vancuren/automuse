@@ -29,12 +29,6 @@ function App() {
   const controls = useControls({ flightState });
 
   useNoButtonFocus();
-  useHotkeys({
-    onEstop: controls.emergencyStop,
-    onLand: controls.land,
-    onPttDown: agent.pttDown,
-    onPttUp: agent.pttUp,
-  });
 
   // Mission card: the backend's mission (telemetry) unless the agent announced a newer one.
   const tlmMission = tlm.telemetry?.mission ?? null;
@@ -58,6 +52,15 @@ function App() {
   }, [apState, clearCandidates]);
   const candidates =
     agent.candidates && (!tlmMissionId || agent.candidates.mission_id === tlmMissionId) ? agent.candidates : null;
+
+  // Safety hotkeys: Esc E-STOP, L LAND, Space push-to-talk; 1-9 pick a look-alike while shown.
+  useHotkeys({
+    onEstop: controls.emergencyStop,
+    onLand: controls.land,
+    onPttDown: agent.pttDown,
+    onPttUp: agent.pttUp,
+    onDigit: (n) => (candidates?.items.some((c) => c.index === n) ? agent.selectCandidate(n) : false),
+  });
 
   // Reopen the MJPEG stream when the control link comes back after a drop.
   const [videoKey, setVideoKey] = useState(0);

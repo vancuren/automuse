@@ -501,3 +501,16 @@ def test_land_right_after_takeoff_is_resent_and_not_hidden(ui, mock_backend):
     text = ui.inner_text(sel("last-command"))
     assert text.startswith("LAND") and "NOT ACCEPTED" not in text, text
     mock_backend.control(ws_mode="normal")
+
+
+def test_digit_keys_pick_a_candidate_only_while_the_picker_is_shown(ui, mock_backend):
+    ui.keyboard.press("Digit2")  # no picker: nothing happens
+    time.sleep(0.2)
+    assert mock_backend.of_type("select") == []
+    mock_backend.control(flight_state="AIRBORNE", mission="default", autopilot_state="CONFIRM", freeze_autopilot=True)
+    mock_backend.candidates()
+    ui.wait_for_selector(sel("candidate-2"), timeout=2000)
+    ui.keyboard.press("Digit7")  # not a shown candidate
+    ui.keyboard.press("Digit2")
+    sel_msgs = mock_backend.wait_for(lambda: mock_backend.of_type("select", "agent"))
+    assert [e["msg"]["index"] for e in sel_msgs] == [2]

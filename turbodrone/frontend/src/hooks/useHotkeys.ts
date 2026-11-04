@@ -6,6 +6,7 @@ export interface HotkeyHandlers {
   onLand: () => void;    // L, unless typing in a text field
   onPttDown: () => void; // Space down
   onPttUp: () => void;   // Space up, and on blur / hidden tab
+  onDigit?: (n: number) => boolean; // 1-9: pick a look-alike; returns true if it was used
 }
 
 /**
@@ -44,6 +45,12 @@ export function useHotkeys(handlers: HotkeyHandlers): void {
       if (e.code === "KeyL" && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingInField()) {
         e.preventDefault();
         if (!e.repeat) h.current.onLand();
+        return;
+      }
+      // Digit1..Digit9 / Numpad1..Numpad9 pick a candidate while the picker is shown.
+      const digit = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+      if (digit && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingInField()) {
+        if (h.current.onDigit?.(Number(digit[1]))) e.preventDefault();
       }
     };
 
