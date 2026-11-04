@@ -14,7 +14,8 @@ import time
 import pytest
 from fastapi import WebSocket
 
-from conftest import TICK_MS, make_mission, make_obs
+from conftest import ROOT, TICK_MS, make_mission, make_obs
+
 from mhd.contracts import Box, FlightState, Mission, SubjectObs
 from mhd.governor import ConfigError, Governor, GovernorError
 from mhd.governor.config import governor_config_from_dict, load_autopilot_config, load_governor_config, replace
@@ -179,7 +180,43 @@ def test_signal_hook_begins_shutdown_then_chains(rig):
         signal.signal(signal.SIGTERM, old_term)
 
 
+def test_signal_hook_outside_uvicorn_lands_then_terminates(tmp_path):
+    """With no uvicorn handler (SIG_DFL), SIGTERM still begins the landing, waits min_land_s, then
+    terminates the process the default way."""
+    import subprocess
+    import sys
+    code = (
+        "import os, signal, sys, time\n"
+        "from mhd.backend.hub import Hub\n"
+        "class G:\n"
+        "    def begin_shutdown(self):\n"
+        "        print('landing', flush=True)\n"
+        "h = Hub(); h.gov = G()\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_DFL)\n"
+        "h.install_signal_hooks(min_land_s=0.3)\n"
+        "t = time.monotonic(); os.kill(os.getpid(), signal.SIGTERM); time.sleep(5)\n"
+        "print('survived', flush=True)\n")
+    t0 = time.monotonic()
+    p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=20,
+                       env={**__import__("os").environ, "PYTHONPATH": str(ROOT / "src")})
+    assert p.returncode == -signal.SIGTERM and "landing" in p.stdout and "survived" not in p.stdout
+    assert 0.3 <= time.monotonic() - t0 < 5.0
+
+
+def test_long_rc_gaps_are_flagged(rig):
+    # Review verdict: CPU-bound threads stretched RC gaps to 112 ms p99 and nothing noticed.
+    r = rig()
+    r.airborne()
+    assert "rc_slow" not in r.tick().safety_flags
+    r.t += 120.0                                      # one 160 ms gap between packets
+    out = r.tick()
+    assert "rc_slow" in out.safety_flags and r.g.snapshot().latency_ms["rc_gap_max"] >= 150.0
+    r.run(2.2)
+    assert "rc_slow" not in r.tick().safety_flags     # clears once the last ~2 s are normal
+
+
 def test_signal_hooks_need_the_main_thread():
+
     from mhd.backend.hub import Hub
     res = []
     th = threading.Thread(target=lambda: res.append(Hub().install_signal_hooks()))

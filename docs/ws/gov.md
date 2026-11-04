@@ -22,7 +22,7 @@ Several behaviors changed for other workstreams; they are listed there under "Wh
 | `turbodrone/backend/plugins/follow/` | Deleted, and `ultralytics` removed from `requirements.txt`. `PLUGINS_ENABLED=true` is refused. |
 | `turbodrone/backend/models/` | Restored. The root `.gitignore` rule `models/` matched it at any depth, so the import commit left the package out and the backend could not start from a clean checkout. The rule is now `/models/`, and the 15 upstream files are added byte-identical. |
 | `scripts/run_backend.sh` | Starts the patched backend from the checkout it lives in. |
-| `tests/gov/` | 176 pytest tests (see below); `test_review_fixes.py` holds the regression tests for the review. |
+| `tests/gov/` | 178 pytest tests (see below); `test_review_fixes.py` holds the regression tests for the review. |
 
 ## Run it
 
@@ -41,7 +41,7 @@ Without `--mode` it refuses to start. In real mode it also refuses an RTSP URL t
 Tests and tools:
 
 ```bash
-$MHD_PY -m pytest tests/gov -q -p no:logging            # 176 tests, about 135 s (RTSP and live tests ~60 s)
+$MHD_PY -m pytest tests/gov -q -p no:logging            # 178 tests, about 140 s (RTSP and live tests ~60 s)
 (cd turbodrone/backend && $MHD_PY -m unittest tests.test_x69_lg_protocol tests.test_x69_lg_rtsp_video_protocol tests.test_x69_lg_video_mode)
 $MHD_PY -m mhd.autopilot.sim                             # step + S1 at total delays 0.6 / 1.0 / 1.5 s
 $MHD_PY -m mhd.autopilot.sim --ff --k-scale 0.7 1.0 1.3  # feed-forward robustness to K error
@@ -61,10 +61,10 @@ It refuses unless AIRBORNE and flies each amplitude + then −. It aborts the mo
 
 `-p no:logging` only hides pytest's captured-log dump on failures.
 
-## Test results (final run after the review fixes, 02:10 ET)
+## Test results (final run after the review fixes, 02:16 ET)
 
-- `tests/gov`: **176 passed, 0 failed** (about 135 s).
-  - 67 review regression tests (`test_review_fixes.py`), one section per finding.
+- `tests/gov`: **178 passed, 0 failed** (about 140 s).
+  - 69 review regression tests (`test_review_fixes.py`), one section per finding.
   - 42 governor rule tests (`test_governor_rules.py`), including the throttle-ramp landing fallback.
   - 14 autopilot lifecycle and geometry tests.
   - 7 turbodrone glue tests.
@@ -76,8 +76,9 @@ It refuses unless AIRBORNE and flies each amplitude + then −. It aborts the mo
   - 3 live tests (`run_backend.sh` with uvicorn, RTSP and a UDP drone stand-in): end to end, and Ctrl-C with /mjpeg held open, with and without a force quit.
   - 4 sysid tests: schedule limits, ArUco bearing and range on a synthetic frame, fit recovering K / deadband / lag, and a live run through the real backend with an ArUco HEVC stream.
 - Upstream x69_lg unit tests: **15 passed.**
-- Repo-level `tests/test_contracts.py` and `tests/test_intent_spec.py`: **6 passed.** All tests together: **197 passed.**
-  - The final full run showed one pytest thread warning: sysid's frame-reader thread raised when the backend closed its socket at test teardown. Fixed afterwards (the thread now exits quietly); the sysid tests were re-run and pass.
+- Repo-level `tests/test_contracts.py` and `tests/test_intent_spec.py`: **6 passed.** All tests together: **199 passed.**
+  - An earlier full run (02:08) showed one pytest thread warning: sysid's frame-reader thread raised when the backend closed its socket at test teardown. Fixed (the thread now exits quietly); the final run had no warnings.
+
 - Tests changed by the review fixes, on purpose: takeoff and Landed go over `/ws` in the API, live and sysid tests; the E-stop test expects LANDING after reset; the timer test expects the landing to fire again; the wire test presses Resume after a mission sent 2 s after takeoff; the test rig's steady observations jitter ±1 px.
 
 
@@ -156,7 +157,10 @@ An adversarial review found 4 major and 10 minor problems. All 14 are fixed. Eac
 13. **(minor) Boxes never checked; a stuck tracker spun the drone.** Out-of-frame boxes are refused (fix 5). Instead of the suggested general "no response" check (bearing unchanged while yawing), I added the frozen-box check: a general check false-alarms on good tracking of a moving subject, whose bearing stays constant while the drone turns with it. A truly stuck tracker or repeating frame gives the very same box, which real tracking never does. Tests: `test_frozen_box_while_turning_hovers`, `test_frozen_box_quiet_when_not_turning`. (The test rig's steady observations now jitter ±1 px, as a real tracker's do.)
 14. **(minor) sysid's axes counted as the heartbeat; wrong docstring and abort test.** Real mode counts only `{"type":"hb","client":"ui"}`; sysid aborts when the drone is not AIRBORNE, when the governor is not flying its sticks (0.3 s into a step), or when the UI heartbeat is older than 1 s; the docstring says so. Test: `test_sysid_abort_reasons`, plus the live sysid run.
 
+Also from the review's verdict (not a numbered finding): CPU-bound threads in the backend stretched RC gaps and nothing noticed. RC gaps over 100 ms in the last ~2 s now raise the `rc_slow` flag (`latency_ms.rc_gap_max`); observation only. Test: `test_long_rc_gaps_are_flagged`. And the signal hook keeps working outside uvicorn (SIG_DFL: land 0.5 s, then the default action): `test_signal_hook_outside_uvicorn_lands_then_terminates`.
+
 **What changed for other workstreams** (also in "What the integrator must wire up"):
+
 - ws/ui: E-stop reset ends in LANDING (press Landed); Landed only in LANDING; takeoff, arm, resume and Landed only over `/ws`; pages must be on localhost (or `MHD_EXTRA_ORIGIN_HOSTS`); real mode counts only the worker's `hb` and only `OperatorInput` axes.
 - ws/agent: use `POST /command?role=agent`; a follow Mission after a stop may be acked `"paused": true`.
 - ws/percep: finite numbers only, boxes inside the frame (already true with `clip_box`).
@@ -235,10 +239,10 @@ An adversarial review found 4 major and 10 minor problems. All 14 are fixed. Eac
   - `heartbeat_missing`, `video_stale`, `obs_stale`, `flight_timer_warn`, `wrong_way` (with `wrong_way:yaw`, `wrong_way:pitch` or `wrong_way:frozen_box`), `autopilot_paused`, `autopilot_fault`, `autopilot_slow`;
   - `landing:<cause>`, where the cause is `ui_land`, `http_land`, `agent_land`, `model_land`, `heartbeat_lost`, `video_frozen`, `flight_timer` or `estop_reset`;
   - `headless_bypass`, `governor_fault`, `rc_tick_stale`;
-  - link and input health: `rc_send_errors` (an RC datagram failed to send), `keepalive_stale` (no D1 keepalive sent for 3 s), `legacy_axes_refused` (real mode refused the legacy UI's axes).
+  - link and input health: `rc_send_errors` (an RC datagram failed to send), `keepalive_stale` (no D1 keepalive sent for 3 s), `legacy_axes_refused` (real mode refused the legacy UI's axes), `rc_slow` (an RC packet gap over 100 ms in the last ~2 s: CPU or GIL starvation in the backend; observation only).
 - `latency_ms` keys:
   - `frame_lag`, `obs_lag`, `frame_floor`, `obs_floor`, `obs_period`, `hb_age`, `autopilot_step`, `rc_tick_age`, `frames_received`, `obs_accepted`;
-  - `capture_rise` (real mode: pts baseline above its session minimum, ms), `rc_send_errors`, `keepalive_age`, `keepalive_errors`, `frames_rejected`, `obs_invalid` (counts are counts, not ms).
+  - `capture_rise` (real mode: pts baseline above its session minimum, ms), `rc_gap_max` (longest RC gap in the last ~2 s), `rc_send_errors`, `keepalive_age`, `keepalive_errors`, `frames_rejected`, `obs_invalid` (counts are counts, not ms).
 - `sticks_by_source` keys:
   - `human`, `autopilot`, `output` (effective normalized output after caps).
 
@@ -275,7 +279,9 @@ An adversarial review found 4 major and 10 minor problems. All 14 are fixed. Eac
 - **After Session A/B, update:**
   - `autopilot.yaml`: `camera.hfov_deg`, `plant.yaw_rate_per_count`, `plant.forward_speed_per_count`, `plant.yaw_lag_s`, `delay.theta_s`.
   - `governor.yaml`: `wire.sign`, `wire.deadband_counts`, `flight_timer.land_s` (60 s before low battery).
-  - Environment: `MHD_CAPTURE_OFFSET_MS` (minimum camera-to-backend latency). In Session A, watch `latency_ms.capture_rise` for a minute with a steady stream: if it climbs toward 300 the camera's pts clock drifts more than 2 ms/s (e.g. frame-count timestamps); raise `MHD_CAPTURE_DRIFT_MS_PER_S` to just above the measured drift.
+  - Session A link-loss test ("kill the backend"): use `kill -9 <uvicorn pid>`. Ctrl-C and SIGTERM now land first (review fix 2), which is not a link loss.
+  - Environment: `MHD_CAPTURE_OFFSET_MS` (minimum camera-to-backend latency).
+ In Session A, watch `latency_ms.capture_rise` for a minute with a steady stream: if it climbs toward 300 the camera's pts clock drifts more than 2 ms/s (e.g. frame-count timestamps); raise `MHD_CAPTURE_DRIFT_MS_PER_S` to just above the measured drift.
 - **Merge notes:**
   - `.gitignore` changed (`models/` became `/models/`), and `turbodrone/backend/models/*.py` were added unchanged. Identical additions from other branches merge cleanly.
   - Contracts are unchanged; no adapter was needed.
@@ -289,7 +295,8 @@ An adversarial review found 4 major and 10 minor problems. All 14 are fixed. Eac
 - **P-only S1 RMS at θ = 1.5 s is 0.196 rad**, against a 0.15 target. The 0.3 rad/s "stays in frame" target fails with or without feed-forward.
 - **No RC-thread watchdog that sends packets itself.** If the RC thread stopped, telemetry shows `rc_tick_stale` and the log says so, but nothing else sends neutral or land. Session A step 6 ("stop RC packets while the keepalive continues") tells us what the drone does. The opposite case (RC continues, keepalive fails) is now visible (`keepalive_stale`, `rc_send_errors`) and the keepalive retries, but what the X69 does without keepalives is still untested.
 - **The legacy upstream UI is still accepted in twin mode** (any message is a heartbeat; its stuck-key behavior is unchanged there). Real mode refuses it.
-- **CPU-bound Python threads in the backend process** can still stretch RC gaps (review: p99 112 ms with 2 busy threads, 19.7 Hz with 4); `rc_tick_age` shows it, nothing corrects it.
+- **CPU-bound Python threads in the backend process** can still stretch RC gaps (review: p99 112 ms with 2 busy threads, 19.7 Hz with 4). It is now visible (`rc_slow` flag, `rc_gap_max`), but nothing corrects it: keep heavy work (perception, the agent) in their own processes, as planned.
+
 - **The pitch and frozen-box detectors are new tonight** and tested only in unit tests, the closed-loop sim and the reviewer's probes, not in the wire-level twin.
 
 - **Throttle-ramp landing is built but off** (`landing.throttle_ramp: false`). If Session A shows 0x80 does not land the drone, set it to true. While LANDING, throttle then ramps to −0.35 (44 counts) over 1 s, and the land flag is still re-asserted.

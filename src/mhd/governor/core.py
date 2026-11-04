@@ -220,6 +220,7 @@ class Governor:
         self.fault_count = 0
         self._fault_since: Optional[float] = None
         self._tick_us = deque(maxlen=2000)
+        self._gaps_ms: deque = deque(maxlen=50)          # RC tick intervals, last ~2 s (rc_slow flag)
         self._snapshot = _Snapshot(armed=self._armed, pack_id=self.flight_timer.current_pack)
 
         self._hk_stop = threading.Event()
@@ -604,9 +605,14 @@ class Governor:
 
     def _tick_locked(self, now: float) -> tuple[TickOutput, dict]:
         cfg = self.cfg
+        if self._last_tick_ms is not None:
+            self._gaps_ms.append(now - self._last_tick_ms)
         dt = 0.0 if self._last_tick_ms is None else max(0.0, min(0.5, (now - self._last_tick_ms) / 1000.0))
         self._last_tick_ms = now
         flags: list[str] = []
+        gap_max = max(self._gaps_ms) if self._gaps_ms else 0.0
+        if gap_max > 100.0:
+            flags.append("rc_slow")       # an RC gap over 100 ms in the last ~2 s (CPU / GIL starvation)
 
         hb_age = self._hb_age(now)
         hb_bypass = self._hb_bypass()
@@ -748,7 +754,8 @@ class Governor:
                 ("frame_lag", _finite(frame_lag)), ("obs_lag", _finite(obs_lag)),
                 ("frame_floor", _finite(self._frame_floor.value())), ("obs_floor", _finite(self._obs_floor.value())),
                 ("obs_period", _finite(self._obs_period.period_ms)), ("hb_age", _finite(hb_age)),
-                ("autopilot_step", round(self._ap_step_ms, 3)),
+                ("autopilot_step", round(self._ap_step_ms, 3)), ("rc_gap_max", round(gap_max, 1)),
+
             ) if v is not None},
             flight_time_s=round(flight_s, 1), pack_id=self.flight_timer.current_pack,
             safety_flags=tuple(flags) + ((f"landing:{self._land_cause}",) if st == FlightState.landing else ()),

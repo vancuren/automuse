@@ -176,15 +176,18 @@ class Hub:
             def handler(signum, frame, _prev=prev):
                 first = not self.shutting_down
                 self.begin_shutdown(f"signal {signal.Signals(signum).name}")
-                if not first and self._shutdown_t is not None:
+                chains = callable(_prev)          # uvicorn's handle_exit: it shuts down gracefully
+                if (not first or not chains) and self._shutdown_t is not None:
                     left = min_land_s - (time.monotonic() - self._shutdown_t)
                     if left > 0:
                         time.sleep(left)          # the RC thread keeps sending land meanwhile
-                if callable(_prev):
+                if chains:
                     _prev(signum, frame)
-                elif _prev == signal.SIG_DFL and signum == signal.SIGINT:
-                    raise KeyboardInterrupt
+                elif _prev == signal.SIG_DFL:     # not under uvicorn: default action, after the land
+                    signal.signal(signum, signal.SIG_DFL)
+                    signal.raise_signal(signum)
             signal.signal(sig, handler)
+
         return True
 
     async def shutdown(self) -> None:
