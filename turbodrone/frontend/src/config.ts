@@ -9,6 +9,9 @@
  *   VITE_PACK_WARN_S     per-pack flight time that warns      default 300 (5:00)
  *   VITE_PACK_LAND_S     per-pack flight time that auto-lands default 390 (6:30)
  *   VITE_PACKS           pack ids offered for pack swap       default "1,2"
+ *   VITE_AXES_RELEASE_MESSAGE  "1": when stick input stops (key up, blur, hidden), send ONE
+ *                        all-zero axes message so the governor releases at once instead of
+ *                        after its 0.25 s staleness timeout. Default off: axes only while nonzero.
  */
 const env = import.meta.env;
 
@@ -26,6 +29,8 @@ export const TWIN_CHASE_URL = env.VITE_TWIN_CHASE_URL || "http://localhost:8766/
 
 export const PACK_WARN_S = Number(env.VITE_PACK_WARN_S || 300);
 export const PACK_LAND_S = Number(env.VITE_PACK_LAND_S || 390);
+export const AXES_RELEASE_MESSAGE = env.VITE_AXES_RELEASE_MESSAGE === "1";
+
 export const PACK_IDS = (env.VITE_PACKS || "1,2")
   .split(",")
   .map((s: string) => s.trim())

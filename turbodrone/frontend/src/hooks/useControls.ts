@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { URLS } from "../config";
+import { AXES_RELEASE_MESSAGE, URLS } from "../config";
 import { ReconnectingSocket, type LinkStatus } from "../lib/reconnectingSocket";
 import {
   buildCommand,
@@ -454,6 +454,11 @@ export function useControls(opts: { flightState: FlightState | null }) {
       if (!isZero(rounded) && inputAllowed()) {
         const msg: OperatorInput = { type: "axes", mode: modeRef.current, ...rounded };
         sending = sockRef.current?.send(msg) ?? false;
+      }
+      if (!sending && wasSending && AXES_RELEASE_MESSAGE) {
+        // Opt-in: one all-zero message on release (key up, blur, hidden tab). The governor
+        // releases human sticks at once on it and never treats it as input.
+        sockRef.current?.send({ type: "axes", mode: modeRef.current, throttle: 0, yaw: 0, pitch: 0, roll: 0 });
       }
       if (sending !== wasSending) {
         wasSending = sending;

@@ -706,6 +706,7 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
         await ws.accept()
         conn = hub.next_conn()
         hub.control.add(ws)
+        prev_axes_nonzero = False  # one all-zero "release" right after nonzero input is allowed
         try:
             while True:
                 raw = await ws.receive_text()
@@ -715,10 +716,15 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
                     log.add("ws", conn, raw, False, "invalid JSON")
                     continue
                 valid, err = validate_control(msg)
+                release = False
+                if isinstance(msg, dict) and msg.get("type") == "axes":
+                    if not valid and err and err.startswith("all-zero") and prev_axes_nonzero:
+                        valid, err, release = True, None, True  # VITE_AXES_RELEASE_MESSAGE=1
+                    prev_axes_nonzero = valid and not release
                 if sim.ws_mode == "deaf":
                     log.add("ws", conn, msg, valid, err, note="ignored (deaf)")
                     continue
-                note = None
+                note = "release" if release else None
                 if valid:
                     kind = msg["type"]
                     if kind == "hb" and not sim.drop_hb:

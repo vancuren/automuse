@@ -45,10 +45,13 @@ def test_state_and_telemetry_stream_validate_against_the_contract(client):
 
 
 def test_control_socket_judges_messages_by_the_contract(client):
+    zero = {"type": "axes", "throttle": 0, "yaw": 0, "pitch": 0, "roll": 0, "mode": "inc"}
     with client.websocket_connect("/ws") as ws:
         ws.send_text(json.dumps({"type": "hb", "client": "ui"}))
+        ws.send_text(json.dumps(zero))                                   # zeros while idle: invalid
         ws.send_text(json.dumps({"type": "axes", "throttle": 0, "yaw": 0.5, "pitch": 0, "roll": 0, "mode": "inc"}))
-        ws.send_text(json.dumps({"type": "axes", "throttle": 0, "yaw": 0, "pitch": 0, "roll": 0, "mode": "inc"}))
+        ws.send_text(json.dumps(zero))                                   # one release after input: ok
+        ws.send_text(json.dumps(zero))                                   # a second zero: invalid
         ws.send_text(json.dumps({"type": "axes", "yaw": 1, "mode": "inc", "camera_tilt_direction": 0}))
         ws.send_text(json.dumps({"type": "axes", "yaw": 1, "mode": "mouse"}))
         ws.send_text(json.dumps({"type": "set_speed_index", "speed_index": 2}))
@@ -56,8 +59,8 @@ def test_control_socket_judges_messages_by_the_contract(client):
         ws.send_text("not json")
         ws.send_text(json.dumps({"type": "hb", "client": "ui"}))  # sync point
     entries = log_lines(client)
-    assert [e["valid"] for e in entries] == [True, True, False, False, False, False, True, False, True]
-    assert "all-zero" in entries[2]["error"]
+    assert [e["valid"] for e in entries] == [True, False, True, True, False, False, False, False, True, False, True]
+    assert "all-zero" in entries[1]["error"] and entries[3].get("note") == "release"
     assert client.sim.flight_state.value == "ESTOPPED"
 
 

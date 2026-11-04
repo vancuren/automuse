@@ -1,6 +1,6 @@
 # Workstream ui: the operator UI
 
-Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 88 tests (plus 6 opt-in tests that run against the real patched backend).
+Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 89 tests (plus 6 opt-in tests that run against the real patched backend).
 
 Screenshots are in `media/ui_screens/` (copied to `$MHD_HOME/media/shared/ui/`):
 - `ui_twin_follow.png`
@@ -99,7 +99,7 @@ Test files are all named `test_ui_*.py`, and shared helpers live in `tests/ui/ui
 | **Space** (hold) / **HOLD TO TALK** | `ptt_down` / `ptt_up` | Missions only, never takeoff. Released automatically if the window loses focus. In the ARM box Space types instead; that box only exists before arming. |
 | **TAKEOFF** | `takeoff` | Button only, never voice or a hotkey. Disabled with a reason shown under it (see below). |
 | type **ARM** + Enter | `arm` with `arm_phrase:"ARM"` | REAL mode only, once per session. Unlocks TAKEOFF. |
-| **Reset E-STOP…** | `estop_reset` | Appears only when E-STOPPED. Needs two clicks within 3 s. |
+| **Reset E-STOP…** | `estop_reset` | Appears only when E-STOPPED. Needs two clicks within 3 s. In REAL mode the governor disarms on reset, so the ARM box comes back: type ARM again. |
 | **Confirm touchdown** | `confirm_touchdown` | Appears while LANDING. |
 | W/A/S/D, arrows | axes: pitch/roll, throttle/yaw | Human override. Sent only while a key is held and the window is focused. |
 | PageUp/PageDown, camera ▲▼ | `tilt_up`/`tilt_down`, then `tilt_stop` on release | Hold to tilt. The held command is re-sent every second, because the governor stops a tilt 3 s after the last one. |
@@ -186,13 +186,14 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 
 ## Test results
 
-88 passed and 6 skipped (the opt-in gov tests) in about 2 min at 01:05 ET. From the repo root, including the scaffold's contract tests: 94 passed, 6 skipped. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3, 2587456 and 03f0527 (00:58).
+89 passed and 6 skipped (the opt-in gov tests) in about 2 min at 01:12 ET. From the repo root, including the scaffold's contract tests: 95 passed, 6 skipped. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3, 2587456 and 03f0527 (00:58).
 
 | File | Count | Checks |
 |---|---|---|
 | `test_ui_browser.py` | 34 | See the list below. |
 | `test_ui_production.py` | 4 | The minified build (`--base /ui/`), served same-origin by the mock: worker chunk present, heartbeat 5 Hz from one socket, Esc, Space and L work, HTTP fallback works, only the configured backend URL is in the bundle, a page reload costs under 1 s of heartbeat, and the dashboard's main-thread cost is measured. |
 | `test_ui_latency.py` | 1 | Measurements below, with loose regression bounds. |
+| `test_ui_release_flag.py` | 1 | A production build with `VITE_AXES_RELEASE_MESSAGE=1` sends exactly one all-zero release on key up and on blur, and nothing while idle. |
 | `test_ui_screenshots.py` | 2 | Twin and real screenshots. |
 | `test_ui_mock_backend.py` | 12 | The mock validates and judges messages correctly, latches E-STOP, needs the exact ARM phrase, keeps its masks inside their boxes, and cancels an in-flight fake mission on reset. |
 | `test_ui_contract_mirror.py` | 25 | `src/lib/contracts.ts` matches the pydantic models: field names, command names, event kinds, enums, literals. |
@@ -253,7 +254,7 @@ All measurements are loopback (127.0.0.1) against the mock backend, using the vi
 ## Wire behavior (what the backend will see)
 
 - `/ws`, main socket:
-  - `{"type":"axes","mode":"inc"|"abs","throttle":..,"yaw":..,"pitch":..,"roll":..}` at 30 Hz, only while at least one axis is nonzero. There is no trailing all-zero message: the governor's 0.25 s human-input staleness ends the input. Values are rounded to 3 decimals. Keyboard sends ±1; the gamepad sends deadzoned 0.15..1.
+  - `{"type":"axes","mode":"inc"|"abs","throttle":..,"yaw":..,"pitch":..,"roll":..}` at 30 Hz, only while at least one axis is nonzero. By default there is no trailing all-zero message: the governor's 0.25 s human-input staleness ends the input. With the build flag `VITE_AXES_RELEASE_MESSAGE=1`, exactly one all-zero message is sent when input stops (key up, blur, hidden tab), and ws/gov's governor releases at once on it. Values are rounded to 3 decimals. Keyboard sends ±1; the gamepad sends deadzoned 0.15..1.
   - `{"type":"cmd","command":...}` for everything, plus `arm_phrase` or `pack_id` where needed.
 - `/ws`, worker socket: `{"type":"hb","client":"ui"}` every 200 ms.
 - `POST /command` with `Content-Type: application/json`: LAND and E-STOP only.
@@ -262,7 +263,7 @@ All measurements are loopback (127.0.0.1) against the mock backend, using the vi
 
 ## Decisions I made (nobody was awake to ask)
 
-1. No trailing all-zero axes message on release. This follows "sent only while nonzero" literally. Release is bounded by the governor's 0.25 s staleness rule.
+1. No trailing all-zero axes message on release by default. This follows "sent only while nonzero" literally, and release is bounded by the governor's 0.25 s staleness rule. ws/gov's `submit_human` releases at once on an all-zero message and never treats it as input, so I added the opt-in build flag `VITE_AXES_RELEASE_MESSAGE=1`: one all-zero message when input stops, including on blur. It is tested against a production build. The mock accepts exactly one zero right after nonzero input and still flags zeros sent while idle. **Recommendation:** turn it on for flights. Release becomes immediate instead of up to 250 ms, which matters most when focus is lost mid-stick.
 2. TrackPoint (pointer-lock) mode removed: pointer lock consumes Esc, which is E-STOP. Keyboard and gamepad remain. The gamepad is untested (no gamepad here).
 3. LAND and E-STOP act on pointer down, not click, so a finger that slides off still stops the drone. TAKEOFF stays a click.
 4. Safety commands get the HTTP re-send when telemetry does not confirm them in 600 ms. Both paths are idempotent in the governor (latched E-STOP, re-asserted land).
@@ -315,7 +316,8 @@ All measurements are loopback (127.0.0.1) against the mock backend, using the vi
    - hub transitions: `status` with `data.kind` in `state`, `flight_state`, `announce`, `safety`.
 5. Twin: the chase URL defaults to `http://localhost:8766/chase`. Override it with `VITE_TWIN_CHASE_URL`.
 6. After the merge, run `UI_GOV_TREE=$MHD_TREE $MHD_PY -m pytest tests/ui/test_ui_gov_backend.py -v` once.
-7. Contract changes: none needed. Suggestion for v0.2: have the backend answer each `/ws` `cmd` with its `CommandResult` (`ok`, `reason`), for example as an `AgentEvent` `status` on `/ws/agent` or a field in Telemetry. The UI could then say "refused: not_armed" instead of inferring it.
+7. Decide on `VITE_AXES_RELEASE_MESSAGE=1` for the flight build. I recommend it: immediate stick release, see decision 1.
+8. Contract changes: none needed. Suggestion for v0.2: have the backend answer each `/ws` `cmd` with its `CommandResult` (`ok`, `reason`), for example as an `AgentEvent` `status` on `/ws/agent` or a field in Telemetry. The UI could then say "refused: not_armed" instead of inferring it.
 
 ## Spend
 
