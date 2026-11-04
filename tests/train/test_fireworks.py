@@ -104,3 +104,20 @@ def test_live_merge_deployment_body(fw):
     assert body["deploymentShape"] == "default"
     assert body["minReplicaCount"] == body["maxReplicaCount"] == 1
     assert "enableHotReloadLatestAddon" not in body
+
+
+def test_warmup_falls_back_to_base_route_on_404(fw, monkeypatch):
+    seen = []
+
+    def handler(request):
+        model = json.loads(request.content)["model"]
+        seen.append(model)
+        if model.startswith("accounts/acct/models/glimmer-intent-v1"):
+            return httpx.Response(404, json={"error": {"message": "Model not found"}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    fw.c = httpx.Client(transport=httpx.MockTransport(handler), headers={"Authorization": "Bearer test-key"})
+    monkeypatch.setattr(fwm.time, "sleep", lambda s: None)
+    ms, model = fwm.warmup(fw, "d1", "glimmer-intent-v1", tries=2)
+    assert model == f"{fwm.BASE_MODEL}#accounts/acct/deployments/d1"
+    assert seen[0].startswith("accounts/acct/models/glimmer-intent-v1#")

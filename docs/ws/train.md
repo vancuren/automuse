@@ -148,7 +148,14 @@ Allow about 5 minutes from create to READY (measured tonight), so start by 10:05
   adapter: 15.7 GB active, 16.6 GB peak, about 12 to 14 tok/s decode.
 - Full run: `training/train_mlx.sh full`. 2,600 iterations (about 1.2 epochs), 650 optimizer updates,
   25-step warmup, then cosine decay from 1e-4 to 1e-5. Validation every 250 iterations (25 batches),
-  checkpoints every 500. RESULTS_TRAINING
+  checkpoints every 500.
+   Finished 01:23:01. **2,600 iterations in 4,595 s (76.6 minutes), MLX peak memory 17.68 GB.** The twin
+   workstream's Chrome/WebGL renderer shared the GPU from about 00:25; the pace was 1.45 to 2.4 s per
+   iteration, about 1.8 on average. Validation loss over 25 held-out-family examples: 1.426 (start),
+   0.027 (250), 0.008 (500), 0.003 (750), 0.004 (1,000), 0.006 (1,250), 0.004 (1,500), 0.006 (1,750),
+   0.002 (2,000), 0.004 (2,250), 0.002 (2,500), **0.001 (2,600, final)**. Final train loss about 0.002.
+   The 1,250 bump was noise, so the final adapter is used. Checkpoints for 500 to 2,500 are kept in the
+   adapter directory.
 
 ## Results
 

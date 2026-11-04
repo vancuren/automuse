@@ -94,6 +94,13 @@ class Fireworks:
 
     # ---------------- datasets ----------------
     def upload_dataset(self, dataset_id: str, path: Path) -> dict:
+        try:
+            existing = self._req("GET", f"datasets/{dataset_id}")
+            if existing.get("state") == "READY":
+                print(f"dataset {dataset_id} already READY; not re-uploading", flush=True)
+                return existing
+        except RuntimeError:
+            pass
         n = sum(1 for line in Path(path).read_text().splitlines() if line.strip())
         try:
             self._req("POST", "datasets", json={"datasetId": dataset_id, "dataset": {
@@ -293,23 +300,30 @@ def gpu_minutes_used() -> float:
 
 # ---------------- warm-up ----------------
 
-def warmup(fw: Fireworks, deployment_id: str, lora: Optional[str], tries: int = 40) -> float:
-    """Send one real intent request until it succeeds; returns its latency in ms."""
+def warmup(fw: Fireworks, deployment_id: str, lora: Optional[str], tries: int = 40) -> tuple[float, str]:
+    """Send one real intent request until it succeeds; returns (latency ms, the model string that worked).
+
+    With a LoRA, the LoRA route ('<lora>#<deployment>') is tried first. After a hot-reload merge Fireworks
+    may serve the merged model under the base route instead (undocumented), so on 404 both are tried."""
     from mhd.intent_spec import GLIMMER_SYSTEM_PROMPT
-    model = fw.route(deployment_id, lora)
+    routes = [fw.route(deployment_id, lora)] + ([fw.route(deployment_id)] if lora else [])
     msgs = [{"role": "system", "content": GLIMMER_SYSTEM_PROMPT},
             {"role": "user", "content": "follow the person in the blue shirt"}]
     for k in range(tries):
-        t0 = time.perf_counter()
-        try:
-            out = fw.chat(model, msgs, max_tokens=300)
-            ms = (time.perf_counter() - t0) * 1000
-            msg = out["choices"][0]["message"]
-            print(f"warm: {ms:.0f} ms -> {str(msg.get('content'))[:160]!r}", flush=True)
-            return ms
-        except Exception as e:
-            print(f"warmup try {k}: {str(e)[:200]}", flush=True)
-            time.sleep(15)
+        for model in routes:
+            t0 = time.perf_counter()
+            try:
+                out = fw.chat(model, msgs, max_tokens=300)
+                ms = (time.perf_counter() - t0) * 1000
+                msg = out["choices"][0]["message"]
+                print(f"warm: {ms:.0f} ms via {model.replace(fw.account, '$FIREWORKS_ACCOUNT_ID')} -> "
+                      f"{str(msg.get('content'))[:160]!r}", flush=True)
+                return ms, model
+            except Exception as e:
+                print(f"warmup try {k}: {str(e)[:200]}", flush=True)
+                if "404" not in str(e):
+                    break              # scaling up (503) etc.: wait, do not hop routes
+        time.sleep(15)
     raise RuntimeError("deployment did not answer")
 
 
@@ -376,8 +390,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         fw.create_deployment(a.deployment_id, hot_reload=False, keep_warm=True,
                              base_model=fw.model_name(a.lora), shape="default")
         fw.wait_deployment(a.deployment_id)
-        warmup(fw, a.deployment_id, a.lora)
-        print("agent model string:", fw.route(a.deployment_id, a.lora).replace(fw.account, "$FIREWORKS_ACCOUNT_ID"))
+        _ms, model = warmup(fw, a.deployment_id, a.lora)
+        print("agent model string:", model.replace(fw.account, "$FIREWORKS_ACCOUNT_ID"))
     elif a.cmd == "morning":
         if not a.lora:
             sys.exit("--lora is required")
@@ -392,8 +406,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         fw.wait_deployment(a.deployment_id)
         fw.load_lora(a.deployment_id, a.lora)
         fw.wait_lora(a.deployment_id, a.lora)
-        warmup(fw, a.deployment_id, a.lora)
-        print("agent model string:", fw.route(a.deployment_id, a.lora).replace(fw.account, "$FIREWORKS_ACCOUNT_ID"))
+        _ms, model = warmup(fw, a.deployment_id, a.lora)
+        print("agent model string:", model.replace(fw.account, "$FIREWORKS_ACCOUNT_ID"))
     elif a.cmd == "down":
         fw.scale(a.deployment_id, 0)
         print("scaled to zero:", a.deployment_id)
