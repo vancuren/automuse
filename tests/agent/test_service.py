@@ -117,6 +117,10 @@ def test_push_to_talk_to_mission(backend, llm, audio_items, recognizer):
     kinds = [e.get("kind") for e in seen if e.get("type") == "agent_event"]
     for k in ("partial", "final", "intent", "reply"):
         assert k in kinds, (k, kinds)
+    ev = [e for e in svc.events if e["kind"] == "intent"][-1]
+    # what the UI's missionFromIntentEvent() reads
+    assert ev["data"]["mission_id"] == m["mission_id"] and ev["data"]["reply"] == m["reply"]
+    assert ev["data"]["model"] == m["model"] and ev["data"]["intent"] == m["intent"]
     status = [e for e in svc.events if e["kind"] == "status"][0]
     assert status["data"]["safety_listener"] and status["data"]["backend_connected"]
     assert "safety_word" not in kinds               # the mission command has no safety word

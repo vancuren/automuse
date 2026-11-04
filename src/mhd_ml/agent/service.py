@@ -419,16 +419,19 @@ class AgentService:
         intent = res.intent
         reply = build_reply(intent)
         t_intent_ms = now_ms()
+        flies = intent.action in ("follow", "hover", "land")   # clarify / refuse change nothing in flight
+        mission_id = f"m-{uuid.uuid4().hex[:8]}" if flies else None
         await self.emit("intent", intent.action, data={
             "intent": intent.model_dump(), "model": res.model, "latency_ms": round(res.latency_ms, 1),
-            "reason": res.reason, "attempts": res.attempts, "transcript": text})
+            "reason": res.reason, "attempts": res.attempts, "transcript": text, "reply": reply,
+            "mission_id": mission_id})
         delivery = None
-        if intent.action in ("follow", "hover", "land"):
+        if flies:
             if intent.action in ("land", "hover"):
                 # Same path as the safety listener: the governor acts on the command immediately.
                 cmd = OperatorCommand(command="land" if intent.action == "land" else "pause")
                 await self.link.deliver("/command", cmd)
-            mission = Mission(mission_id=f"m-{uuid.uuid4().hex[:8]}", intent=intent, transcript=text,
+            mission = Mission(mission_id=mission_id, intent=intent, transcript=text,
                               model=res.model, latency_ms=round(res.latency_ms, 1), reply=reply)
             self.missions.append(mission)
             delivery = await self.link.deliver("/mission", mission)
