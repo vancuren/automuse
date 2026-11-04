@@ -2,6 +2,8 @@
 
 **A $34 toy drone that follows a person or a car you describe by voice, built on Meta models.**
 
+![The operator UI flying the digital twin: the spoken command, the mission from our fine-tuned Muse Glimmer, and the SAM 3.1 mask on the subject in FOLLOW](docs/img/demo_s1_2_voice_mission_follow.png)
+
 Hold Space and say "follow the person in the blue shirt". Muse Voice Transcribe turns your words
 into text, our fine-tuned Muse Glimmer turns the text into a mission, SAM 3.1 finds that person in
 the drone's video, and a classical controller inside a safety governor turns a Loiley X69 to keep
@@ -21,11 +23,9 @@ agreed to be filmed, and it calls the person or thing it follows the *subject*.
 
 **Demo video (3 min):** _link coming: VIDEO_LINK_
 
-<!-- Demo stills: the demo workstream adds them to docs/img/ (twin chase view and the operator UI). -->
-
-| SAM 3.1 finds "person in blue shirt" in twin frames after the full HEVC path | Our Glimmer LoRA vs. base Glimmer and Muse Spark 1.3 |
+| The twin's chase view: the drone (center) turns to keep the walker in blue in frame | S2: a walker in red crosses between the drone and the subject in blue |
 |---|---|
-| ![SAM 3.1 detections on twin frames](docs/img/percep/g2_examples.jpg) | ![Intent model evaluation](docs/eval/intent_eval.png) |
+| ![Chase view of the twin](docs/img/demo_s1_chase_follow.png) | ![The S2 crossing in the operator UI](docs/img/demo_s2_crossing_follow.png) |
 
 ## How it works
 
@@ -113,12 +113,16 @@ tracks in 2.6 ms. On twin frames after the full HEVC path, SAM finds the S1 subj
 frames (gate: 90%). The hosted `sam-3.1` answers in 697 ms p50 / 1,277 ms p95 at 640x360. The SAM
 3.1 MLX tracker takes about 1 s per step, so it stays out of the control loop.
 
+![SAM 3.1 detections on twin frames: white boxes are ground truth, green boxes are SAM's](docs/img/percep/g2_examples.jpg)
+
 **Intent model.** On 300 held-out commands from unseen phrasings, our LoRA picks the right action
 98.0% of the time (base Glimmer 93.7%, Muse Spark 1.3 95.3%), and 100% on 80 hand-written commands
 (93.8% and 95.0%), with 100% valid JSON. It writes the subject phrase exactly in our label convention
 ("person in blue shirt") 92.9% of the time (base 41.4%, Spark 52.7%), and answers in 3.6 s p50 on
 the Mac. Its weak spot is noisy speech: 88.8% on the hand-written set spoken through `say` and
 Omnilingual ASR, vs. Spark's 90.0%.
+
+![Intent model evaluation: our Glimmer LoRA vs. base Glimmer and Muse Spark 1.3](docs/eval/intent_eval.png)
 
 **Voice.** Muse Voice Transcribe: final transcript 226 ms p50 / 267 ms p95 after you stop talking.
 Muse Spark 1.3 at minimal effort: 1.64 s p50 / 2.47 s p95 to a valid mission. 20 of 20 scripted
