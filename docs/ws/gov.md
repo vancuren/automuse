@@ -1,7 +1,7 @@
 # Workstream gov: backend patches, safety governor, autopilot
 
 Branch `ws/gov`. Built overnight 2026-11-03/04. PLAN.md sections 2, 4.1, 4.4, 4.5 and 6.
-An adversarial review (4 major, 10 minor findings) was fixed at 01:30–02:40 ET: see **Review fixes** below.
+An adversarial review (4 major, 10 minor findings) was fixed at 01:30–02:20 ET: see **Review fixes** below.
 Several behaviors changed for other workstreams; they are listed there under "What changed for other workstreams".
 
 ## What exists
@@ -118,7 +118,7 @@ Closed loop (`mhd.autopilot.sim`): kinematic plant with yaw lag 0.15 s and forwa
 - With a reversed yaw sign, the wrong-way detector stops the runaway: maximum bearing error 0.68 rad, then hover. With the detector off, the error reaches 2.77 rad.
 - A 0.3 rad/s walker (0.96 m/s lateral at 3.2 m) is **not** held in frame (40–80% in frame). The loop is delay-limited, and SEARCH reacquires the subject.
 
-## Review fixes (01:30–02:40 ET)
+## Review fixes (01:30–02:20 ET)
 
 An adversarial review found 4 major and 10 minor problems. All 14 are fixed. Each has a regression test (mostly in `tests/gov/test_review_fixes.py`), and the reviewer's own probes in `logs/review/probes` (gitignored) were re-run against the fixed code.
 
