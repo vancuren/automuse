@@ -124,7 +124,7 @@ class Governor:
         self._takeoff_left = 0
         self._land_cause: Optional[str] = None
         self._land_is_safety = False
-        self._land_last_ms = -INF
+        self._land_next_ms = -INF               # land flag schedule: fixed grid, 1/reassert_per_s
         self._timer_land_fired = False
         self._timer_warned = False
         self._shutdown = False
@@ -414,7 +414,7 @@ class Governor:
         self._land_cause = cause
         self._land_is_safety = safety
         if self._state != FlightState.landing:
-            self._land_last_ms = -INF               # first land flag goes out on the next tick
+            self._land_next_ms = now                # first land flag goes out on the next tick
             self._set_state(FlightState.landing, now)
             self._land_cause = cause
             self._land_is_safety = safety
@@ -581,9 +581,14 @@ class Governor:
             takeoff = True
             self._takeoff_left -= 1
         elif st == FlightState.landing:
-            if now - self._land_last_ms >= 1000.0 / cfg.landing.reassert_per_s - 1.0:
+            # Fixed 200 ms grid (not "200 ms after the last one"), so the average is exactly
+            # reassert_per_s even when the RC loop runs slower than 25 Hz; no burst after a stall.
+            if now >= self._land_next_ms:
                 land = True
-                self._land_last_ms = now
+                period = 1000.0 / cfg.landing.reassert_per_s
+                self._land_next_ms += period
+                if self._land_next_ms <= now:
+                    self._land_next_ms = now + period
         tilt = 0
         if st != FlightState.estopped and not self._shutdown and now < self._tilt_until_ms:
             tilt = 2 if self._tilt_dir > 0 else (1 if self._tilt_dir < 0 else 0)

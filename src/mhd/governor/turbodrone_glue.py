@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 
 from .config import repo_root
@@ -32,6 +33,7 @@ ensure_turbodrone_on_path()
 
 from control.strategies import ControlStrategy  # noqa: E402  (turbodrone)
 from models.x69_lg_rc import X69LgRcModel  # noqa: E402  (turbodrone)
+from services.flight_controller import FlightController  # noqa: E402  (turbodrone)
 
 from .core import Governor  # noqa: E402
 
@@ -142,3 +144,43 @@ def install_governor(governor: Governor) -> GovernedX69LgRcModel:
     model = GovernedX69LgRcModel(governor)
     governor.start_background()
     return model
+
+
+class PacedFlightController(FlightController):
+    """Upstream FlightController with deadline pacing instead of a fixed sleep after each tick.
+
+    Upstream sleeps update_interval after the tick's work; on macOS time.sleep(0.040) really takes
+    about 46 ms, so the X69 loop ran at ~20.5 Hz with an RC inter-arrival p99 near 60 ms. Here each
+    tick sleeps until an absolute 40 ms deadline, so the average rate is the configured 25 Hz.
+    After a stall it resynchronizes instead of bursting. Packet building is unchanged upstream code.
+    """
+
+    def _control_loop(self):
+        period = self.update_interval
+        prev = time.monotonic()
+        deadline = prev
+        while self.running:
+            now = time.monotonic()
+            dt = now - prev
+            prev = now
+            try:
+                self.model.update(dt, {
+                    "throttle": self.throttle_dir,
+                    "yaw": self.yaw_dir,
+                    "pitch": self.pitch_dir,
+                    "roll": self.roll_dir,
+                })
+            except Exception:  # noqa: BLE001 - GovernorStrategy already catches; belt and braces
+                logger.exception("[rc] model.update raised")
+            try:
+                packet = self.protocol.build_control_packet(self.model)
+                self.protocol.send_control_packet(packet)
+            except Exception:  # noqa: BLE001 - same as upstream: socket may be recreated
+                pass
+            deadline += period
+            delay = deadline - time.monotonic()
+            if delay < -period:          # fell behind by more than a tick: resync, no burst
+                deadline = time.monotonic()
+                delay = 0.0
+            if delay > 0:
+                time.sleep(delay)
