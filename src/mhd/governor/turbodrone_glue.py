@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Callable, Optional
 
 from .config import repo_root
 
@@ -236,9 +237,105 @@ class GovernedX69LgRcAdapter(X69LgRcProtocolAdapter):
         self.keepalive_last_ok: float = time.monotonic()
         self._ka_last_log = -1e9
         self._rc_last_log = -1e9
+        # Debug RC pause (Session A link-loss test 3: control packets stop, the keepalive goes on).
+        # Set by the hub's POST /debug/rc_pause, which owns the policy (real mode: ON_GROUND, <= 15 s).
+        self._pause_until = 0.0                  # monotonic s; 0 = not paused
+        self._pause_keep: Optional[Callable[[], bool]] = None
+        self._pause_info: dict = {}
+        self.rc_pause_dropped_total = 0
         super().__init__(*args, **kwargs)        # starts the keepalive thread (our _keepalive_loop)
 
+    # ---------------------------------------------------------------------------------- RC pause
+    def pause_rc(self, seconds: float, keep_paused: Optional[Callable[[], bool]] = None,
+                 note: str = "") -> dict:
+        """Stop sending RC control packets for `seconds`; the D1 keepalive thread is untouched.
+
+        DEBUG ONLY (Session A link-loss test 3). `keep_paused` is called before every dropped packet
+        (RC thread, 25 Hz): when it returns False or raises, the pause ends at once and that very
+        packet goes out (the hub passes "flight state unchanged and not shutting down", so LAND,
+        E-STOP, TAKEOFF or a safety landing always reach the drone). The policy lives in the hub.
+        """
+        s = float(seconds)
+        if not (math.isfinite(s) and s > 0):
+            raise ValueError(f"pause seconds must be a finite number > 0, got {seconds!r}")
+        now = time.monotonic()
+        with self._stats_lock:
+            self._pause_keep = keep_paused
+            self._pause_info = {"seconds": s, "started": now, "dropped": 0, "ended": None,
+                                "end_reason": None, "note": note,
+                                "rc_sent_at_start": self.rc_sent, "keepalive_sent_at_start": self.keepalive_sent}
+            self._pause_until = now + s
+        return self.rc_pause_status()
+
+    def resume_rc(self, reason: str = "resumed") -> dict:
+        """End a pause now (idempotent)."""
+        with self._stats_lock:
+            self._end_pause_locked(reason, time.monotonic())
+        return self.rc_pause_status()
+
+    def _end_pause_locked(self, reason: str, now: float) -> bool:
+        if not self._pause_until:
+            return False
+        self._pause_until = 0.0
+        self._pause_keep = None
+        info = self._pause_info
+        info["ended"] = now
+        info["end_reason"] = reason
+        info["keepalive_sent_at_end"] = self.keepalive_sent
+        info["rc_sent_at_end"] = self.rc_sent
+        logger.warning("[rc] RC PAUSE ENDED (%s): %d control packets dropped in %.2f s; "
+                       "control packets flow again", reason, info.get("dropped", 0),
+                       now - info.get("started", now))
+        return True
+
+    def rc_pause_status(self) -> dict:
+        with self._stats_lock:
+            info = dict(self._pause_info)
+            active = bool(self._pause_until)
+            now = time.monotonic()
+            left = max(0.0, self._pause_until - now) if active else 0.0
+            out = {"active": active, "left_s": round(left, 3), "seconds": info.get("seconds"),
+                   "dropped": info.get("dropped", 0), "dropped_total": self.rc_pause_dropped_total,
+                   "end_reason": info.get("end_reason"), "note": info.get("note", ""),
+                   "rc_sent": self.rc_sent, "keepalive_sent": self.keepalive_sent}
+            if info.get("started") is not None:
+                end = info.get("ended") or now
+                out["elapsed_s"] = round(end - info["started"], 3)
+                ka_end = info.get("keepalive_sent_at_end", self.keepalive_sent)
+                rc_end = info.get("rc_sent_at_end", self.rc_sent)
+                out["keepalives_during"] = ka_end - info.get("keepalive_sent_at_start", 0)
+                out["rc_sent_during"] = rc_end - info.get("rc_sent_at_start", 0)
+            return out
+
+    def _drop_for_pause(self) -> bool:
+        """RC thread: True if this control packet must be dropped (pause active and still wanted)."""
+        until = self._pause_until
+        if not until:
+            return False
+        now = time.monotonic()
+        keep = self._pause_keep
+        reason = None
+        if now >= until:
+            reason = "timeout"
+        else:
+            try:
+                if keep is not None and not keep():
+                    reason = "state_changed"
+            except Exception:  # noqa: BLE001 - fail safe: a broken predicate ends the pause
+                reason = "predicate_error"
+        with self._stats_lock:
+            if reason is not None:
+                self._end_pause_locked(reason, now)
+                return False
+            if not self._pause_until:           # resumed meanwhile
+                return False
+            self._pause_info["dropped"] = self._pause_info.get("dropped", 0) + 1
+            self.rc_pause_dropped_total += 1
+        return True
+
     def send_control_packet(self, packet: bytes) -> None:
+        if self._pause_until and self._drop_for_pause():
+            return                                   # debug RC pause: drop it, keepalive continues
         try:
             self.sock.sendto(packet, (self.drone_ip, self.control_port))
         except OSError as exc:
