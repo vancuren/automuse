@@ -17,6 +17,7 @@ Endpoints, same as drone-backend:
     GET  /state              latest Telemetry
     GET  /capabilities       upstream shape for x69_lg
     GET  /chase              2D stand-in for the twin chase view (the real one is the twin's :8766/chase)
+    GET  /ui/                a production build of the UI, with --static-ui DIR (build it with --base /ui/)
 Test-only endpoints:
     GET  /mock/log           every message received (also appended to --log, one JSON object per line)
     POST /mock/reset         clear the log and reset the simulation
@@ -640,7 +641,7 @@ class Hub:
             await asyncio.sleep(1 / MJPEG_FPS)
 
 
-def build_app(sim: Sim, log: MessageLog) -> FastAPI:
+def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> FastAPI:
     hub = Hub(sim, log)
     tasks: list[asyncio.Task] = []
 
@@ -789,6 +790,10 @@ def build_app(sim: Sim, log: MessageLog) -> FastAPI:
     async def chase():
         return CHASE_HTML
 
+    if static_ui is not None:  # serve a production build (tests of the real bundle)
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/ui", StaticFiles(directory=str(static_ui), html=True), name="ui")
+
     # -- test controls --
     @app.get("/mock/log")
     async def mock_log(channel: Optional[str] = None, since_ms: float = 0.0):
@@ -908,11 +913,12 @@ def main() -> None:
     ap.add_argument("--mode", choices=["twin", "real"], default="twin", help="flight_mode reported in telemetry")
     ap.add_argument("--log", type=Path, default=None, help="JSONL message log (default logs/mock_backend_<port>.jsonl)")
     ap.add_argument("--pack-start-s", type=float, default=0.0, help="initial flight time on pack 1")
+    ap.add_argument("--static-ui", type=Path, default=None, help="serve this production build at /ui/")
     args = ap.parse_args()
     log_path = args.log or (REPO / "logs" / f"mock_backend_{args.port}.jsonl")
     sim = Sim(flight_mode=args.mode, scenario=args.scenario)
     sim.pack_time_s["1"] = args.pack_start_s
-    app = build_app(sim, MessageLog(log_path))
+    app = build_app(sim, MessageLog(log_path), static_ui=args.static_ui)
     print(f"mock backend on http://{args.host}:{args.port} scenario={args.scenario} mode={args.mode} log={log_path}",
           flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
