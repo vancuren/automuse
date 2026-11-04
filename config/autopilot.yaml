@@ -42,10 +42,13 @@ forward:
     max_box_w_frac: 0.6
     hover_s: 0.5
     back_off_pitch: 0.08
-  ref_width_frac:           # desired box width as a fraction of frame width, by mission distance
-    close: 0.22
-    medium: 0.14
-    far: 0.09
+  ref_width_frac:           # desired box width as a fraction of frame width, by mission distance.
+                            # Person ~0.45 m wide, HFOV 75 deg (f = 834 px): w/W = 0.45*834/(1280*d).
+                            # Full body in frame (box h < 0.8 H, feet inside the 2% edge margin at a
+                            # ~1.2 m hover) needs d >= ~2.9 m, so medium = 0.10 (~2.9 m).
+    close: 0.13             # ~2.25 m
+    medium: 0.10            # ~2.9 m
+    far: 0.075              # ~3.9 m
   category_scale:           # smaller subjects get proportionally smaller reference widths
     person: 1.0
     car: 0.8

@@ -268,9 +268,9 @@ class StandoffCfg:
 
 @dataclass(frozen=True)
 class RefWidthCfg:
-    close: float = 0.22
-    medium: float = 0.14
-    far: float = 0.09
+    close: float = 0.13
+    medium: float = 0.10
+    far: float = 0.075
 
 
 @dataclass(frozen=True)
