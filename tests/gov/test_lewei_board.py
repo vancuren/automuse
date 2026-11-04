@@ -278,3 +278,75 @@ def test_hub_installs_the_lewei_adapter_and_shows_its_telemetry(monkeypatch, no_
     finally:
         ad.stop()
     assert fake.sent == [] and no_udp == []
+
+
+# ------------------------------------------------- the whole real-mode backend, Lewei board (fake socket)
+
+@pytest.fixture
+def lewei_backend(monkeypatch, tmp_path, no_udp):  # noqa: F811
+    """The real lifespan (web_server + governor in REAL mode + PacedFlightController at 25 Hz) with the
+    Lewei env. The adapter's socket is a FakeUdp, so every datagram is recorded and none is sent; the
+    no-UDP guard would fail the test if anything created a real UDP socket."""
+    import importlib
+
+    from test_backend_api import FakeVideoAdapter
+    from mhd.governor import turbodrone_glue as glue
+    env = dict(LEWEI_ENV, LOG_LEVEL="WARNING", MHD_LOGS=str(tmp_path),
+               GOVERNOR_CONFIG=str(ROOT / "config" / "governor.yaml"),
+               AUTOPILOT_CONFIG=str(ROOT / "config" / "autopilot.yaml"))
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    for k in ("MHD_CAMERA_ONLY", "GOVERNOR_TWIN_HEADLESS", "X69_LG_LOCAL_CONTROL_PORT", "CONTROL_RATE"):
+        monkeypatch.delenv(k, raising=False)
+    fake = FakeUdp()
+    monkeypatch.setattr(glue, "_udp_socket", lambda: fake)
+    ws_mod = importlib.import_module("web_server")
+    monkeypatch.setattr(ws_mod, "TimedX69RtspAdapter", FakeVideoAdapter)
+    from fastapi.testclient import TestClient
+    with TestClient(ws_mod.app) as client:
+        yield client, ws_mod.HUB, fake
+
+
+def _until(pred, timeout=5.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_real_lewei_backend_end_to_end_bytes(lewei_backend, no_udp):  # noqa: F811
+    from mhd.governor.turbodrone_glue import LeweiRcAdapter
+    client, hub, fake = lewei_backend
+    assert hub.env.board == "lewei" and hub.gov.flight_mode == "real" and isinstance(hub.rc_adapter, LeweiRcAdapter)
+    assert _until(lambda: len(fake.sent) >= 25)                         # the 25 Hz RC loop is running
+    assert {a for _, a in fake.sent} == {DRONE}
+    assert all(len(p) == 20 and p[:2] == b"\x66\x14" and p[19] == 0x99 for p, _ in fake.sent)
+    assert all(p[2:6] == bytes([128] * 4) and p[6:8] == b"\x00\x00" for p, _ in fake.sent)   # disarmed: neutral
+    hub.rc_adapter.on_fc_packet(fc_packet(0x27, 0x00), DRONE)
+    st = client.get("/state").json()
+    assert st["flight_mode"] == "real" and st["armed"] is False and st["latency_ms"]["fc_battery_v"] == 3.9
+    assert not {"rc_send_errors", "keepalive_stale", "camera_only"} & set(st["safety_flags"])
+    hb = json.dumps({"type": "hb", "client": "ui"})
+    with client.websocket_connect("/ws") as ws:
+        ws.send_text(hb)
+        ws.send_text(json.dumps({"type": "cmd", "command": "takeoff"}))         # not armed: refused
+        time.sleep(0.2)
+        assert hub.gov.state.value == "ON_GROUND"
+        ws.send_text(json.dumps({"type": "cmd", "command": "arm", "arm_phrase": "ARM"}))
+        assert _until(lambda: hub.gov.armed)
+        n0 = len(fake.sent)
+        ws.send_text(hb)
+        ws.send_text(json.dumps({"type": "cmd", "command": "takeoff"}))
+        assert _until(lambda: any(p[6] & 0x01 for p, _ in fake.sent[n0:]))       # 0x01 reached the wire
+        assert hub.gov.state.value == "TAKING_OFF"
+        n1 = len(fake.sent)
+        ws.send_text(hb)
+        ws.send_text(json.dumps({"type": "cmd", "command": "land"}))
+        assert _until(lambda: any(p[6] & 0x80 for p, _ in fake.sent[n1:]))       # LAND 0x80 too
+    takeoffs = [p for p, _ in fake.sent if p[6] & 0x01]
+    assert len(takeoffs) == 1, "takeoff.packets is 1: exactly one packet carries 0x01"
+    assert not any(p[6] & 0x0E for p, _ in fake.sent), "no E-STOP, calibrate or flip bits were sent"
+    client.__exit__(None, None, None)                                    # shutdown: neutral + land, then stop
+    assert fake.closed and no_udp == []
