@@ -11,6 +11,7 @@ Branch `ws/gov`. Built overnight 2026-11-03/04. PLAN.md sections 2, 4.1, 4.4, 4.
 | `src/mhd/governor/core.py` | `Governor`. One `tick()` per RC packet: flight state machine, priorities, staleness checks, flight timer, wrong-way detector, slew limit, wire counts, flags. Inputs arrive from other threads through `heartbeat`, `submit_human`, `set_tilt`, `note_frame`, `submit_obs`, `set_mission` and `command`. |
 | `src/mhd/governor/wire.py` | Normalized to wire counts: per-axis sign, deadband compensation (autopilot only), caps in counts, symmetric rounding (127 counts each side). |
 | `src/mhd/governor/turbodrone_glue.py` | `GovernorStrategy` (turbodrone ControlStrategy: the choke point). `GovernedX69LgRcModel` (`set_strategy` refuses to replace the governor; speed tier pinned at 2; legacy `takeoff`/`land`/`emergency_stop` go through the governor; `flip`/`calibrate` refused). `PacedFlightController` (deadline-paced 25 Hz). |
+| `src/mhd/governor/sysid.py` | Session B step identification. Flies ± steps at chosen amplitudes through the governor (human priority, so LAND/E-STOP still win), measures an ArUco marker on `/ws/frames`, and fits K per count, firmware deadband and lag. |
 | `src/mhd/governor/flight_timer.py`, `tick_log.py`, `logq.py`, `stats.py`, `telemetry.py`, `bench.py` | Per-pack timer persisted off the RC thread; per-tick JSONL through a QueueHandler; non-blocking governor logging; sliding minimum; contract `Telemetry` builder; tick benchmark. |
 | `src/mhd/autopilot/core.py` | `autopilot_step(obs, state, params, now_ms, *, can_move, applied_yaw, applied_pitch) -> (sticks, new_state, events)`: a pure function with the IDLE, FIND, CONFIRM, FOLLOW, DOUBT, LOST, SEARCH, GIVE_UP lifecycle. |
 | `src/mhd/autopilot/sim.py` | In-process closed-loop sim: the real `Governor` flying a kinematic X69 after a walking subject, with delayed oracle observations. |
@@ -19,7 +20,7 @@ Branch `ws/gov`. Built overnight 2026-11-03/04. PLAN.md sections 2, 4.1, 4.4, 4.
 | `turbodrone/backend/plugins/follow/` | Deleted, and `ultralytics` removed from `requirements.txt`. `PLUGINS_ENABLED=true` is refused. |
 | `turbodrone/backend/models/` | Restored. The root `.gitignore` rule `models/` matched it at any depth, so the import commit left the package out and the backend could not start from a clean checkout. The rule is now `/models/`, and the 15 upstream files are added byte-identical. |
 | `scripts/run_backend.sh` | Starts the patched backend from the checkout it lives in. |
-| `tests/gov/` | 100 pytest tests (see below). |
+| `tests/gov/` | 104 pytest tests (see below). |
 
 ## Run it
 
@@ -38,18 +39,28 @@ Without `--mode` it refuses to start. The server binds 127.0.0.1 and never uses 
 Tests and tools:
 
 ```bash
-$MHD_PY -m pytest tests/gov -q -p no:logging            # 100 tests, about 92 s (RTSP and live tests ~35 s)
+$MHD_PY -m pytest tests/gov -q -p no:logging            # 104 tests, about 105 s (RTSP and live tests ~50 s)
 (cd turbodrone/backend && $MHD_PY -m unittest tests.test_x69_lg_protocol tests.test_x69_lg_rtsp_video_protocol tests.test_x69_lg_video_mode)
 $MHD_PY -m mhd.autopilot.sim                             # step + S1 at total delays 0.6 / 1.0 / 1.5 s
 $MHD_PY -m mhd.autopilot.sim --ff --k-scale 0.7 1.0 1.3  # feed-forward robustness to K error
 $MHD_PY -m mhd.governor.bench                            # per-tick wall and CPU time
 ```
 
+Session B system identification (drone AIRBORNE, UI open, ArUco DICT_4X4_50 marker in view; results in `$MHD_LOGS/sysid-*.json`):
+
+```bash
+$MHD_PY -m mhd.governor.sysid --backend http://127.0.0.1:8000 --axis yaw --amps 0.10 0.20 0.35 --marker-size 0.15
+$MHD_PY -m mhd.governor.sysid --backend http://127.0.0.1:8000 --axis pitch --amps 0.10 0.20 0.25 --hold 1.5
+```
+
+It refuses unless AIRBORNE, aborts the moment the drone isn't, and flies each amplitude + then −. Put the fitted K, deadband and lag into `config/autopilot.yaml` (`plant.*`) and `config/governor.yaml` (`wire.deadband_counts`).
+
+
 `-p no:logging` only hides pytest's captured-log dump on failures.
 
-## Test results (final run, 00:33 ET)
+## Test results (final run, 00:43 ET)
 
-- `tests/gov`: **100 passed, 0 failed.**
+- `tests/gov`: **104 passed, 0 failed.**
   - 40 governor rule tests (`test_governor_rules.py`).
   - 14 autopilot lifecycle and geometry tests.
   - 7 turbodrone glue tests.
@@ -59,12 +70,13 @@ $MHD_PY -m mhd.governor.bench                            # per-tick wall and CPU
   - 4 capture-clock tests.
   - 1 RTSP integration test (mediamtx with an ffmpeg HEVC stream).
   - 1 live end-to-end test (`run_backend.sh` with uvicorn, RTSP and a UDP drone stand-in).
+  - 4 sysid tests: schedule limits, ArUco bearing and range on a synthetic frame, fit recovering K / deadband / lag, and a live run through the real backend with an ArUco HEVC stream.
 - Upstream x69_lg unit tests: **15 passed.**
 - Repo-level `tests/test_contracts.py` and `tests/test_intent_spec.py`: **6 passed.**
 
 ## Measurements
 
-All measured 23:58–00:33 ET on the M5 Pro after the model downloads finished (23:40:51, so the network was idle). Five other workstreams were running alongside: Chrome/Playwright and node (twin/ui), Python processes, and the percep workstream's ffmpeg. Load average was 3.5–4.0. No GPU model was loaded by gov.
+All measured 23:58–00:43 ET on the M5 Pro after the model downloads finished (23:40:51, so the network was idle). Five other workstreams were running alongside: Chrome/Playwright and node (twin/ui), Python processes, and the percep workstream's ffmpeg. Load average was 3.5–4.0. No GPU model was loaded by gov.
 
 | What | Result |
 |---|---|
@@ -148,7 +160,9 @@ Closed loop (`mhd.autopilot.sim`): kinematic plant with yaw lag 0.15 s and forwa
     - A frame without pts in a stream that had them keeps the last estimate (`pts_hold`), so it can't look fresh.
     - Receive time is used only if the stream never carried pts.
 16. **PacedFlightController** replaces upstream's fixed `sleep(0.04)` after work, which gave 20.7 Hz with p99 63 ms. The upstream file is unchanged, and both loops are tested.
-17. **Logging.** Ticks go to JSONL through a QueueHandler. Governor warnings also go through a queue, because a stalled stderr pipe must never block the RC thread.
+17. **One HEVC decoder thread.** `OPENCV_FFMPEG_THREADS=1` is set by default in `apply_env_defaults()` and `run_backend.sh`. OpenCV otherwise frame-threads the decoder (16 threads here), which the twin workstream measured at about 0.7 s of extra latency. A pts-based capture estimate cannot see that constant delay, so it would silently add to θ.
+    - RTSP read timeout is 2 s; open timeout is 10 s, because opening needs a keyframe and the X69's keyframe interval is unknown. Override with `MHD_RTSP_READ_TIMEOUT_MS` / `MHD_RTSP_OPEN_TIMEOUT_MS`.
+18. **Logging.** Ticks go to JSONL through a QueueHandler. Governor warnings also go through a queue, because a stalled stderr pipe must never block the RC thread.
 
 ## Telemetry vocabulary (for the UI)
 
@@ -198,7 +212,9 @@ Closed loop (`mhd.autopilot.sim`): kinematic plant with yaw lag 0.15 s and forwa
 
 ## Known gaps and risks
 
-- **Not tested against the twin's wire-level emulator** (not available yet). Tested instead against a local UDP decoder, an in-process kinematic sim, and real mediamtx/ffmpeg RTSP.
+- **Not tested against the twin's full wire-level emulator.** Its renderer needs Chrome, which gov may not run. I did run the twin's own RC decoder (`ws/twin` `mhd/twin/protocol.py`, loaded read-only) on my governor's packets: takeoff, sticks at ±38/±64 counts, tilt and land all decode identically.
+  - Otherwise tested against a local UDP decoder, an in-process kinematic sim, and real mediamtx/ffmpeg RTSP.
+  - The twin's `count_to_unit` divides negative offsets by 128; the governor sends symmetric counts (±127 full scale). Only counts reach the drone, so this matters only for the twin's dynamics (0.8% on negative sticks).
 - **Feed-forward is off by default.** The in-process sim shows it is robust to ±30% K error and brings S1 at θ = 1.5 s to 0.104 rad, but PLAN requires a wire-level twin run first. Enable it with `yaw.feedforward.enabled: true`.
 - **P-only S1 RMS at θ = 1.5 s is 0.196 rad**, against a 0.15 target. The 0.3 rad/s "stays in frame" target fails with or without feed-forward.
 - **No RC-thread watchdog that sends packets itself.** If the RC thread stopped, telemetry shows `rc_tick_stale` and the log says so, but nothing else sends neutral or land. Session A step 6 ("stop RC packets while the keepalive continues") tells us what the drone does.

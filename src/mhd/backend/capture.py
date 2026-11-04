@@ -11,7 +11,8 @@ Order of preference, per frame:
      ("pts_hold"), so it can never make old video look fresh.
   4. receive time, only when the stream has never carried a usable pts.
 
-TimedX69RtspAdapter is the upstream X69 RTSP adapter plus: OpenCV open/read timeouts of 2 s, a
+TimedX69RtspAdapter is the upstream X69 RTSP adapter plus: OpenCV read timeout 2 s and open timeout
+10 s (MHD_RTSP_READ_TIMEOUT_MS / MHD_RTSP_OPEN_TIMEOUT_MS), a
 thin wrapper around cv2.VideoCapture.read() that records receive time, pts and the counter, and
 handle_payload() attaching capture_ms / receive_ms / render_id to each VideoFrame.
 """
@@ -117,8 +118,10 @@ class _TimedCapture:
 class TimedX69RtspAdapter(_Base):
     """Upstream X69 RTSP adapter with capture-time estimates and 2 s OpenCV timeouts."""
 
-    OPEN_TIMEOUT_MS = 2000
-    READ_TIMEOUT_MS = 2000
+    # Reads: 2 s, so a frozen stream fails fast. Open: 10 s, because opening includes FFmpeg's stream
+    # probing, which needs a keyframe; the X69's keyframe interval is unknown until Session A.
+    OPEN_TIMEOUT_MS = int(os.getenv("MHD_RTSP_OPEN_TIMEOUT_MS", "10000"))
+    READ_TIMEOUT_MS = int(os.getenv("MHD_RTSP_READ_TIMEOUT_MS", "2000"))
 
     def __init__(self, *args, flight_mode: str = "twin", **kwargs):
         super().__init__(*args, **kwargs)
