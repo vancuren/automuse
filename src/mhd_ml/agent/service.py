@@ -203,15 +203,26 @@ class AgentService:
                                                "voice commands and the safety listener are off."))
         if self.cfg.get("safety", {}).get("enabled", True):
             self._start_safety()
-        connected = await self.link.wait_connected(timeout=3.0)
-        await self.emit("status", "agent ready", data={
-            "asr": self.cfg.get("asr", "meta"), "intent": self.cfg.get("intent", "auto"),
-            "glimmer": self.router.glimmer.name if self.router.glimmer else None,
-            "spark": self.router.spark.name if self.router.spark else None,
-            "safety_listener": self.listener is not None, "backend_connected": connected,
-            "mic_rate": self.hub.sample_rate})
+        await self.link.wait_connected(timeout=3.0)
+        await self.emit("status", "agent ready", data=self.status())
+        self._spawn(self._status_heartbeat(), background=True)
         if self.start_mic:
-            self._spawn(self._mic_watchdog())
+            self._spawn(self._mic_watchdog(), background=True)
+
+    def status(self) -> dict:
+        return {"asr": self.cfg.get("asr", "meta"), "intent": self.cfg.get("intent", "auto"),
+                "glimmer": self.router.glimmer.name if self.router and self.router.glimmer else None,
+                "spark": self.router.spark.name if self.router and self.router.spark else None,
+                "safety_listener": bool(self._safety_thread and self._safety_thread.is_alive()),
+                "backend_connected": bool(self.link and self.link.connected),
+                "mic_rate": self.hub.sample_rate, "mic_silent": self.hub.suspect_no_permission}
+
+    async def _status_heartbeat(self, period_s: float = 5.0) -> None:
+        """Re-send status every few seconds so a UI that connects later (or reconnects) sees it, and
+        can tell when the agent or its safety listener has died."""
+        while not self.stopped.is_set():
+            await asyncio.sleep(period_s)
+            await self.emit("status", "agent alive", data=self.status())
 
     def _start_safety(self) -> None:
         try:
@@ -239,8 +250,8 @@ class AgentService:
                 await self.emit("error", "The microphone is delivering pure silence: grant Microphone "
                                          "permission to this terminal app (System Settings > Privacy).")
 
-    def _spawn(self, coro) -> asyncio.Task:
-        t = asyncio.create_task(coro)
+    def _spawn(self, coro, background: bool = False) -> asyncio.Task:
+        t = asyncio.create_task(coro, name=("bg-" if background else "") + getattr(coro, "__name__", "task"))
         self._tasks.add(t)
         t.add_done_callback(self._tasks.discard)
         return t
@@ -346,8 +357,11 @@ class AgentService:
         except Exception as e:
             err = f"{e.__class__.__name__}: {e}"[:200]
             log.warning("ASR failed: %s", err)
+        if (t is None or not t.text) and not isinstance(self.asr, LocalASR):
+            # Cloud ASR failed or heard nothing: try the same audio locally (works offline). If the
+            # stream failed early, the rest of the utterance is still queued: collect it first.
+            await self._drain(st)
         if (t is None or not t.text) and not isinstance(self.asr, LocalASR) and st.chunks:
-            # Cloud ASR failed or heard nothing: try the same audio locally (works offline).
             try:
                 audio = np.concatenate(st.chunks)
                 t2 = await asyncio.get_running_loop().run_in_executor(
@@ -412,8 +426,12 @@ class AgentService:
         await self.ptt_up()
 
     async def wait_idle(self, timeout: float = 20.0) -> None:
+        """Wait until no utterance is being recorded or processed."""
         t0 = time.monotonic()
-        while (self._tasks or self._ptt is not None) and time.monotonic() - t0 < timeout:
+        while time.monotonic() - t0 < timeout:
+            busy = [t for t in self._tasks if not t.get_name().startswith("bg-")]
+            if not busy and self._ptt is None:
+                return
             await asyncio.sleep(0.05)
 
     async def stop(self) -> None:

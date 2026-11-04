@@ -1,0 +1,178 @@
+"""Safety listener on `say` audio: detection, latency after speech end, and no false triggers."""
+import time
+
+import numpy as np
+import pytest
+
+from mhd_ml.agent.audio import load_wav, speech_bounds
+from mhd_ml.agent.safety_listener import CommandSender, SafetyConfig, SafetyListener, SampleRing, latency_after_speech_end
+from mhd_ml.agent.words import edit_distance, match_safety, safety_action_for_word
+
+TARGET_S = 1.5        # PLAN 4.6: "land" detected within 1.5 s of speech end
+
+
+# ---- word matching (no audio) ---------------------------------------------------------------------
+@pytest.mark.parametrize("text,action", [
+    ("land", "land"), ("okay drone please land now", "land"), ("LAND!", "land"), ("lan", "land"),
+    ("abort abort", "land"), ("emergency", "land"), ("stop", "hover"), ("hover there", "hover"),
+    ("hold your position", "hover"), ("freeze", "hover"), ("stopp", "hover"), ("stop nowland", "land"),
+    ("landd", "land"), ("hovr right there", "hover"), ("stop, then land", "land"), ("aboard aboard", "land"),
+])
+def test_match_positive(text, action):
+    h = match_safety(text)
+    assert h is not None and h.action == action
+    assert h.command == ("land" if action == "land" else "pause")
+
+
+@pytest.mark.parametrize("text", [
+    "the island looks beautiful", "take a picture of the landscape", "hand me the remote", "a gold necklace",
+    "the coffee shop", "the top of the hill", "jumped over the fence", "cover the camera lens",
+    "please cover the camera lands", "follow the person in the blue shirt", "lane", "stops here", "story time",
+    "", "holland", "portland",
+])
+def test_match_negative(text):
+    assert match_safety(text) is None
+
+
+def test_partial_ignores_last_word_and_truncated_first_word():
+    assert match_safety("take a picture of the land", partial=True) is None       # may become "landscape"
+    assert match_safety("please land now", partial=True).action == "land"
+    assert match_safety("land the drone", partial=True, truncated_start=True) is None   # may be "is-land"
+    assert match_safety("so land the drone", partial=True, truncated_start=True).action == "land"
+
+
+def test_edit_distance():
+    assert edit_distance("land", "lend") == 1 and edit_distance("stop", "shop") == 1
+    assert edit_distance("abort", "aboard") == 2 and edit_distance("hover", "hovr") == 1
+
+
+def test_fuzzy_off_is_exact_only():
+    assert safety_action_for_word("stalk", fuzzy=False) is None
+    assert safety_action_for_word("stalk", fuzzy=True)[0] == "hover"
+    assert safety_action_for_word("land", fuzzy=False)[0] == "land"
+
+
+def test_sample_ring():
+    r = SampleRing(10)
+    r.append(np.arange(7, dtype=np.float32))
+    r.append(np.arange(7, 15, dtype=np.float32))
+    assert list(r.get(0, 15)) == list(range(5, 15))
+    r.append(np.arange(15, 40, dtype=np.float32))
+    assert list(r.get(30, 40)) == list(range(30, 40))
+
+
+# ---- on audio files ---------------------------------------------------------------------------------
+def run_file(recognizer, path):
+    lst = SafetyListener(recognizer=recognizer)
+    x, sr = load_wav(path, target_sr=16000)
+    _, end = speech_bounds(x, sr)
+    hits = lst.process_array(x)
+    return hits, end
+
+
+def test_safety_words_detected_fast(audio_items, recognizer):
+    results = []
+    for it in audio_items["safety"]:
+        hits, end = run_file(recognizer, it["abspath"])
+        match = [h for h in hits if h.action == it["expected"]]
+        assert match, f"{it['id']}: expected {it['expected']}, got {[(h.word, h.transcript) for h in hits]}"
+        lat = latency_after_speech_end(match[0], end)
+        results.append((it["id"], lat))
+        assert lat <= TARGET_S, f"{it['id']}: {lat:.2f} s after speech end"
+    assert len(results) >= 15
+
+
+def test_land_mid_sentence_latency(audio_items, recognizer):
+    it = next(i for i in audio_items["safety"] if i["id"] == "land_mid" and i["sample_rate"] == 16000)
+    hits, end = run_file(recognizer, it["abspath"])
+    assert hits[0].command == "land"
+    assert latency_after_speech_end(hits[0], end) <= TARGET_S
+
+
+def test_24k_input_is_resampled(audio_items, recognizer):
+    it = next(i for i in audio_items["safety"] if i["sample_rate"] == 24000)
+    lst = SafetyListener(recognizer=recognizer)
+    x, sr = load_wav(it["abspath"])            # feed 24 kHz chunks directly
+    assert sr == 24000
+    hits = []
+    for i in range(0, len(x), 1920):
+        hits += lst.feed(x[i:i + 1920], sample_rate=24000)
+    hits += lst.flush()
+    assert any(h.action == "land" for h in hits)
+
+
+def test_no_false_triggers_on_neutral_sentences(audio_items, recognizer):
+    neutral = audio_items["neutral"]
+    assert len(neutral) >= 20
+    false = []
+    for it in neutral:
+        hits, _ = run_file(recognizer, it["abspath"])
+        if hits:
+            false.append((it["id"], [(h.word, h.transcript) for h in hits]))
+    assert not false, false
+
+
+def test_silence_and_noise_do_not_trigger(recognizer):
+    lst = SafetyListener(recognizer=recognizer)
+    rng = np.random.default_rng(1)
+    x = np.concatenate([np.zeros(16000 * 2, np.float32), rng.normal(0, 0.01, 16000 * 3).astype(np.float32)])
+    assert lst.process_array(x) == []
+
+
+def test_one_command_per_utterance(audio_items, recognizer):
+    it = next(i for i in audio_items["safety"] if i["id"] == "abort")        # "abort, abort"
+    hits, _ = run_file(recognizer, it["abspath"])
+    assert len([h for h in hits if h.action == "land"]) == 1
+
+
+def test_stop_then_land_escalates(audio_items, recognizer):
+    it = next(i for i in audio_items["safety"] if i["id"] == "stop_then_land")
+    hits, _ = run_file(recognizer, it["abspath"])
+    assert hits[0].action == "hover" and hits[-1].action == "land"
+
+
+def test_on_hit_callback_and_config(audio_items, recognizer):
+    seen = []
+    cfg = SafetyConfig.from_dict({"min_silence_s": 0.3, "debounce_s": 2.0, "unknown_key": 1})
+    lst = SafetyListener(cfg, recognizer=recognizer, on_hit=seen.append)
+    it = next(i for i in audio_items["safety"] if i["id"] == "stop_single")
+    lst.process_file(it["abspath"])
+    assert seen and seen[0].command == "pause" and cfg.debounce_s == 2.0
+
+
+# ---- delivery to the backend --------------------------------------------------------------------------
+def test_command_sender_http(audio_items, recognizer):
+    from mhd_ml.agent.fakes import FakeBackend
+
+    with FakeBackend(port=8404) as fb:
+        results = []
+        sender = CommandSender(fb.http_base, on_result=lambda h, r: results.append(r))
+        lst = SafetyListener(recognizer=recognizer, on_hit=sender.submit)
+        it = next(i for i in audio_items["safety"] if i["id"] == "land_mid" and i["sample_rate"] == 16000)
+        lst.process_file(it["abspath"])
+        t0 = time.monotonic()
+        while not results and time.monotonic() - t0 < 3:
+            time.sleep(0.02)
+        sender.close()
+        assert results and results[0]["ok"] and results[0]["via"] == "http"
+        assert results[0]["reply"]["flight_state"] == "LANDING"
+        assert fb.commands[0]["command"] == "land" and fb.commands[0]["type"] == "cmd"
+        assert results[0]["ms"] < 500
+
+
+def test_command_sender_falls_back_to_ws_callable():
+    from mhd_ml.agent.words import SafetyHit
+
+    sent = []
+    sender = CommandSender("http://127.0.0.1:8409", ws_send=lambda cmd: sent.append(cmd) or True,
+                           timeout_s=0.3)
+    results = []
+    sender.on_result = lambda h, r: results.append(r)
+    sender.submit(SafetyHit(action="hover", command="pause", word="stop", canonical="stop", fuzzy=False,
+                            transcript="stop"))
+    t0 = time.monotonic()
+    while not results and time.monotonic() - t0 < 3:
+        time.sleep(0.02)
+    sender.close()
+    assert results[0]["ok"] and results[0]["via"] == "ws"
+    assert sent[0].command == "pause"

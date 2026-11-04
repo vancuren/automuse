@@ -15,10 +15,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import socketserver
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
+
+
+class _FastBindServer(ThreadingHTTPServer):
+    """HTTPServer.server_bind() calls socket.getfqdn(), a reverse DNS lookup that took 35 s on this Mac
+    tonight. Loopback needs no name."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 class MockLLM:
@@ -133,7 +143,7 @@ class MockLLM:
                 self.end_headers()
                 self.wfile.write(data)
 
-        self._server = ThreadingHTTPServer((self.host, self.port), Handler)
+        self._server = _FastBindServer((self.host, self.port), Handler)
         self._server.daemon_threads = True
         self._thread = threading.Thread(target=self._server.serve_forever, name="mock-llm", daemon=True)
         self._thread.start()
