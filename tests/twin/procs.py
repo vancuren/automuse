@@ -120,7 +120,9 @@ def start_backend(rc_port: int = 23520, port: int = BACKEND_PORT) -> Proc:
     wait_ports_free([port])
     cmd = ["bash", str(TREE / "scripts" / "run_upstream_backend_twin.sh"), "--port", str(port),
            "--rc-port", str(rc_port), "--rtsp-port", str(RTSP_PORT)]
-    p = Proc("upstream-backend", cmd)
+    # In the integrated tree this is the governed fork of the backend. Twin-only headless mode lets
+    # these wire tests run without a UI heartbeat; the governor refuses the flag in real mode.
+    p = Proc("backend", cmd, env={"GOVERNOR_TWIN_HEADLESS": "1"})
     wait_http(f"http://127.0.0.1:{port}/capabilities", timeout=30, proc=p)
     return p
 

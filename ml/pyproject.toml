@@ -23,6 +23,7 @@ dependencies = [
   "pyyaml",
   "pytest>=8",
   "pillow",
+  "matplotlib",
 ]
 
 [tool.uv]
