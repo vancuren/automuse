@@ -447,7 +447,7 @@ default, for the twin and the drone.
 | Ctrl-C to the first land packet | 3 ms; 29 land packets over 1.1 s | 6 |
 
 The real drone's camera latency is measured in Session A with the screen counter page
-(`mhd.twin.screen_counter`); PLAN.md reports about half a second from other users.
+(`mhd.twin.screen_counter`); PLAN.md cites a reported lag of about half a second.
 
 ## 6. Safety governor: tests and review
 
