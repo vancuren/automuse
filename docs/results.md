@@ -51,7 +51,7 @@ What the first two runs showed (commit `6fb3ba9`): the pitch wrong-way check lat
 correctly flying drone, because a walker's box width swings with its gait and a receding walker
 shrinks the box while the drone, still under its cap, falls behind. The check now compares median
 widths over a longer window, must persist 0.5 s, and fires only near the forward cap. A reversed
-pitch sign still trips it (about 4.1 s, unit test). The forward/back loop low-passes the box width
+pitch sign still trips it (after about 4.1 s). The forward/back loop low-passes the box width
 (0.6 s), and one doubtful frame no longer stops the drone (two in a row do).
 
 ### 1b. Feed-forward robustness (S1, oracle)
@@ -92,7 +92,7 @@ The twin's Chrome renderer shared the GPU.
 | | S1 | S2 | S3 |
 |---|---|---|---|
 | Run (ET) | 02:58 `e2e-20261104-025845-s1-sam_mlx` | 03:00 `e2e-20261104-030039-s2-sam_mlx` | 03:02 `e2e-20261104-030221-s3-sam_mlx` |
-| Scene | one walker in a blue shirt, 0.3 m/s, back and forth | blue and red shirts walking opposite ways; the red walker passes between the drone and the subject | green RC car lapping a private track at 0.3 m/s, a walker in yellow, a parked red car |
+| Scene | one walker in a blue shirt looping across a backyard lawn at 0.3 m/s | blue and red shirts walking opposite ways; the red walker passes between the drone and the subject | green RC car lapping a private track at 0.3 m/s, a walker in yellow, a parked red car |
 | Subject phrase | "person in blue shirt" | "person in blue shirt" | "green car" |
 | Takeoff to AIRBORNE (the governor's 4 s takeoff hold) | 4.06 s | 4.07 s | 4.06 s |
 | Mission to FOLLOW | 1.57 s | 2.51 s | 1.55 s |
@@ -114,8 +114,8 @@ The twin's Chrome renderer shared the GPU.
 
 **S2, the crossing.** The 49 frames on the red walker came in three episodes about 21 s apart,
 which is how often the two walkers cross (each walks 6 m at 0.3 m/s and pauses 1 s): 11 frames
-(0.4 s) at 21.7 s, five flickers of 1-4 frames at 41-43 s, and 30 frames (1.2 s) at 63-64 s
-(`rows.csv`, column `identity`). The 14 identity switches are those seven episodes counted in and
+(0.4 s) at 21.7 s, five flickers of 1-4 frames at 41-43 s, and 30 frames (1.2 s) at 63-64 s, in
+seconds from the start of the scored log (`rows.csv`, columns `t_s` and `identity`). The 14 identity switches are those seven episodes counted in and
 out. Perception kept one track until the last episode, then started a new track, which went back
 through CONFIRM.
 
@@ -155,7 +155,7 @@ found nothing.
 | **VitTrack** (opencv_zoo 2023sep ONNX) | **2.6 / 2.7 ms** | 2.8 / 2.9 ms | 0.85 |
 | KCF | 26.4 / 27.1 ms | 28.8 / 30.9 ms | 0.92 |
 | CSRT | 13.8 / 14.7 ms | 17.2 / 20.5 ms | 0.90 |
-| SAM 3.1 MLX multiplex tracker (1008) | 980 / 1,533 ms per step | out of memory next to Glimmer training | 0.96 |
+| SAM 3.1 MLX multiplex tracker (1008) | 980 / 1,533 ms per step | not measured (out of GPU memory next to Glimmer training) | 0.96 |
 
 Gate: a tracker step of 0.20 s or less. VitTrack goes in the loop; the SAM 3.1 MLX tracker is a
 no-go (5x too slow) and stays available for offline replays.
@@ -240,14 +240,16 @@ Source: [docs/ws/train.md](ws/train.md), [docs/eval/summary.md](eval/summary.md)
 
 **Data** (`training/generate.py`): 2,200 train, 150 valid and 300 test examples from 77 template
 families, split by family (55 train, 11 valid, 11 test), so the test set is unseen phrasings. Labels
-come from the template slots, never from a model. ASR-style noise is added, and Muse Spark 1.3
-reworded 458 seed sentences (wording only; a filter drops any that change the meaning). The gold
-set is 80 hand-written, hand-labeled commands, never trained on. The spoken gold set is the same 80
-spoken by `say` (6 English accents) and transcribed by Omnilingual ASR.
+come from the template slots, never from a model. ASR-style noise is added, and 458 paraphrases of
+seed sentences by Muse Spark 1.3 were kept (wording only; a filter drops any that add or lose a
+color, garment, vehicle, animal, name or distance). The gold set is 80 hand-written,
+hand-labeled commands, never trained on. The spoken gold set is the same 80 spoken by `say`
+(6 English accents) and transcribed by Omnilingual ASR.
 
-**Training:** Fireworks returned "dataset uploads are temporarily disabled, please contact
-Fireworks AI to get access" for every dataset and model upload (rechecked at 00:27, 01:00, 01:37,
-02:00 ET), so no Fireworks SFT job could start. The LoRA was trained on the Mac instead: MLX QLoRA
+**Training:** Fireworks refused every dataset upload ("dataset uploads are temporarily disabled,
+please contact Fireworks AI to get access"; rechecked at 00:27, 01:00, 01:37 and 02:00 ET) and every
+model upload ("model creation, uploads and preparation are temporarily disabled"), so no Fireworks
+SFT job could start. The LoRA was trained on the Mac instead: MLX QLoRA
 on `Muse-Glimmer-30B-4bit`, last 16 layers, rank 16, scale 2.0, dropout 0.05, learning rate 1e-4
 with cosine decay to 1e-5, batch 1 with 4-step accumulation. 2,600 iterations in 4,595 s (76.6
 minutes), MLX peak memory 17.68 GB, validation loss 1.426 at the start and 0.001 at the end.
