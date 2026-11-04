@@ -27,8 +27,8 @@ the demo (25%), so every Meta model is named on screen, and new work is captione
 |---|---|---|---|
 | T1 | Twin S1: dashboard, takeoff, held Space, "Drone, follow the person in the blue shirt.", transcript, Glimmer mission card, FIND, CONFIRM, FOLLOW with the SAM mask, spoken "land", landing; audio track of the commands and the MMS-TTS replies | `media/demo/demo-s1-<stamp>-ui.mp4` (1920x1080) | takes at 03:24 and 03:36 (`demo-s1-20261104-033642-ui.mp4` is the one the README stills come from), from `scripts/demo_twin.py` |
 | T2 | Twin S1 chase view of the same take | `media/demo/demo-s1-<stamp>-chase.mp4` (1280x720) | same two takes |
-| T3 | Twin S2: the red-shirt walker crosses in front | `media/demo/demo-s2-<stamp>-ui.mp4`, `-chase.mp4` | takes at 03:28 and 03:39 |
-| T4 | Twin S3: "Drone, follow the green car." | `media/demo/demo-s3-<stamp>-ui.mp4`, `-chase.mp4` | take at 03:42 |
+| T3 | Twin S2: the red-shirt walker crosses in front | `media/demo/demo-s2-<stamp>-ui.mp4`, `-chase.mp4` | use the 03:28 take (`demo-s2-20261104-032802-*`, recommended by the demo workstream); the 03:39 take shows a 1.6 s flip onto the red walker |
+| T4 | Twin S3: "Drone, follow the green car." | `media/demo/demo-s3-<stamp>-ui.mp4`, `-chase.mp4` | take at 03:42 (`demo-s3-20261104-034231-*`) |
 | S1 | Stills for titles and the end card | `docs/img/demo_*.png` (S1 dashboard, voice mission, chase, landing; S2 crossing; S3 voice mission) | committed on ws2/demo |
 | C1 | Intent evaluation chart | [docs/eval/intent_eval.png](eval/intent_eval.png) | ready |
 | C2 | SAM 3.1 on twin frames (white = truth, green = SAM) | [docs/img/percep/g2_examples.jpg](img/percep/g2_examples.jpg) | ready |
@@ -77,9 +77,15 @@ honestly.
   and Glimmer running, UI open), screen-record the dashboard while saying "Follow John." The voice
   panel and mission card show the refusal; the reply comes from `mhd.intent_spec.build_reply`, so it
   is exactly "I can't follow someone by identity. Tell me what they're wearing instead."
+- **Cut each S1 take at the touchdown.** About 3.7 s after LANDING starts, every full S1 take has the
+  agent say "I lost the subject. Looking around." and the autopilot badge flickers between FIND and
+  CONFIRM on the ground (docs/ws2/demo.md, Findings 2 and 3). Cut at the touchdown or mute that line.
+- **Exact beat times** (takeoff, push-to-talk, transcript, mission card, FOLLOW, the crossings,
+  "land", touchdown) for each recommended take are in docs/ws2/demo.md, "For the video edit". The UI
+  and chase videos of a take start within about 0.1 s of each other.
 - **Which run the numbers come from.** The A5 captions quote the 60 s scripted runs
   (`scripts/e2e_twin.py`, results.md 1c), while the footage comes from the shorter demo takes
-  (results.md 1d; the S2 demo take at 03:39 had 54 of 916 follow frames on the red walker). Add
+  (results.md 1d; the recommended S2 take at 03:28 had 18 of 910 follow frames on the red walker). Add
   "60 s scripted run" under the S1/S2 numbers, or quote the take you show.
 - **Model badge.** The mission card shows which model answered (`glimmer-30b+lora`,
   `muse-spark-1.3` or `keyword`) and its latency. Freeze-frame it for A6.
