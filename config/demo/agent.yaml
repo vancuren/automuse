@@ -1,0 +1,79 @@
+# DEMO ONLY (scripts/demo_twin.py): the agent with the fine-tuned Glimmer served locally on this Mac.
+# Copied from config/agent.yaml (2026-11-04 03:15 ET). Differences, and why:
+#   intent: glimmer         only the LoRA answers (keyword grammar as the fallback at the deadline), so the
+#                           mission card shows glimmer-30b+lora; no Spark race, no Spark spend.
+#   glimmer.*               local mlx_lm.server from scripts/serve_glimmer.sh (127.0.0.1:8080, no key).
+#   router windows          the local LoRA answers in ~3.6 s p50 / 4.0 s p95 (docs/ws/train.md), longer
+#                           than the 2.5 s cloud window; 9 s window, 10 s keyword deadline.
+#   warm_session: false     one Voice Transcribe session per utterance: only spoken audio is billed.
+#   mic.preroll_s: 0.5      the demo feeds recorded audio a few hundred ms after push-to-talk goes down.
+# Flights use config/agent.yaml. Flags still override everything here.
+backend: ws://127.0.0.1:8000
+asr: meta              # meta = Muse Voice Transcribe (cloud) | local = Omnilingual CTC-300M (edge mode)
+intent: glimmer        # demo: the fine-tuned Glimmer only (keyword grammar fallback)
+
+mic:
+  sample_rate: 24000   # 24000, or 16000 for a Bluetooth headset
+  device: null         # sounddevice device name or index; null = system default input
+  preroll_s: 0.5       # audio kept from just before push-to-talk goes down
+  max_ptt_s: 15        # a push-to-talk held longer than this (lost ptt_up) ends automatically
+
+voice_transcribe:
+  url: wss://api.meta.ai/v1/asr/realtime
+  file_url: https://api.meta.ai/v1/asr/transcribe
+  model: muse-voice-transcribe-1.0
+  endpoint: realtime   # realtime | file
+  warm_session: false  # demo: a session per utterance (opened at push-to-talk down)
+  mode: PUSH_TO_TALK
+  language_bias: [English]
+  keywords: null       # null = the built-in drone vocabulary (asr_meta.DEFAULT_KEYWORDS)
+  final_timeout_s: 6.0
+  fallback_after_s: 2.0  # no final this long after release (network hanging): transcribe locally
+
+glimmer:
+  # Fireworks (OpenAI-compatible). Leave model empty until the train workstream has a deployment;
+  # with no model the router runs Spark + keyword only. Model strings (docs/ws/train.md):
+  #   LoRA: accounts/<acct>/models/glimmer-intent-v1#accounts/<acct>/deployments/glimmer-intent
+  #   base: accounts/fireworks/models/muse-glimmer-30b#accounts/<acct>/deployments/glimmer-intent
+  # Local edge mode (scripts/serve_glimmer.sh): base_url http://127.0.0.1:8080/v1, model default_model,
+  # api_key_env null (set automatically for a loopback URL), label glimmer-30b+lora.
+  base_url: http://127.0.0.1:8080/v1   # demo: scripts/serve_glimmer.sh (MLX 4-bit + LoRA)
+  model: default_model                 # mlx_lm.server's name for the model it was started with
+  label: glimmer-30b+lora
+  api_key_env: null                    # loopback server, no key
+  response_format: none          # none (as trained and evaluated) | json_object | json_schema
+  max_tokens: 300                # the LoRA stops after ~47-60 tokens
+  timeout_s: 9.5
+
+spark:
+  enabled: false                 # demo: not raced (intent: glimmer ignores it anyway)
+  base_url: https://api.meta.ai/v1
+  model: muse-spark-1.3
+  reasoning_effort: minimal      # cannot be "none" (HTTP 400); minimal is the fastest
+  timeout_s: 8.0
+
+router:
+  glimmer_window_s: 9.0          # demo: the local LoRA takes ~3.6 s (cloud window is 2.5 s)
+  total_timeout_s: 5.0           # after this the keyword grammar answers (Spark had a 6.5 s outlier;
+                                 # 5 s keeps release-to-reply under the 6 s p95 target)
+  edge_total_timeout_s: 10.0     # used when Glimmer is local; after this the keyword grammar answers
+  safety_fast_path: true         # "stop" / "land" in a push-to-talk command never waits for a model
+
+safety:
+  enabled: true
+  vad_threshold: 0.5   # 0.3-0.4 detected no more words in prop noise and added up to 0.4 s latency
+  min_silence_s: 0.25
+  min_speech_s: 0.10
+  max_speech_s: 8.0
+  partial_interval_s: 0.4
+  partial_window_s: 3.0
+  debounce_s: 1.0
+  fuzzy: true
+  ignore_own_voice: true   # skip a safety word that is part of the reply the speaker just played
+
+tts:
+  engine: mms          # mms (MMS-TTS) | say | none
+  voice: Samantha      # voice for the `say` fallback
+  ack_after_s: 1.2     # if the intent takes longer than this, say ack_text first (null = never)
+  ack_text: Okay.
+  speak_announcements: true   # say autopilot announcements relayed by the backend ("I lost the subject...")

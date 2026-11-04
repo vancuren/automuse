@@ -235,9 +235,17 @@ class Twin:
         self.event_log.close()
 
     async def _mediamtx_watchdog(self) -> None:
-        """Restart our mediamtx if it dies (ffmpeg reconnects by itself once it is back)."""
+        """Restart our mediamtx if it dies (ffmpeg reconnects by itself once it is back).
+
+        Not after a clean exit (code 0): mediamtx exits 0 only when it is asked to stop, which is a
+        shutdown (Ctrl-C or SIGTERM reaches the whole process group before uvicorn calls stop()).
+        Restarting it then left a copy that outlived the twin, orphaned, holding the RTSP port."""
         while True:
             await asyncio.sleep(1.0)
+            if self.mediamtx is not None and self.mediamtx.poll() == 0:
+                log.info("mediamtx stopped cleanly (shutdown); not restarting it")
+                self.mediamtx = None
+                continue
             if self.mediamtx is not None and self.mediamtx.poll() is not None:
                 log.warning("mediamtx exited with %s; restarting", self.mediamtx.returncode)
                 self.mediamtx_restarts = getattr(self, "mediamtx_restarts", 0) + 1
