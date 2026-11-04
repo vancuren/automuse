@@ -126,26 +126,28 @@ deliberately slow back-off, so the box grew while the drone backed up (`wrong_wa
 default; the 1 m backward-travel budget and the standoff rule bound that case, and the forward half
 (the blind runaway) stays on.
 
-### 1d. The whole chain with voice (demo takes, S1)
+### 1d. The whole chain with voice (demo takes)
 
 The demo workstream's `scripts/demo_twin.py` runs the same stack plus the voice agent, the Glimmer
-server and the operator UI (production build, real UI heartbeat, so not headless). The operator's
-command is a `say` recording fed into the agent's microphone input. Source:
-`logs/demo-<stamp>-s1/demo_result.json` in the ws2/demo worktree. The README stills come from the
-03:36 take.
+server (our LoRA, answering alone: `intent: glimmer`) and the operator UI (production build, real UI
+heartbeat, so not headless). The operator's lines are `say` recordings fed into the agent's
+microphone input: the push-to-talk command, then "Okay drone, please land now." on the open mic.
+Source: `logs/demo-<stamp>-<take>/demo_result.json` in the ws2/demo worktree, takes recorded by
+03:45 ET. The follow window is the 36.6 s of following that the demo films.
 
-| | Take 03:24 (`demo-20261104-032416-s1`) | Take 03:36 (`demo-20261104-033642-s1`, final) |
-|---|---|---|
-| Spoken: "Drone, follow the person in the blue shirt." | Muse Voice Transcribe final in 177.5 ms ASR time | same transcript, 184.1 ms |
-| Mission from `glimmer-30b+lora` (our LoRA on the Mac) | 4,029.7 ms: follow, "person in blue shirt", person, blue, medium | 4,038.5 ms, the same mission |
-| Button release to the mission card in the UI | 4.3 s | 4.3 s |
-| Mission card to autopilot FOLLOW | 0.53 s | 0.53 s |
-| Follow window (36.6 s) | 915 frames: subject in frame 100%, bearing RMS 0.084 rad (max 0.132), locked 100%, 0 frames on another actor | 916 frames: subject in frame 100%, bearing RMS 0.082 rad (max 0.118), locked 98.9%, 0 frames on another actor |
-| Whole scored run | 56.4 s: bearing RMS 0.125 rad, lock rate 0.953, 0 identity switches | 56.9 s: bearing RMS 0.124 rad, lock rate 0.899, 0 identity switches |
-| Spoken: "Okay drone, please land now." | the local listener heard "oky drone please land now" (decoded in 270.1 ms); LANDING via voice | the same (260.7 ms); LANDING via voice |
+| | S1, 03:24 | S1, 03:36 (README stills) | S2, 03:39 | S3, 03:42 |
+|---|---|---|---|---|
+| Push-to-talk command | "Drone, follow the person in the blue shirt." | same | same | "Drone, follow the green car." |
+| Muse Voice Transcribe ASR time | 177.5 ms | 184.1 ms | 159.5 ms | 196.7 ms |
+| Mission from `glimmer-30b+lora` | 4,029.7 ms: follow, "person in blue shirt", person, blue | 4,038.5 ms, same mission | 3,951.6 ms, same mission | 3,794.9 ms: follow, "green car", car, green |
+| Button release to the mission card in the UI | 4.3 s | 4.3 s | 4.3 s | 4.3 s |
+| Follow window: subject in frame | 100% of 915 frames | 100% of 916 | 94.1% of 916 | 100% of 916 |
+| Follow window: bearing RMS (max) | 0.084 rad (0.132) | 0.082 rad (0.118) | 0.094 rad (0.288) | 0.070 rad (0.125) |
+| Follow window: locked / frames on another actor | 100% / 0 | 98.9% / 0 | 96.2% / 54 (the red walker) | 100% / 0 |
+| Spoken land: heard as, decode time | "oky drone please land now", 270.1 ms | same, 260.7 ms | same, 260.3 ms | same, 248.0 ms |
+| Landing | via voice | via voice | via voice | via voice |
 
-The S2 takes and the final numbers for every take are the demo workstream's (docs/ws2/demo.md once
-merged).
+Final numbers for every take are the demo workstream's (docs/ws2/demo.md once merged).
 
 ## 2. Perception gates (G0, G1, G2)
 
