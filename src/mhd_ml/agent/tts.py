@@ -93,6 +93,7 @@ class Speaker:
         self._say_proc: Optional[subprocess.Popen] = None
         self.mms_failed = False
         self._busy = False
+        self._gen = 0                 # bumped by every interrupting speak()
         self._audible: list[tuple[float, float, str]] = []   # (start, end, text) of lines actually played
         self.history: list[dict] = []          # {text, engine, queued_ms, started_ms, synth_ms}
         self.warmup_ms: Optional[float] = None
@@ -111,8 +112,9 @@ class Speaker:
         if self.engine == "none" or not text:
             return
         if interrupt:
+            self._gen += 1            # lines queued before this one are now stale
             self._interrupt()
-        self._q.put((text, now_ms()))
+        self._q.put((text, now_ms(), self._gen))
 
     def audible_words(self, now: Optional[float] = None, tail_s: float = 1.5) -> set[str]:
         """Words of every line that was playing at some point in the last `tail_s` seconds (monotonic
@@ -142,7 +144,7 @@ class Speaker:
         self._stop.set()
         if interrupt:
             self._interrupt()
-        self._q.put(("", 0.0))
+        self._q.put(("", 0.0, self._gen))
         if self._thread:
             self._thread.join(timeout=3)
 
@@ -161,16 +163,15 @@ class Speaker:
                 log.warning("MMS-TTS unavailable (%s); replies will use `say`", e)
         self._ready.set()
         while not self._stop.is_set():
-            text, queued = self._q.get()
+            text, queued, gen = self._q.get()
             if self._stop.is_set() or not text:
                 continue
-            # Drop stale lines if newer ones are waiting.
+            # A line is stale if an interrupting line was queued after it (its generation is older).
+            # Non-interrupting lines keep their generation, so they play in order after the current one.
+            if gen != self._gen:
+                continue
             self._busy = True
             try:
-                while not self._q.empty():
-                    nxt = self._q.get()
-                    if nxt[0]:
-                        text, queued = nxt
                 self._say_one(text, queued)
             finally:
                 self._busy = False

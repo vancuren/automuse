@@ -103,3 +103,35 @@ def test_audible_words_window():
     s._mark_audible("Landing now.", t - 1.0, t - 0.5)             # finished 0.5 s ago
     assert "landing" in s.audible_words(now=t, tail_s=1.5)
     assert s.audible_words(now=t + 2.0, tail_s=1.5) == set()       # long gone
+
+
+def test_queue_keeps_non_interrupting_lines_and_drops_stale_ones():
+    s = Speaker(engine="say", play=False)          # synthesizes nothing, records the order
+    s.start(warm_up=False)
+    try:
+        s.wait_ready(10)
+        s.speak("Okay.")                             # interrupting
+        s.speak("Following the red car.", interrupt=False)
+        s.speak("Got them. Following.", interrupt=False)
+        time.sleep(0.05)
+        s.wait_idle(5)
+        assert [h["text"] for h in s.history] == ["Okay.", "Following the red car.", "Got them. Following."]
+    finally:
+        s.close()
+
+
+def test_interrupting_line_drops_older_queued_lines():
+    s = Speaker(engine="say", play=False)
+    # Fill the queue before the worker starts, then start it: only lines of the newest generation play.
+    s.speak("one", interrupt=False)
+    s.speak("two", interrupt=False)
+    s.speak("Landing now.")                          # interrupting: "one" and "two" are stale
+    s.speak("Got them.", interrupt=False)
+    s.start(warm_up=False)
+    try:
+        s.wait_ready(10)
+        time.sleep(0.05)
+        s.wait_idle(5)
+        assert [h["text"] for h in s.history] == ["Landing now.", "Got them."]
+    finally:
+        s.close()
