@@ -25,7 +25,10 @@ BACKEND_PORT = 8200
 
 
 def port_busy(port: int, udp: bool = False) -> bool:
+    """True if something is bound there. SO_REUSEADDR like uvicorn, so TIME_WAIT leftovers don't count."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM if udp else socket.SOCK_STREAM)
+    if not udp:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         s.bind(("127.0.0.1", port))
         return False

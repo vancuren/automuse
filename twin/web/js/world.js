@@ -55,6 +55,22 @@ function grassTexture(sizeM) {
   }, [sizeM / 2.5, sizeM / 2.5]);
 }
 
+function concreteTexture(sizeM) {
+  // smooth, low-contrast slab: little for optical flow to lock onto
+  return canvasTexture(1024, 1024, (g, w, h) => {
+    const r = rng(9);
+    g.fillStyle = '#b9b6ae'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 9000; i++) {
+      const l = 68 + r() * 8;
+      g.fillStyle = `hsla(40,4%,${l}%,0.35)`;
+      g.fillRect(r() * w, r() * h, 1 + r() * 3, 1 + r() * 3);
+    }
+    g.strokeStyle = 'rgba(90,90,90,0.25)'; g.lineWidth = 2;
+    for (let x = 0; x <= w; x += 256) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+    for (let y = 0; y <= h; y += 256) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+  }, [sizeM / 6, sizeM / 6]);
+}
+
 function asphaltTexture() {
   return canvasTexture(512, 512, (g, w, h) => {
     const r = rng(5);
@@ -324,7 +340,8 @@ function buildWall(w) {
   const len = Math.hypot(w.x2 - w.x1, w.y2 - w.y1);
   const h = w.height || 2.5;
   const isHouse = w.kind === 'house';
-  const thick = isHouse ? 0.3 : 0.06;
+  const isShed = w.kind === 'shed';
+  const thick = isHouse ? 0.3 : (isShed ? 1.4 : 0.06);
   const tex = isHouse ? sidingTexture(w.color || '#d9cdb4') : plankTexture(w.color || '#8b6a48');
   tex.repeat.set(len / (isHouse ? 3 : 2.5), 1);
   const m = new THREE.Mesh(new THREE.BoxGeometry(len, h, thick), mat('#ffffff', 0.9, { map: tex }));
@@ -348,6 +365,12 @@ function buildWall(w) {
     }
     const eave = new THREE.Mesh(new THREE.BoxGeometry(len + 0.4, 0.18, 0.7), mat('#5a5048', 0.8));
     eave.position.set(0, h + 0.05, -0.1); eave.castShadow = true; g.add(eave);
+  } else if (isShed) {   // a small garden shed: the wall line is its front face, with a roof
+    m.position.z = thick / 2;
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(len + 0.3, 0.12, thick + 0.4), mat('#4a4038', 0.8));
+    roof.position.set(0, h + 0.06, thick / 2); roof.castShadow = true; g.add(roof);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.8, 0.04), mat('#6b5a44', 0.8));
+    door.position.set(0, 0.9, -0.02); g.add(door);
   } else {          // fence posts and a top rail
     const postM = mat(w.color || '#8b6a48', 0.9);
     for (let d = 0; d <= len + 0.01; d += 2.0) {
@@ -481,12 +504,12 @@ export class World {
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
     scene.add(sun); scene.add(sun.target);
 
-    const groundTex = grassTexture(size);
+    const groundTex = ground.kind === 'concrete' ? concreteTexture(size) : grassTexture(size);
     const gm = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat('#ffffff', 1.0, { map: groundTex }));
     gm.rotation.x = -Math.PI / 2; gm.receiveShadow = true; scene.add(gm);
     // texture quality < 1 means a smoother, lower-contrast ground (harder for optical flow)
     const tq = ground.texture ?? 1.0;
-    if (tq < 0.5) gm.material.color.set('#9fb08a');
+    if (tq < 0.5 && ground.kind !== 'concrete') gm.material.color.set('#9fb08a');
 
     const r = rng(42);
     for (const w of world.walls || []) scene.add(buildWall(w));

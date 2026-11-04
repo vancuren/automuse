@@ -198,6 +198,7 @@ class Twin:
             self.dyn.s.cam_tilt = math.radians(float(d["cam_tilt_deg"]))
         self.dyn.bounds = self.scenario.bounds
         self.dyn.texture = self.scenario.texture
+        self.dyn.drift_scale = float(self.scenario.world.get("drift", 1.0))   # POST /control drift overrides
         self.clock = ScenarioClock()
 
     # ------------------------------------------------------------------ lifecycle
@@ -573,6 +574,14 @@ def build_app(args: argparse.Namespace) -> FastAPI:
 
     app = FastAPI(title="X69 digital twin", lifespan=lifespan)
     app.state.twin = twin
+
+    @app.middleware("http")
+    async def no_cache_for_pages(request, call_next):
+        # Chrome must never run a stale renderer after the JS changes (three.js itself may be cached).
+        response = await call_next(request)
+        if not request.url.path.startswith("/vendor/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/")
     async def index():
