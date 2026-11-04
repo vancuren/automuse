@@ -340,6 +340,42 @@ def test_lewei_battery_volts_show_in_the_pack_timer(ui, mock_backend):
     assert "amber" in (ui.get_attribute(sel("fc-battery"), "class") or "")
 
 
+def test_lewei_battery_volts_grey_out_when_the_drone_stops_replying(ui, mock_backend):
+    # fc_telemetry_age is the age of the drone's last reply: over 3 s the last reading is not live.
+    mock_backend.control(flight_mode="real", extra_latency={"fc_battery_v": 3.3, "fc_telemetry_age": 4500.0})
+    ui.wait_for_selector(f'{sel("fc-battery")}[data-old="1"]', timeout=3000)
+    assert ui.inner_text(sel("fc-battery")).startswith("— V")
+    assert ui.inner_text(sel("fc-battery-age")) == "4 s ago"
+    assert "amber" not in (ui.get_attribute(sel("fc-battery"), "class") or "")
+    assert "last reading 3.3 V" in (ui.get_attribute(sel("fc-battery"), "title") or "")
+    mock_backend.control(extra_latency={"fc_battery_v": 3.3, "fc_telemetry_age": 3000.0})   # 3 s: still live
+    ui.wait_for_selector(f'{sel("fc-battery")}[data-old="0"] >> text=3.3 V', timeout=3000)
+    assert "amber" in (ui.get_attribute(sel("fc-battery"), "class") or "")
+    mock_backend.control(extra_latency={"fc_battery_v": 3.9, "fc_telemetry_age": 185000.0})
+    ui.wait_for_selector(f'{sel("fc-battery-age")} >> text=3 min ago', timeout=3000)
+
+
+def test_drone_link_stale_blocks_takeoff_but_never_land_or_estop(ui, mock_backend):
+    # Lewei board: the hub raises drone_link_stale when the drone stops replying (it powered itself off).
+    mock_backend.control(flight_mode="real", armed=True, extra_flags=["drone_link_stale"])
+    ui.wait_for_selector(f'{sel("takeoff-blocker")} >> text=drone link lost', timeout=3000)
+    assert ui.is_disabled(sel("takeoff-btn"))
+    assert ui.is_enabled(sel("land-btn")) and ui.is_enabled(sel("estop-btn"))
+    mock_backend.control(extra_flags=[])                       # the drone answers again
+    ui.wait_for_selector(f'{sel("takeoff-blocker")} >> text=ready', timeout=3000)
+    assert ui.is_enabled(sel("takeoff-btn"))
+    mock_backend.control(extra_flags=["drone_link_stale"])
+    ui.wait_for_selector(f'{sel("takeoff-blocker")} >> text=drone link lost', timeout=3000)
+    ui.click(sel("takeoff-btn"), force=True)                   # a click on the disabled button does nothing
+    ui.click(sel("land-btn"))
+    assert mock_backend.wait_for(lambda: mock_backend.commands("land", "ws"))
+    ui.keyboard.press("KeyL")
+    assert mock_backend.wait_for(lambda: mock_backend.commands("land", "ws"), min_count=2)
+    ui.click(sel("estop-btn"))
+    assert mock_backend.wait_for(lambda: mock_backend.commands("estop", "ws"))
+    assert mock_backend.commands("takeoff") == []
+
+
 def test_stick_keys_are_ignored_while_typing_arm(ui, mock_backend):
     mock_backend.control(flight_mode="real")
     ui.wait_for_selector(sel("arm-input"), timeout=2000)

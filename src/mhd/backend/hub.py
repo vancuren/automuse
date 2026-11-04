@@ -8,7 +8,8 @@ Endpoints installed by install_routes(app, hub):
   WS /ws (via serve_ui)  POST /command  WS /ws/telemetry  GET /state  WS /ws/frames
   WS /ws/subject  WS /ws/agent?role=agent|ui  POST /mission
   DEBUG: POST /debug/rc_pause {"seconds": N}  POST /debug/rc_resume  GET /debug/rc_pause
-         (Session A link-loss test 3; real mode only while ON_GROUND, at most 15 s)
+         (Session A link-loss test 3; real mode only while ON_GROUND, at most 15 s; on the Lewei
+         board ALL packets stop: it has no keepalive)
 """
 from __future__ import annotations
 
@@ -47,12 +48,27 @@ HTTP_COMMANDS = frozenset({"land", "estop", "estop_reset", "pause"})
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 # POST /debug/rc_pause (Session A link-loss test 3: RC control packets stop, the 1 Hz keepalive
-# continues). Real mode: only while the governor is in one of these states (props-off test on the
-# bench), at most RC_PAUSE_MAX_S["real"]. Twin: any state. The pause also ends at once when the
-# flight state changes (LAND, E-STOP, TAKEOFF, a safety landing) or the backend shuts down, so those
-# packets always reach the drone.
+# continues; on the Lewei board there is no keepalive, so ALL packets to the drone stop). Real mode:
+# only while the governor is in one of these states (props-off test on the bench), at most
+# RC_PAUSE_MAX_S["real"]. Twin: any state. The pause also ends at once when the flight state changes
+# (LAND, E-STOP, TAKEOFF, a safety landing) or the backend shuts down, so those packets always reach
+# the drone.
 REAL_MODE_RC_PAUSE_STATES = frozenset({FlightState.on_ground})
 RC_PAUSE_MAX_S = {"real": 15.0, "twin": 60.0}
+
+# RC link flags (telemetry for the operator; the governor never reads them).
+# rc_send_errors: an RC send failed within the last RC_SEND_ERRORS_RECENT_MS. The cumulative count stays
+# in the extras (rc_send_errors), but one failure while the drone was powered off no longer lights the
+# flag for the rest of the session.
+RC_SEND_ERRORS_RECENT_MS = 10_000.0
+# Lewei board (no keepalive): the drone's own replies are the link. drone_link_stale when no valid
+# downlink packet arrived for DRONE_LINK_STALE_MS (DRONE_LINK_STALE_LANDING_MS while LANDING: the drone
+# stops replying for ~5 s during LAND) or the reader thread died. A successful send proves nothing there:
+# the iPhone USB tether holds the default route, so datagrams to a vanished drone still "succeed". The UI
+# disables TAKEOFF on it (lib/gates.ts); LAND and E-STOP are never gated.
+DRONE_LINK_STALE_FLAG = "drone_link_stale"
+DRONE_LINK_STALE_MS = 3000.0
+DRONE_LINK_STALE_LANDING_MS = 8000.0
 
 
 def _no_constants(name: str):
@@ -155,7 +171,7 @@ class Hub:
         Camera-only mode: an adapter with no socket at all. The governor still builds every RC
         packet (twin behavior), and nothing is ever sent, to any address, not even loopback.
         MHD_BOARD=lewei (real mode only): the raw 20-byte X69 payload to 192.168.0.1:50000, no wrapper,
-        no keepalive, plus a telemetry reader for the drone's downlink.
+        no keepalive, plus a reader for the drone's downlink (telemetry and drone_link_stale).
         """
         from mhd.governor.turbodrone_glue import CameraOnlyRcAdapter, GovernedX69LgRcAdapter, LeweiRcAdapter
         board = self.env.board if self.env is not None else "x69_lg"
@@ -485,7 +501,8 @@ class Hub:
         return {"available": True, **ad.rc_pause_status()}
 
     def rc_pause(self, seconds: Any) -> dict:
-        """Stop RC control packets for `seconds` while the keepalive continues. DEBUG ONLY.
+        """Stop RC control packets for `seconds`. DEBUG ONLY. X69: the D1 keepalive continues.
+        Lewei board: it has no keepalive, so ALL packets to the drone stop.
 
         Real mode: only while the governor is ON_GROUND (the props-off bench test), at most 15 s.
         Twin mode: any state, at most 60 s. Ends early (and that packet goes out) when the flight
@@ -527,10 +544,15 @@ class Hub:
 
         status = ad.pause_rc(secs, keep_paused, note=f"{mode}/{start_state.value}")
         banner = "=" * 24
-        logger.warning("%s RC PAUSE (DEBUG): RC control packets STOPPED for %.1f s, D1 keepalive continues "
-                       "(FLIGHT_MODE=%s, flight state %s). LAND / E-STOP / TAKEOFF end it at once. %s",
-                       banner, secs, mode, start_state.value, banner)
-        self._status_event(f"RC PAUSE (debug): control packets stopped for {secs:.0f} s, keepalive continues",
+        if _no_keepalive(ad):
+            what_log = "ALL packets to the drone STOPPED for %.1f s (Lewei board: there is no keepalive)"
+            what_ui = f"all packets to the drone stopped for {secs:.0f} s (no keepalive on this board)"
+        else:
+            what_log = "RC control packets STOPPED for %.1f s, D1 keepalive continues"
+            what_ui = f"control packets stopped for {secs:.0f} s, keepalive continues"
+        logger.warning("%s RC PAUSE (DEBUG): " + what_log + " (FLIGHT_MODE=%s, flight state %s). "
+                       "LAND / E-STOP / TAKEOFF end it at once. %s", banner, secs, mode, start_state.value, banner)
+        self._status_event(f"RC PAUSE (debug): {what_ui}",
                            {"kind": "rc_pause", "seconds": secs, "flight_state": start_state.value})
         self._schedule_rc_pause_report(secs)
         return {"ok": True, "seconds": secs, "max_s": limit, **base, "status": status}
@@ -556,10 +578,11 @@ class Hub:
                     break
                 await asyncio.sleep(0.1)
             st = self.rc_pause_status()
+            sent = ("no keepalive on this board: nothing was sent" if _no_keepalive(self.rc_adapter)
+                    else f"{st.get('keepalives_during')} keepalives sent")
             await self._broadcast(self.agents | self.agent_uis, AgentEvent(
                 kind="status", ts_ms=now_ms(),
-                text=f"RC PAUSE ended ({st.get('end_reason')}): {st.get('dropped')} control packets dropped, "
-                     f"{st.get('keepalives_during')} keepalives sent",
+                text=f"RC PAUSE ended ({st.get('end_reason')}): {st.get('dropped')} control packets dropped, {sent}",
                 data={"kind": "rc_pause_end", **{k: st.get(k) for k in
                                                  ("end_reason", "dropped", "keepalives_during", "elapsed_s")}},
             ).model_dump_json())
@@ -573,7 +596,13 @@ class Hub:
     # Telemetry and event relay
 
     def link_flags_and_stats(self) -> tuple[list, dict]:
-        """RC link health from the governed adapter (review finding: send errors were silent)."""
+        """RC link health from the governed adapter (review finding: send errors were silent).
+
+        rc_send_errors: an RC send failed within the last 10 s (the extras keep the cumulative count).
+        X69: keepalive_stale when the D1 keepalive thread died or sent nothing for 3 s. Lewei board:
+        drone_link_stale when the drone's downlink is silent for 3 s (8 s while LANDING) or its reader
+        thread died. Telemetry only: no governor decision reads these flags.
+        """
         flags: list[str] = []
         extra: dict = {}
         ad = self.rc_adapter
@@ -581,14 +610,25 @@ class Hub:
             s = ad.link_stats()
             extra.update({"rc_send_errors": s["rc_errors"], "keepalive_age": s["keepalive_age_ms"],
                           "keepalive_errors": s["keepalive_errors"]})
-            if s["rc_errors"]:
+            err_age = s.get("rc_error_age_ms", 0.0)      # an adapter without it: any error counts (old rule)
+            if s["rc_errors"] and err_age is not None and err_age <= RC_SEND_ERRORS_RECENT_MS:
                 flags.append("rc_send_errors")
-            if not s["keepalive_alive"] or s["keepalive_age_ms"] > 3000.0:
+            if getattr(ad, "board", None) == "lewei":
+                # keepalive_* are the drone's downlink here (no keepalive on this board): see LeweiRcAdapter.
+                if not s["keepalive_alive"] or s["keepalive_age_ms"] > self.drone_link_limit_ms():
+                    flags.append(DRONE_LINK_STALE_FLAG)
+            elif not s["keepalive_alive"] or s["keepalive_age_ms"] > 3000.0:
                 flags.append("keepalive_stale")
         if ad is not None and hasattr(ad, "fc_telemetry"):
             # Lewei board downlink (battery volts, status byte, age): informational only.
             extra.update({k: v for k, v in ad.fc_telemetry().items() if v is not None})
         return flags, extra
+
+    def drone_link_limit_ms(self) -> float:
+        """Lewei board: how old the drone's last reply may be before drone_link_stale (lock-free read)."""
+        gov = self.gov
+        landing = gov is not None and getattr(gov, "state", None) == FlightState.landing
+        return DRONE_LINK_STALE_LANDING_MS if landing else DRONE_LINK_STALE_MS
 
     def telemetry_json(self) -> str:
         if self.gov is None:
@@ -670,6 +710,11 @@ class Hub:
                 await s.send_text(text)
             except Exception:  # noqa: BLE001
                 sockets.discard(s)
+
+
+def _no_keepalive(ad) -> bool:
+    """The Lewei board's adapter sends nothing but RC packets: an RC pause stops ALL packets."""
+    return getattr(ad, "board", None) == "lewei"
 
 
 def _num(v: Any) -> float:

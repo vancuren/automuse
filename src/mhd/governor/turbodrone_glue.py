@@ -220,14 +220,22 @@ def validate_control_rate(rate) -> float:
     return r
 
 
+def _age_ms(since: Optional[float], now: float) -> Optional[float]:
+    """Milliseconds from `since` to `now` (same clock), or None when `since` never happened."""
+    return None if since is None else round(max(0.0, now - since) * 1000.0, 1)
+
+
 class GovernedX69LgRcAdapter(X69LgRcProtocolAdapter):
     """Upstream X69 RC adapter plus visibility into the UDP link (review finding).
 
     Upstream's 1 Hz D1 keepalive thread returned on the first OSError (ENOBUFS / EHOSTUNREACH in a
     Wi-Fi blip), ending keepalives for the whole session, and RC sends swallowed OSError silently.
     Here the keepalive logs and keeps going, and both paths count errors and successes for
-    telemetry (link_stats()). Packet bytes are unchanged upstream code.
+    telemetry (link_stats()). Packet bytes are unchanged upstream code. link_stats() also gives the
+    age of the last failed RC send, so the hub's rc_send_errors flag shows recent failures only.
     """
+
+    board = "x69_lg"                             # the hub reads this (link flags, RC pause wording)
 
     def __init__(self, *args, **kwargs):
         self._init_link_state()
@@ -238,6 +246,7 @@ class GovernedX69LgRcAdapter(X69LgRcProtocolAdapter):
         self.rc_sent = 0
         self.rc_errors = 0
         self.rc_last_error: str = ""
+        self.rc_last_error_t: Optional[float] = None   # monotonic s of the last failed RC send
         self.keepalive_sent = 0
         self.keepalive_errors = 0
         self.keepalive_last_ok: float = time.monotonic()
@@ -344,10 +353,11 @@ class GovernedX69LgRcAdapter(X69LgRcProtocolAdapter):
         try:
             self.sock.sendto(packet, (self.drone_ip, self.control_port))
         except OSError as exc:
+            now = time.monotonic()
             with self._stats_lock:
                 self.rc_errors += 1
                 self.rc_last_error = f"{type(exc).__name__}({exc.errno})"
-            now = time.monotonic()
+                self.rc_last_error_t = now
             if now - self._rc_last_log >= 5.0:      # RC thread: rate-limited, through the log queue
                 self._rc_last_log = now
                 logger.error("[rc] RC packet send failed (%d so far): %r", self.rc_errors, exc)
@@ -379,9 +389,11 @@ class GovernedX69LgRcAdapter(X69LgRcProtocolAdapter):
 
     def link_stats(self) -> dict:
         with self._stats_lock:
+            now = time.monotonic()
             return {"rc_sent": self.rc_sent, "rc_errors": self.rc_errors,
+                    "rc_error_age_ms": _age_ms(self.rc_last_error_t, now),
                     "keepalive_sent": self.keepalive_sent, "keepalive_errors": self.keepalive_errors,
-                    "keepalive_age_ms": round((time.monotonic() - self.keepalive_last_ok) * 1000.0, 1),
+                    "keepalive_age_ms": round((now - self.keepalive_last_ok) * 1000.0, 1),
                     "keepalive_alive": self._keepalive_thread.is_alive()}
 
 
@@ -490,17 +502,27 @@ class LeweiRcAdapter(GovernedX69LgRcAdapter):
     (66 14 RR PP TT YY F1 F2 00x10 XOR 99), sent raw: no `ca 47 d5 00` + length wrapper and no D1
     keepalive. Same governor model, payload builder and one-shot flag handling as the X69 adapter.
 
-    There is no keepalive on this board, so keepalive_last_ok means "the last RC send succeeded": a dead
-    Wi-Fi still shows as rc_send_errors and, 3 s later, keepalive_stale. The socket is non-blocking, so
-    a send can never stall the 25 Hz RC tick. A daemon thread reads the drone's ~20 Hz downlink on the
-    same socket (it replies from :50000 to our source port) for telemetry only: battery volts, status
-    byte, age, good/bad counts. Nothing here feeds a governor decision.
+    The socket is non-blocking, so a send can never stall the 25 Hz RC tick. A daemon thread reads the
+    drone's downlink on the same socket (it replies from :50000 to our source port: ~20/s, ~5/s while
+    the motors run, nothing for ~5 s during LAND): battery volts, status byte, age, good/bad counts.
+    Nothing here feeds a governor decision.
+
+    Link health is that downlink, never a successful send: with the iPhone USB tether holding the
+    default route, datagrams to 192.168.0.1 leave through the tether once the drone's Wi-Fi is gone and
+    still "succeed". There is no keepalive on this board, so link_stats() puts the downlink in the
+    keepalive fields: keepalive_age_ms = time since the last VALID downlink packet (since the adapter
+    started, before the first one), keepalive_alive = the reader thread is alive. The hub turns them
+    into drone_link_stale (never keepalive_stale). `clock` is the monotonic clock (tests pass a fake).
     """
 
+    board = "lewei"                              # the hub: drone_link_stale, and "all packets stop" on RC pause
+
     def __init__(self, drone_ip: str = "192.168.0.1", control_port: int = 50000, *, local_port: int = 0,
-                 sock=None) -> None:
+                 sock=None, clock: Callable[[], float] = time.monotonic) -> None:
         # Not X69LgRcProtocolAdapter.__init__: it would start the D1 keepalive sender.
         self._init_link_state()
+        self._clock = clock
+        self._started_at = clock()               # the downlink age counts from here until the first packet
         self.drone_ip = drone_ip
         self.control_port = int(control_port)
         self.local_port = local_port
@@ -527,21 +549,21 @@ class LeweiRcAdapter(GovernedX69LgRcAdapter):
 
     def send_control_packet(self, packet: bytes) -> None:
         if self._pause_until and self._drop_for_pause():
-            return                                   # debug RC pause (real mode: ON_GROUND, <= 15 s)
+            return          # debug RC pause (real mode: ON_GROUND, <= 15 s): no keepalive, so ALL packets stop
         try:
             self.sock.sendto(packet, (self.drone_ip, self.control_port))
-        except OSError as exc:                       # Wi-Fi gone (EHOSTUNREACH...) or a full buffer
+        except OSError as exc:                       # no route at all (EHOSTUNREACH...) or a full buffer
+            now = self._clock()
             with self._stats_lock:
                 self.rc_errors += 1
                 self.rc_last_error = f"{type(exc).__name__}({exc.errno})"
-            now = time.monotonic()
+                self.rc_last_error_t = now
             if now - self._rc_last_log >= 5.0:
                 self._rc_last_log = now
                 logger.error("[rc] Lewei RC packet send failed (%d so far): %r", self.rc_errors, exc)
             return
         with self._stats_lock:
-            self.rc_sent += 1
-            self.keepalive_last_ok = time.monotonic()   # no keepalive here: a good RC send is the sign of life
+            self.rc_sent += 1           # proves nothing about the drone: the tether route also "succeeds"
         if self.debug_packets:
             self.packet_counter += 1
             logger.debug("[lewei-rc] #%05d %s", self.packet_counter, packet.hex(" "))
@@ -560,7 +582,7 @@ class LeweiRcAdapter(GovernedX69LgRcAdapter):
                 return False
             self.fc_ok += 1
             self.fc_battery_v, self.fc_status, self.fc_rest = parsed
-            self.fc_last_rx = time.monotonic() if now is None else now
+            self.fc_last_rx = self._clock() if now is None else now
         return True
 
     def _reader_loop(self) -> None:
@@ -586,16 +608,24 @@ class LeweiRcAdapter(GovernedX69LgRcAdapter):
     def fc_telemetry(self) -> dict:
         """Informational telemetry fields (hub telemetry latency_ms; never a governor input)."""
         with self._fc_lock:
-            age = None if self.fc_last_rx is None else round((time.monotonic() - self.fc_last_rx) * 1000.0, 1)
-            return {"fc_battery_v": self.fc_battery_v, "fc_status": self.fc_status, "fc_telemetry_age": age,
+            return {"fc_battery_v": self.fc_battery_v, "fc_status": self.fc_status,
+                    "fc_telemetry_age": _age_ms(self.fc_last_rx, self._clock()),
                     "fc_packets_ok": self.fc_ok, "fc_packets_bad": self.fc_bad}
 
     def link_stats(self) -> dict:
+        """The keepalive fields are the drone's downlink here (class docstring): keepalive_age_ms since
+        the last valid downlink packet (or since the adapter started), keepalive_alive = reader thread.
+        One lock at a time, never nested (the reader holds only _fc_lock, the RC thread _stats_lock)."""
+        with self._fc_lock:
+            last_rx = self.fc_last_rx
         with self._stats_lock:
-            return {"rc_sent": self.rc_sent, "rc_errors": self.rc_errors,
-                    "keepalive_sent": 0, "keepalive_errors": 0,
-                    "keepalive_age_ms": round((time.monotonic() - self.keepalive_last_ok) * 1000.0, 1),
-                    "keepalive_alive": True}    # no keepalive thread: the age above is the link's health
+            stats = {"rc_sent": self.rc_sent, "rc_errors": self.rc_errors, "keepalive_sent": 0, "keepalive_errors": 0}
+            err_t = self.rc_last_error_t
+        now = self._clock()
+        stats["rc_error_age_ms"] = _age_ms(err_t, now)
+        stats["keepalive_age_ms"] = _age_ms(self._started_at if last_rx is None else last_rx, now)
+        stats["keepalive_alive"] = self._reader_thread.is_alive()
+        return stats
 
     def stop(self) -> None:
         self._reader_stop.set()
