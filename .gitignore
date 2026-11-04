@@ -1,6 +1,6 @@
 # Everything heavy or private stays local and out of git
 .cache/
-models/
+/models/
 tools/*
 !tools/README.md
 logs/
