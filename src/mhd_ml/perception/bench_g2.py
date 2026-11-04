@@ -34,10 +34,51 @@ def _box(b):
     return None if not b else (b["x1"], b["y1"], b["x2"], b["y2"])
 
 
-def run_scenario(eng, folder: Path, res: int, min_score: float, every: int = 1) -> dict:
+def mlx_detect_fn(eng):
+    """All prompts on one shared ViT backbone (the MLX path)."""
+    def fn(img, labels):
+        out = {}
+        with eng.lock:
+            t0 = time.perf_counter()
+            feats = eng.backbone(eng.preprocess(img))
+            t_bb = (time.perf_counter() - t0) * 1e3
+            for lab in labels:
+                t1 = time.perf_counter()
+                dets = eng.to_detections(eng.detect_features(feats, lab, 0.2), lab)
+                out[lab] = (dets, (time.perf_counter() - t1) * 1e3)
+        return out, t_bb
+    return fn
+
+
+def api_detect_fn(det, pace_s: float = 0.0, errors: list = None):
+    """One hosted sam-3.1 call per prompt ($0.0025 each), at most one call per pace_s seconds.
+    Errors (429, timeouts) are recorded so they are not mistaken for misses."""
+    last = [0.0]
+
+    def fn(img, labels):
+        out = {}
+        for lab in labels:
+            wait = last[0] + pace_s - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            while time.monotonic() < det._backoff_until:     # respect a 429 back-off
+                time.sleep(0.2)
+            last[0] = time.monotonic()
+            t1 = time.perf_counter()
+            dets = det.detect(img, lab)
+            if det.last_error and errors is not None:
+                errors.append(det.last_error[:80])
+            out[lab] = (dets, (time.perf_counter() - t1) * 1e3)
+        return out, 0.0
+    return fn
+
+
+def run_scenario(eng, folder: Path, res: int, min_score: float, every: int = 1, detect_fn=None) -> dict:
     import cv2
 
-    eng.set_resolution(res)
+    if detect_fn is None:
+        eng.set_resolution(res)
+        detect_fn = mlx_detect_fn(eng)
     truth = [json.loads(line) for line in open(folder / "truth.jsonl")]
     labels = sorted({a["label"] for t in truth for a in t["actors"]})
     rows = []
@@ -49,15 +90,7 @@ def run_scenario(eng, folder: Path, res: int, min_score: float, every: int = 1) 
         if img is None:
             continue
         mask_counter(img)
-        t0 = time.perf_counter()
-        with eng.lock:
-            feats = eng.backbone(eng.preprocess(img))
-            t_bb = (time.perf_counter() - t0) * 1e3
-            per_label = {}
-            for lab in labels:
-                t1 = time.perf_counter()
-                dets = eng.to_detections(eng.detect_features(feats, lab, 0.2), lab)
-                per_label[lab] = (dets, (time.perf_counter() - t1) * 1e3)
+        per_label, t_bb = detect_fn(img, labels)
         actors = {a["label"]: a for a in t["actors"]}
         work = work_image(img, False)
         for lab in labels:
@@ -174,20 +207,36 @@ def main() -> None:
     ap.add_argument("--min-score", type=float, default=0.4)
     ap.add_argument("--out", default="logs/bench_g2.json")
     ap.add_argument("--crops", default=None)
+    ap.add_argument("--detector", default="sam_mlx", choices=["sam_mlx", "sam_api"])
+    ap.add_argument("--spend-cap", type=float, default=8.0)
+    ap.add_argument("--pace-s", type=float, default=0.0, help="sam_api: minimum seconds between calls")
     args = ap.parse_args()
-    from mlx_vlm.generate import wired_limit
-
-    from .detectors.sam_mlx import SamMlxEngine
+    import contextlib
 
     twin = Path(args.twin)
-    eng = SamMlxEngine(resolution=args.res)
     result = {"when": time.strftime("%Y-%m-%d %H:%M:%S %Z"), "res": args.res, "min_score": args.min_score,
-              "load_before": load_snapshot()}
-    with wired_limit(eng.model):
-        for s in args.scenarios.split(","):
-            if (twin / s / "truth.jsonl").exists():
-                result[s] = run_scenario(eng, twin / s, args.res, args.min_score, args.every)
-                print(s, {k: v for k, v in result[s].items() if k not in ("rows",)})
+              "detector": args.detector, "load_before": load_snapshot()}
+    eng, api = None, None
+    if args.detector == "sam_mlx":
+        from mlx_vlm.generate import wired_limit
+
+        from .detectors.sam_mlx import SamMlxEngine
+        eng = SamMlxEngine(resolution=args.res)
+        ctx, fn = wired_limit(eng.model), None
+    else:
+        from .detectors.sam_api import SamApiDetector
+        api = SamApiDetector(cap_usd=args.spend_cap)
+        result["api_errors"] = []
+        ctx, fn = contextlib.nullcontext(), api_detect_fn(api, args.pace_s, result["api_errors"])
+    try:
+        with ctx:
+            for s in args.scenarios.split(","):
+                if (twin / s / "truth.jsonl").exists():
+                    result[s] = run_scenario(eng, twin / s, args.res, args.min_score, args.every, fn)
+                    print(s, {k: v for k, v in result[s].items() if k not in ("rows",)})
+    finally:
+        if api is not None:
+            api.close()
     result["load_after"] = load_snapshot()
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:

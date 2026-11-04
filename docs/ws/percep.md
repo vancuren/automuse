@@ -76,11 +76,19 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
   about 10 ms per frame inside perception, confirmed 1.4 s after FindRequest, 99.9% of frames
   on the right subject, 0 identity switches in 47 s, detector p50 / p95 625 / 695 ms.
   Same with `sam_api`: 15 Hz, 97.5% locked, confirmed after 2.1 s, API p50 645 ms.
-- **Tests.** `tests/percep`: 48 passed. Fusion: Kalman timing, color score, association,
+- **G2 (twin frames, full HEVC path).** S1 "person in blue shirt" recall 100% (60/60, gate 90%).
+  S2: blue 98%, red 83% (100% when at least half visible). S3: "green car" 100%. Every actor that
+  is at least half visible is found in every frame. The hosted sam-3.1 matches on a third of the
+  frames. Pipeline replays of the twin frames (only 3.1 fps): 0 identity switches, including the
+  S2 crossing (92.6% locked); S3 green car 100% locked.
+- **The color gate.** With the red walker off screen, "person in red shirt" boxes the blue
+  walker (score 0.47-0.72). Candidates whose shirt region matches the requested color in less
+  than 8% of its pixels are now dropped: 34 false alarms -> 0, no true detection lost.
+- **Tests.** `tests/percep`: 51 passed. Fusion: Kalman timing, color score, association,
   re-seed, counter block. Pipeline: states, ties and Select, the color tie-break, loss, cadence,
   re-seed rejection, and the safety fixes. SAM API client: parsing, no retry on 400, cache,
   spend cap, deadline. WebSocket integration with the fake backend. Replay.
-- **Spend:** $0.15 of the $8 cap (61 sam-3.1 images).
+- **Spend:** $0.46 of the $8 cap (185 sam-3.1 images).
 
 ## Decisions made overnight (nobody to ask)
 
@@ -92,18 +100,21 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
 4. The API detector sends 640x360. For the hot path I wrote a small record reader that follows
    meta_sam_parser's grammar, parses by key, and uses the same package's mask decoder. Tests
    compare it against meta_sam_parser on recorded responses.
-5. `SubjectObs.state` semantics: see the table below. A track needs 2 consistent detector
+5. Color gate: with a color word in the FindRequest, a candidate whose upper-body mask region
+   matches that color in less than 8% of its pixels never becomes a track (`min_color_frac`).
+   Found on twin frames (G2), where it removed 34 of 34 wrong-person detections.
+6. `SubjectObs.state` semantics: see the table below. A track needs 2 consistent detector
    confirmations to be "confirmed". A Select counts as confirmation.
-6. Look-alikes: if the second-best rank is >= 0.85 x the best, and the two boxes are distinct,
+7. Look-alikes: if the second-best rank is >= 0.85 x the best, and the two boxes are distinct,
    perception sends `Candidates`. They are numbered 1..N **left to right**, and the numbering
    stays fixed until the set is re-sent (every 2 s at most). Perception then reports "candidate"
    with no box until a `Select`. It never picks for the user.
-7. Detector cadence: 2 Hz while searching, candidate, lost, or in doubt (tracker score < 0.5, a
+8. Detector cadence: 2 Hz while searching, candidate, lost, or in doubt (tracker score < 0.5, a
    rejected re-seed, or a detection that missed the subject); 1 Hz while following.
-8. The counter block is masked only on frames whose `flight_mode` is "twin" (`--mask-counter auto`).
-9. `confirm_age_ms` is measured from the capture time of the frame the detector saw, not from
+9. The counter block is masked only on frames whose `flight_mode` is "twin" (`--mask-counter auto`).
+10. `confirm_age_ms` is measured from the capture time of the frame the detector saw, not from
    when its result arrived. Detector latency therefore counts as age, as it should.
-10. Fixed after review, because a drone is involved:
+11. Fixed after review, because a drone is involved:
     - a late Select re-identifies the subject in a fresh detection instead of trusting a stale box;
     - a repeated identical FindRequest does not reset the track;
     - a backend restart (frame ids going backwards) resets the buffer and marks the track lost;
@@ -143,7 +154,9 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
 4. **HFOV:** pass `--hfov-deg` (or set `MHD_HFOV_DEG`) to the Session A value. Perception only
    uses it inside its Kalman filter, so a wrong value costs a little smoothing, not correctness.
 5. **COUNTER_ROI:** picked up from `mhd.twin.counter` automatically once the twin branch is merged
-   (it is `(1008, 640, 1280, 720)` there). Until then the fallback is the bottom-right 160x160.
+   (it is `(1008, 640, 1280, 720)` there). Until then the fallback is the bottom-right 160x160,
+   which does not cover the twin's whole block; set `MHD_COUNTER_ROI=1008,640,1280,720` for
+   unmerged runs.
 6. **GPU etiquette:** only perception loads SAM, about 5.6 GB, or 11.7 GB with the SAM tracker.
    At 2 Hz it keeps about half of the idle GPU busy, and it slows down 2.5-3x next to Glimmer
    training.
@@ -153,8 +166,9 @@ switched to offline mode automatically. The VitTrack ONNX is in `$MHD_MODELS/ope
 
 ## Known gaps
 
-- **G2 (SAM recall on twin frames):** see the G2 section of docs/benchmarks-perception.md. It
-  depends on when the twin publishes frames to `media/shared/twin/`.
+- **API rate limits:** the team key returned HTTP 429 at only 1.7 calls/s while other
+  workstreams were using it. A 429 makes the API detector back off for 5 s, and the autopilot
+  then hovers. Keep batch jobs off the key during API-detector flights, or fly `sam_mlx`.
 - No real X69 or webcam footage yet. The G1 accuracy gate on Session A clips is still open
   (`replay.py` is ready for it).
 - The SAM accuracy proxy uses pasted look-alikes on COCO backgrounds, not drone-view footage.

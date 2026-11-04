@@ -227,3 +227,23 @@ its box spanned the walker's full stride, and that capture's truth boxes were ab
 
 These saved frames are only 3.1 fps, so the tracker sees 8 render frames of motion per step.
 Live at 25 fps it has an easier job.
+
+### G2 with the hosted sam-3.1 (00:35-00:39 ET, every 3rd frame of the same snapshot)
+
+`... bench_g2 --detector sam_api --every 3 [--pace-s 0.6]`: 640x360 JPEG, same scoring.
+
+| Scenario, prompt | frames visible | recall (IoU 0.5) | recall, mostly visible |
+|---|---|---|---|
+| S1 "person in blue shirt" | 20 | **100%** | 100% |
+| S2 "person in blue shirt" | 20 | **100%** | 100% |
+| S2 "person in red shirt" | 8 | 62.5% | 83% |
+| S3 "green car" | 20 | **95%** (the one miss was an HTTP 429) | 95% |
+| S3 "person in yellow shirt" | 18 | 83% | 100% |
+| S3 "red car" | 11 | 82% | 100% |
+
+On these frames the hosted model matches the MLX one. **Rate limits:** the team key returned
+**HTTP 429** twice, once at only 1.7 calls/s. The 3,000 RPM limit is per team, and other
+workstreams were using the same key. The first unpaced S3 run was spoiled by the 5 s back-off
+that followed (recall near 0, discarded). On flight day, keep batch jobs off the key while
+`--detector sam_api` flies; a 429 costs 5 s of detections, and the autopilot then hovers.
+Spend for G2 via API: $0.31 (124 calls). Workstream total so far: $0.46.
