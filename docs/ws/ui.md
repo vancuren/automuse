@@ -1,6 +1,6 @@
 # Workstream ui: the operator UI
 
-Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 83 tests (plus 6 opt-in tests that run against the real patched backend).
+Branch `ws/ui`, written overnight 2026-11-03/04. This is the forked turbodrone React frontend (`turbodrone/frontend`, React 19, Vite 6, Tailwind 4), patched for safety, plus a dashboard that tells the whole story on one screen. It comes with a mock backend and 84 tests (plus 6 opt-in tests that run against the real patched backend).
 
 Screenshots are in `media/ui_screens/` (copied to `$MHD_HOME/media/shared/ui/`):
 - `ui_twin_follow.png`
@@ -71,6 +71,21 @@ UI_GOV_TREE=$MHD_TREE $MHD_PY -m pytest tests/ui/test_ui_gov_backend.py -v   # o
 ```
 
 `UI_HEADED=1` shows the browser while the tests run.
+
+## Pre-flight checklist (UI part)
+
+1. Build for the backend you will fly with, and serve the build (not the dev server): `VITE_BACKEND_URL=http://localhost:8000 npm run build && npx vite preview`.
+2. Open http://127.0.0.1:5173 in its own Chrome window, maximized and never minimized. Keep other tabs out of that window.
+3. Keep the Mac awake for the whole session: `caffeinate -dimsu` in a spare terminal.
+4. In the header, all four link chips must be green:
+   - CTRL open;
+   - HB 5.0 Hz;
+   - TLM 10 Hz;
+   - VOICE open.
+5. The voice caption must read "agent alive · local stop/land listener on". The footer must show the expected backend URL.
+6. The banner must read REAL DRONE (red stripes) for real flights. Type ARM and press Enter, and check that it reads ARMED.
+7. On the ground, press Esc: the state goes to E-STOPPED. Click "Reset E-STOP…" twice. This proves the hotkey path before every pack.
+8. Choose the pack (pack 1 / pack 2) before takeoff, and check that the timer shows that pack's flight time.
 
 ## Operator cheat sheet
 
@@ -167,12 +182,12 @@ The mock is a core-venv FastAPI app, default port 8600. Every message it sends i
 
 ## Test results
 
-83 passed and 6 skipped (the opt-in gov tests) in about 110 s at 00:48 ET. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3 and again at 2587456 (00:48).
+84 passed and 6 skipped (the opt-in gov tests) in about 110 s at 00:52 ET. Repeated full runs were stable (3 consecutive browser-suite runs, 0 flakes). The 6 opt-in tests passed against `ws/gov` at f4af4b3 and again at 2587456 (00:48).
 
 | File | Count | Checks |
 |---|---|---|
 | `test_ui_browser.py` | 32 | See the list below. |
-| `test_ui_production.py` | 2 | The minified build (`--base /ui/`), served same-origin by the mock: worker chunk present, heartbeat 5 Hz from one socket, Esc, Space and L work, HTTP fallback works, only the configured backend URL is in the bundle. |
+| `test_ui_production.py` | 3 | The minified build (`--base /ui/`), served same-origin by the mock: worker chunk present, heartbeat 5 Hz from one socket, Esc, Space and L work, HTTP fallback works, only the configured backend URL is in the bundle, and a page reload costs under 1 s of heartbeat. |
 | `test_ui_latency.py` | 1 | Measurements below, with loose regression bounds. |
 | `test_screenshots.py` | 2 | Twin and real screenshots. |
 | `test_mock_backend.py` | 11 | The mock validates and judges messages correctly, latches E-STOP, needs the exact ARM phrase, and its masks stay inside their boxes. |
@@ -226,6 +241,7 @@ All measurements are loopback (127.0.0.1) against the mock backend, using the vi
 | Heartbeat inter-arrival at the backend | 199.8 ms | 206.4 ms | Max 209 ms, 5.0 Hz. Also 5 Hz through a 2 s main-thread stall; stops about 3 s into a hang. |
 | Control socket reconnect after the backend comes back | 190 to 1320 ms | | Depends on where the 2 s-capped backoff is. |
 | axes rate while a key is held | 30.5 Hz | | |
+| Heartbeat gap across a page reload (production build) | 317 ms | | Under the governor's 1.5 s neutral threshold, so a reload mid-flight is survivable. |
 | Production bundle | 271 kB JS (87 kB gzip), 26 kB CSS, 3 kB worker | | |
 
 ## Wire behavior (what the backend will see)

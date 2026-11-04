@@ -86,3 +86,23 @@ def test_production_bundle_heartbeat_and_safety_keys(prod_mock, browser_ctx):
     invalid = [e for e in prod_mock.entries() if not e["valid"]]
     assert not invalid, invalid[:5]
     assert not errors, errors
+
+
+def test_a_page_reload_keeps_the_heartbeat_gap_under_the_governor_threshold(prod_mock, browser_ctx):
+    """Reloading the production page mid-flight: the heartbeat gap must stay well under the
+    governor's 1.5 s neutral threshold."""
+    page = browser_ctx.new_page()
+    try:
+        page.goto(PROD_URL + "/ui/")
+        page.wait_for_selector('[data-testid="link-control"][data-status="open"]', timeout=15000)
+        time.sleep(1.0)
+        t0 = prod_mock.now_ms()
+        page.reload()
+        page.wait_for_selector('[data-testid="link-control"][data-status="open"]', timeout=15000)
+        time.sleep(1.5)
+        hbs = prod_mock.of_type("hb", "ws", since_ms=t0 - 500)
+        gap = max(b["t_ms"] - a["t_ms"] for a, b in zip(hbs, hbs[1:]))
+        (LOG_DIR / "reload_gap_ms.txt").write_text(f"{gap:.1f}\n")
+        assert gap < 1000, f"heartbeat gap across a reload: {gap:.0f} ms"
+    finally:
+        page.close()
