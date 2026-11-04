@@ -290,7 +290,19 @@ def size_prior(box: Box4) -> float:
 # Twin counter block masking.
 # =============================================================================================
 def counter_roi() -> Box4:
-    """(x1, y1, x2, y2) in 1280x720 of the twin's counter block, which perception must ignore."""
+    """(x1, y1, x2, y2) in 1280x720 of the twin's counter block, which perception must ignore.
+
+    Order: MHD_COUNTER_ROI="x1,y1,x2,y2" (for runs before the twin branch is merged), then
+    mhd.twin.counter.COUNTER_ROI (the twin's own value, (1008, 640, 1280, 720) as of 00:21 ET),
+    then the bottom-right 160x160 pixels."""
+    env = os.environ.get("MHD_COUNTER_ROI")
+    if env:
+        try:
+            x1, y1, x2, y2 = (float(v) for v in env.split(","))
+            if x2 > x1 and y2 > y1:
+                return (x1, y1, x2, y2)
+        except ValueError:
+            pass
     try:
         from mhd.twin.counter import COUNTER_ROI  # provided by the twin workstream
         x1, y1, x2, y2 = (float(v) for v in COUNTER_ROI)

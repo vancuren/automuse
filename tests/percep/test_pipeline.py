@@ -267,3 +267,14 @@ def test_subject_leaving_the_frame_edge_is_lost_not_degenerate():
         [b for b in boxes if b[0] < 1270]))
     for o in [m for m in msgs if m.type == "subject_obs" and m.box is not None]:
         assert o.box.w >= 8 and o.box.h >= 8
+
+
+def test_wrong_color_detection_never_becomes_a_track():
+    """SAM may box the only person in view for "person in red shirt" even if the shirt is blue."""
+    core = _core()
+    scene = Scene([Person(500, 200, shirt=BLUE)])
+    core.on_find(FindRequest(mission_id="cg", subject_phrase="person in red shirt", category="person", color="red"))
+    msgs = run(core, scene, 30, det_fn=lambda job, boxes: truth_dets(boxes, [0.7]))
+    obs = [m for m in msgs if m.type == "subject_obs"]
+    assert all(o.state == SubjectState.searching and o.box is None for o in obs)
+    assert core.stats.get("color_rejected", 0) >= 2

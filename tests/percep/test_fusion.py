@@ -230,3 +230,10 @@ def test_box_offset_threshold_semantics():
     a = (0.0, 0.0, 100.0, 100.0)
     assert box_offset((20.0, 0.0, 120.0, 100.0), a) == pytest.approx(0.2)
     assert box_offset((40.0, 0.0, 140.0, 100.0), a) > 0.3
+
+
+def test_counter_roi_env_override(monkeypatch):
+    monkeypatch.setenv("MHD_COUNTER_ROI", "1008,640,1280,720")
+    assert counter_roi() == (1008.0, 640.0, 1280.0, 720.0)
+    monkeypatch.setenv("MHD_COUNTER_ROI", "garbage")
+    assert counter_roi()[2:] == (1280.0, 720.0)

@@ -59,6 +59,9 @@ class PerceptionConfig:
     history_ms: float = 2500.0
     max_blind_start_ms: float = 300.0  # start without replay only from a detection this fresh
     min_box_px: float = 8.0           # a fused box smaller than this (at the frame edge) = lost
+    min_color_frac: float = 0.08      # with a color word, candidates whose shirt region matches
+                                      # less than this are dropped (SAM boxes the blue walker for
+                                      # "person in red shirt" at 0.47-0.72 when red is off screen)
 
 
 @dataclass
@@ -322,6 +325,9 @@ class PerceptionCore:
             if d.score < self.cfg.min_score or overlaps_counter(d.box):
                 continue
             frac = color_fraction(work, d.box, d.mask, m.color, m.category)
+            if frac is not None and frac < self.cfg.min_color_frac:
+                self.stats["color_rejected"] = self.stats.get("color_rejected", 0) + 1
+                continue                          # wrong color: never a candidate
             cs = color_score(frac)
             hist = hue_hist(work, d.box, d.mask, m.category)
             out.append(Cand(d, d.score * cs * size_prior(d.box), cs, hist))
