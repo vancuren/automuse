@@ -13,7 +13,7 @@ Mac in the wire-level twin, loopback only (`FLIGHT_MODE=twin`). Nothing was sent
   to about 1 minute more after a reboot (cold page cache).
 - **The story on screen:** the dashboard in TWIN mode, TAKEOFF clicked, Space held while "Drone, follow
   the person in the blue shirt" is heard, the live transcript, the mission card with the
-  **`glimmer-30b+lora`** badge (3.8-4.0 s), FIND, CONFIRM and FOLLOW with the SAM mask for about 40 s
+  **`glimmer-30b+lora`** badge (3.8-4.2 s), FIND, CONFIRM and FOLLOW with the SAM mask for about 40 s
   while the subject walks, "Okay drone, please land now" heard by the local stop/land listener (open mic,
   no button, no model), LANDING, then Confirm touchdown.
 - **Final takes** (UI 1920x1080 and chase 1280x720, H.264 25 fps with an AAC sound track: the spoken
@@ -41,7 +41,7 @@ Mac in the wire-level twin, loopback only (`FLIGHT_MODE=twin`). Nothing was sent
 - **Found, not fixed (frozen files):** after a deliberate landing the autopilot keeps its lifecycle
   running, says "I lost the subject. Looking around." on the ground, and in every full S1 take flapped
   FIND/CONFIRM at about 8 Hz (Findings 2 and 3).
-- Spend: about $0.001 (Voice Transcribe, one session per push-to-talk utterance; logged).
+- Spend: about $0.0015 (Voice Transcribe, one session per push-to-talk utterance; logged).
 
 ## What is here
 
@@ -158,7 +158,7 @@ Video and link, every take: frame age p50 508-536 ms while airborne (500 ms tota
 observation age p50 518-547 ms; RC gap max 50 ms; Chrome WebGL on the GPU (Metal) for the UI and the twin.
 One brief `video_stale` (0.6 s, autopilot neutral) at 24.2 s in the S2 03:39 take; none in the other four.
 
-### Voice and intent (all five takes)
+### Voice and intent (the five takes; the two S1 verification runs are below the table)
 
 | | S1 final | S1 first | S2 03:28 | S2 03:39 | S3 |
 |---|---|---|---|---|---|
@@ -217,19 +217,20 @@ release, listener decodes 277 and 281 ms.
    during uvicorn's graceful shutdown; when the twin server then died, that new mediamtx was orphaned. Both
    runs that left an orphan (the integrator's 03:02 and my 03:28) logged `mediamtx exited with 0;
    restarting` during shutdown; it is a race (the watchdog polls once a second), so most runs got away with
-   it. Fix in `src/mhd/twin/server.py`: no restart after a clean exit; no run after the fix logged it. Verified 5 of 5 stops without leftovers (3 without and 2 with the Chrome renderer),
-   and `demo_twin.py` additionally sweeps each process group after its leader exits. `e2e_twin.py` has the
-   same `Proc.stop` without the sweep.
+   it. Fix in `src/mhd/twin/server.py`: no restart after a clean exit; no run after the fix logged it.
+   Verified 5 of 5 stops without leftovers (3 without and 2 with the Chrome renderer), and `demo_twin.py`
+   additionally sweeps each process group after its leader exits. `e2e_twin.py` has the same `Proc.stop`
+   without the sweep.
 2. **After a deliberate landing the autopilot keeps running and speaks.** The mission stays active on the
    ground (by design: "the autopilot runs whenever a mission is active, including on the ground"). After
    touchdown the camera sits on the grass, the subject's box is clipped at the top edge, SAM stops
    re-confirming, and about 4 s after the land command the autopilot goes FOLLOW -> LOST
    (`confirmation_too_old`) and announces "I lost the subject. Looking around." (all four full S1 takes;
-   not in the S1 smoke run, S2 or S3). In a flight the operator hears this right after saying "land". Suggestion (frozen files):
-   no announcements unless AIRBORNE, or release the mission on a voice or UI land.
+   not in the S1 smoke run, S2 or S3). In a flight the operator hears this right after saying "land".
+   Suggestion (frozen files): no announcements unless AIRBORNE, or release the mission on a voice or UI land.
 3. **FIND <-> CONFIRM flapping at about 8 Hz** after that, on the ground (S1 final take: 27 transitions in
-   3.2 s; the other full S1 takes: 21, 8 and 31 state changes after the landing). Cause: the tracker score hovers around `lifecycle.confirm_min_score` 0.5
-   (0.47-0.63), and `_is_candidate` (enter CONFIRM) and `_consistent` (stay in CONFIRM) use the same
+   3.2 s; the other full S1 takes: 21, 8 and 31 state changes after the landing). Cause: the tracker score
+   hovers around `lifecycle.confirm_min_score` 0.5 (0.47-0.63), and `_is_candidate` (enter CONFIRM) and `_consistent` (stay in CONFIRM) use the same
    threshold with no hysteresis or debounce, so alternate frames enter and leave CONFIRM
    (`src/mhd/autopilot/core.py` lines 199-216 and 302-323, frozen). Perception meanwhile reports `confirmed`
    with `confirm_age_ms` growing past 5 s. On the ground it moves nothing, but the badge flickers and the
@@ -245,8 +246,8 @@ release, listener decodes 277 and 281 ms.
    low-passes the box width; these may be the walker turning at the end of its path (not verified).
 5. **`detector_latency_ms` only on detection frames** (51 of 1,344 observations in S1). Fixed in the UI
    (bar holds the last value 3 s). Backend alternative: `latency_ms.detector` = the last detection's latency.
-6. **"backward travel budget used up"** (governor safety event) in 2 of 3 S1 takes and in S3 while
-   following: the subject walked toward the drone and the autopilot used its budget for backing away blind.
+6. **"backward travel budget used up"** (governor safety event) in all four full S1 takes (about 55 s
+   into the recording) and in S3 while following: the subject walked toward the drone and the autopilot used its budget for backing away blind.
    Expected behavior, mentioned because it is visible in the Safety panel.
 7. **The mission card shows nothing while Glimmer thinks** (about 4 s between the final transcript and the
    card). The UI could show "intent: thinking (glimmer-30b+lora)" from the agent's final event.
@@ -263,13 +264,56 @@ release, listener decodes 277 and 281 ms.
 ## Tests
 
 - The demo takes themselves (7 full runs plus a 15 s smoke run and an 8 s check run after the last code
-  change): 0 fallbacks other than the RTSP port,
-  0 agent errors, 0 page errors, every process stopped at the end (checked with `ps` and `lsof` after the
-  cold-start run: nothing of mine left, ports 8000, 8766, 5173, 8555 and 8080 closed).
+  change): 0 fallbacks other than the RTSP port, 0 agent errors, 0 page errors, every process stopped at the
+  end (checked with `ps` and `lsof` after the cold-start and check runs: nothing of mine left, ports 8000,
+  8766, 5173, 8555 and 8080 closed).
 - `tests/ui` after the LatencyBars change: **89 passed, 6 skipped** (the opt-in gov tests), 130 s.
 - `tests/twin` after the watchdog change: **65 passed** in 179 s.
 - The twin shutdown check (5 stops of `run_twin.sh` by process-group SIGINT, 2 of them with the Chrome
   renderer): no process left in the group, RTSP port free afterwards.
+
+## For the video edit
+
+Beats in the recommended takes (video seconds; the UI and chase videos of a take start within 10 ms of each
+other, so the same times work for both):
+
+| Beat | S1 final (033642) | S2 (032802) | S3 (034231) |
+|---|---|---|---|
+| TAKEOFF click / AIRBORNE | 4.2 / 8.3 | 4.2 / 8.2 | 4.2 / 8.2 |
+| push-to-talk held (speech 11.4-13.8) | 10.9-14.2 | 10.9-14.2 | 10.9-13.5 |
+| final transcript / mission card (glimmer-30b+lora) | 14.4 / 18.5 | 14.4 / 18.5 | 13.7 / 17.8 |
+| FOLLOW (locked) | 19.9 | 20.0 | 19.2 |
+| walkers cross (S2) | | about 29.5 and 50.5 (DOUBT 30.7; LOST and back 43.6-44.7; DOUBT 51.9) | |
+| "Okay drone, please land now" / LANDING | 61.7 / 63.9 | 61.4 / 63.7 | 60.8 / 63.0 |
+| touchdown / Confirm touchdown | 66.5 / 68.0 | 66.2 / 67.8 | 65.6 / 67.1 |
+
+- Every full S1 take says "I lost the subject. Looking around." about 3.7 s after LANDING starts and the
+  autopilot badge flickers after touchdown (Findings 2 and 3); cut at the touchdown or mute that line.
+- The sound track is built from stems kept in each run directory: `audio/command.wav` and `audio/land.wav`
+  (the operator, `say` voice Samantha), `agent/tts_NN.wav` (the agent's MMS-TTS lines), with their start
+  times in `agent_events.jsonl` (`"type": "mic"` and `"type": "tts"`, `t_ms` on the shared clock;
+  `demo_result.json` `marks.recording_start.mono_s` is video time 0). `--no-audio` gives silent MP4s.
+- MMS-TTS is CC-BY-NC (PLAN licenses); `say` voices are Apple's.
+
+## README snippet (for whoever writes the README)
+
+```markdown
+### Try it in the digital twin (one command)
+
+    source env.sh
+    $MHD_PY scripts/demo_twin.py            # or --demo-scenario s2 / s3
+
+It starts the wire-level twin (same X69 packets and HEVC video as the real drone), the safety governor,
+SAM 3.1 on the Mac, the fine-tuned Muse Glimmer, the voice agent and the operator UI, then flies one voice
+mission and records it to media/demo/.
+
+![Dashboard in twin mode](docs/img/demo_s1_1_dashboard_twin.png)
+![Voice mission: Muse Voice Transcribe, fine-tuned Glimmer, SAM 3.1 mask, FOLLOW](docs/img/demo_s1_2_voice_mission_follow.png)
+![The twin's chase view](docs/img/demo_s1_chase_follow.png)
+![The red-shirt walker crosses; the lock stays on the blue shirt](docs/img/demo_s2_crossing_follow.png)
+![Follow the green car](docs/img/demo_s3_2_voice_mission_follow.png)
+!["Land" heard by the local listener, no button, no model](docs/img/demo_s1_5_landing_voice.png)
+```
 
 ## Shared artifacts
 
@@ -280,5 +324,6 @@ release, listener decodes 277 and 281 ms.
 ## Spend
 
 Voice Transcribe realtime, one session per push-to-talk utterance: about 3.5 audio seconds per take, about
-$0.0002 each, under $0.002 in total for the 8 runs plus the wrapper smoke test (lines with `"ws": "demo"` in `$MHD_HOME/logs/spend.jsonl`). Glimmer, SAM 3.1,
-Omnilingual and MMS-TTS ran on this Mac. No Fireworks or Spark calls.
+$0.0002 each, $0.0015 in total for the 9 recorded runs plus the wrapper smoke test (10 lines with
+`"ws": "demo"` in `$MHD_HOME/logs/spend.jsonl`). Glimmer, SAM 3.1, Omnilingual and MMS-TTS ran on this Mac.
+No Fireworks or Spark calls.
