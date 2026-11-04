@@ -23,13 +23,13 @@ the demo (25%), so every Meta model is named on screen, and new work is captione
 
 ## Recordings to use
 
-| ID | What | File | Status at 03:30 ET |
+| ID | What | File | Status at 03:50 ET |
 |---|---|---|---|
-| T1 | Twin S1: dashboard, takeoff, held Space, "Drone, follow the person in the blue shirt.", transcript, Glimmer mission card, FIND, CONFIRM, FOLLOW with the SAM mask, spoken "land", landing; audio track of the commands and the MMS-TTS replies | `media/demo/demo-s1-<stamp>-ui.mp4` (1920x1080) | being recorded tonight by the demo workstream (`scripts/demo_twin.py`) |
-| T2 | Twin S1 chase view of the same take | `media/demo/demo-s1-<stamp>-chase.mp4` (1280x720) | same |
-| T3 | Twin S2: the red-shirt walker crosses in front | `media/demo/demo-s2-<stamp>-ui.mp4`, `-chase.mp4` | same (`--demo-scenario s2`) |
-| T4 | Twin S3: "Drone, follow the green car." | `media/demo/demo-s3-<stamp>-ui.mp4`, `-chase.mp4` | same (`--demo-scenario s3`) |
-| S1 | Stills for titles and the end card | `docs/img/demo_s1_*.png` (dashboard, voice mission, following, chase) | same (`--stills`) |
+| T1 | Twin S1: dashboard, takeoff, held Space, "Drone, follow the person in the blue shirt.", transcript, Glimmer mission card, FIND, CONFIRM, FOLLOW with the SAM mask, spoken "land", landing; audio track of the commands and the MMS-TTS replies | `media/demo/demo-s1-<stamp>-ui.mp4` (1920x1080) | takes at 03:24 and 03:36 (`demo-s1-20261104-033642-ui.mp4` is the one the README stills come from), from `scripts/demo_twin.py` |
+| T2 | Twin S1 chase view of the same take | `media/demo/demo-s1-<stamp>-chase.mp4` (1280x720) | same two takes |
+| T3 | Twin S2: the red-shirt walker crosses in front | `media/demo/demo-s2-<stamp>-ui.mp4`, `-chase.mp4` | takes at 03:28 and 03:39 |
+| T4 | Twin S3: "Drone, follow the green car." | `media/demo/demo-s3-<stamp>-ui.mp4`, `-chase.mp4` | take at 03:42 |
+| S1 | Stills for titles and the end card | `docs/img/demo_*.png` (S1 dashboard, voice mission, chase, landing; S2 crossing; S3 voice mission) | committed on ws2/demo |
 | C1 | Intent evaluation chart | [docs/eval/intent_eval.png](eval/intent_eval.png) | ready |
 | C2 | SAM 3.1 on twin frames (white = truth, green = SAM) | [docs/img/percep/g2_examples.jpg](img/percep/g2_examples.jpg) | ready |
 | C3 | Architecture graphic | redraw the README diagram in the editor | to make |
