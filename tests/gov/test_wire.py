@@ -173,7 +173,11 @@ def test_wire_caps_estop_land_and_stale_obs(stack, record_property):
 
     # Autopilot caps on the wire: subject far right, yaw pinned at +38, roll and throttle 0.
     gov.set_mission(make_mission())
+    # Sent within mission.utterance_slack_s of the takeoff, so it may predate it: it stays paused
+    # until the operator's Resume (review fix 3).
+    assert gov.command("resume").ok
     feeder.obs_cx = 1250.0
+
     assert _wait(lambda: gov.autopilot.mode.value == "FOLLOW", 3.0)
     time.sleep(1.0)
     t0 = now_ms()

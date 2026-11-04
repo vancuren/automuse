@@ -279,3 +279,20 @@ def test_backend_refuses_to_start_without_flight_mode(monkeypatch, tmp_path):
     with pytest.raises(ModeError):
         with TestClient(ws_mod.app):
             pass
+
+
+def test_cors_and_ws_origin_on_the_real_app(backend):
+    """Review fix 8: CORS was '*' and /ws accepted any page. Loopback pages only now."""
+    from starlette.websockets import WebSocketDisconnect
+    client, hub = backend
+    pre = {"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"}
+    ok = client.options("/command", headers={"Origin": "http://localhost:5173", **pre})
+    assert ok.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    bad = client.options("/command", headers={"Origin": "http://evil.example", **pre})
+    assert "access-control-allow-origin" not in bad.headers
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws", headers={"origin": "http://evil.example"}) as ws:
+            ws.receive_text()
+    with client.websocket_connect("/ws", headers={"origin": "http://localhost:5173"}) as ws:
+        ws.send_text(json.dumps({"type": "cmd", "command": "estop"}))
+        assert _wait(lambda: hub.gov.state.value == "ESTOPPED")

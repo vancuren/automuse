@@ -55,8 +55,23 @@ def loads_strict(text: str) -> Any:
     return json.loads(text, parse_constant=_no_constants)
 
 
+def allowed_origin_hosts() -> set[str]:
+    """Loopback, plus hosts listed in MHD_EXTRA_ORIGIN_HOSTS (comma-separated), e.g. when the UI is
+    opened from another address on purpose."""
+    extra = {h.strip().lower() for h in os.environ.get("MHD_EXTRA_ORIGIN_HOSTS", "").split(",") if h.strip()}
+    return _LOOPBACK_HOSTS | extra
+
+
+def cors_origin_regex() -> str:
+    """CORS for the same pages that may open /ws (the UI's HTTP fallback for LAND / E-STOP)."""
+    import re
+    hosts = sorted(allowed_origin_hosts() - {"::1"})
+    alts = "|".join(re.escape(h) for h in hosts) + r"|\[::1\]"
+    return rf"https?://({alts})(:\d+)?"
+
+
 def origin_allowed(origin: Optional[str]) -> bool:
-    """No Origin (a local process) or a loopback page. Any other web page open in the operator's
+    """No Origin (a local process) or an allowed page. Any other web page open in the operator's
     browser must not be able to command the drone (WebSockets are not covered by CORS)."""
     if not origin:
         return True
@@ -64,7 +79,8 @@ def origin_allowed(origin: Optional[str]) -> bool:
         host = (urlparse(origin).hostname or "").lower()
     except ValueError:
         return False
-    return host in _LOOPBACK_HOSTS
+    return host in allowed_origin_hosts()
+
 
 
 class Hub:

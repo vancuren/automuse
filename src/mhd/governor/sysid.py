@@ -186,16 +186,21 @@ def run(backend: str, axis: str, amps: list[float], hold_s: float, rest_s: float
     def frames():
         det = aruco_detector()
         import cv2
-        with wsc.connect(ws_base + "/ws/frames", max_size=16 * 1024 * 1024) as fws:
-            last = -1
-            while not stop.is_set():
-                fws.send(json.dumps({"type": "next", "after_frame_id": last}))
-                meta, jpeg = decode_frame(fws.recv(timeout=3))
-                last = meta.frame_id
-                img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
-                m = aruco_measure(img, hfov, marker_size_m, det, marker_id) if img is not None else None
-                if m is not None:
-                    samples.append((meta.capture_ms, m[0], m[1]))
+        try:
+            with wsc.connect(ws_base + "/ws/frames", max_size=16 * 1024 * 1024) as fws:
+                last = -1
+                while not stop.is_set():
+                    fws.send(json.dumps({"type": "next", "after_frame_id": last}))
+                    meta, jpeg = decode_frame(fws.recv(timeout=3))
+                    last = meta.frame_id
+                    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+                    m = aruco_measure(img, hfov, marker_size_m, det, marker_id) if img is not None else None
+                    if m is not None:
+                        samples.append((meta.capture_ms, m[0], m[1]))
+        except Exception as exc:  # noqa: BLE001 - backend gone or stream ended: stop measuring
+            if not stop.is_set():
+                print(f"[sysid] frame stream ended: {exc!r}")
+
 
     th = threading.Thread(target=frames, daemon=True) if measure else None
     if th:
