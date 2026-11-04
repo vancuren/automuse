@@ -7,6 +7,7 @@ permission per app, and loopback is exempt, so only the real drone shows the pro
     $MHD_PY scripts/preflight.py                         # real drone at 172.16.11.1, all checks
     $MHD_PY scripts/preflight.py --only env,wifi,routes,internet,localnet
     $MHD_PY scripts/preflight.py --only video            # ffprobe: fps, GOP, bitrate, second client
+    $MHD_PY scripts/preflight.py --board lewei           # our unit: Lewei camera board at 192.168.0.1
     # tonight's test against the twin only (loopback; twin RTSP on 8650):
     $MHD_PY scripts/preflight.py --drone-ip 127.0.0.1 --rtsp-url rtsp://127.0.0.1:8650/live/ch00_1
 
@@ -14,7 +15,8 @@ Groups: env (doctor, both venvs), wifi, routes, internet, localnet (Local Networ
 video (ffprobe + second client), system (AirDrop/AWDL, stray processes).
 
 What it sends to the drone: one EMPTY UDP datagram to port 9 (discard), TCP connects to 554 and
-the RTSP port, and RTSP reads. Never an X69 control packet. Run it BEFORE the backend: the video
+the RTSP port, and RTSP reads. Never an X69 control packet. With --board lewei: a TCP connect to 7060
+and two short video reads (start-video, heartbeat, stop-video only), never a flight-control packet. Run it BEFORE the backend: the video
 checks open extra RTSP clients, and the X69 may allow only one.
 
 Exit code 0 when nothing FAILed. Results also go to logs/preflight-<time>.json.
@@ -41,6 +43,9 @@ from urllib.parse import urlparse
 TREE = Path(os.environ.get("MHD_TREE") or Path(__file__).resolve().parents[1])
 DRONE_IP = "172.16.11.1"
 RTSP_PATH = "/live/ch00_1"
+LEWEI_IP = "192.168.0.1"            # our unit's Lewei camera board: video TCP 7060, flight control UDP 50000
+LEWEI_VIDEO_PORT = 7060
+BOARDS = ("x69_lg", "lewei")
 API_HOST = "api.meta.ai"
 GROUPS = ("env", "wifi", "routes", "internet", "localnet", "video", "system")
 
@@ -154,6 +159,8 @@ class Preflight:
         self.a = a
         self.results: list[Result] = []
         self.loopback = ipaddress.ip_address(a.drone_ip).is_loopback
+        self.lewei = getattr(a, "board", "x69_lg") == "lewei"
+        self.subnet_x = ".".join(a.drone_ip.split(".")[:3]) + ".x"
         self.ports = hardware_ports()
         self.wifi_dev = a.wifi_device or self.ports.get("Wi-Fi", "en0")
         self.iphone_dev = next((d for n, d in self.ports.items() if "iphone" in n.lower()), None)
@@ -209,9 +216,9 @@ class Preflight:
                      + (f"; DHCP router option {router}: the drone offers a default route, so the "
                         "service order matters" if router else "; no DHCP router option"), data=data)
         else:
-            self.add("wifi", "on the drone's Wi-Fi", FAIL, f"{dev} has {ip or 'no IPv4 address'}, not 172.16.11.x",
+            self.add("wifi", "on the drone's Wi-Fi", FAIL, f"{dev} has {ip or 'no IPv4 address'}, not {self.subnet_x}",
                      f"power the drone, then join its Wi-Fi on {dev} (menu bar Wi-Fi icon); turn off auto-join "
-                     "for other networks; wait for a 172.16.11.x address", data)
+                     f"for other networks; wait for a {self.subnet_x} address", data)
 
     # ------------------------------------------------------------------ routes
     def check_routes(self) -> None:
@@ -309,9 +316,9 @@ class Preflight:
             udp_err = exc.errno
         finally:
             s.close()
-        ports = [554]
+        ports = [LEWEI_VIDEO_PORT] if self.lewei else [554]
         rtsp_port = urlparse(self.rtsp_url()).port or 554
-        if rtsp_port not in ports:
+        if not self.lewei and rtsp_port not in ports:
             ports.append(rtsp_port)
         tcp = {}
         for port in ports:
@@ -345,6 +352,16 @@ class Preflight:
                      "an unexpected socket error: check the Wi-Fi link and re-run", data)
             return
         self.add("localnet", "Local Network permission", PASS, detail, data=data)
+        if self.lewei:
+            e = tcp[LEWEI_VIDEO_PORT][0]
+            if e == 0:
+                self.add("localnet", f"TCP {LEWEI_VIDEO_PORT} (Lewei video)", PASS,
+                         f"connected in {tcp[LEWEI_VIDEO_PORT][1]:.0f} ms")
+            else:
+                self.add("localnet", f"TCP {LEWEI_VIDEO_PORT} (Lewei video)", FAIL, describe(e),
+                         "the camera board does not answer: is the drone on (it powers off a few minutes after "
+                         "video stops)? is the Mac on its Wi-Fi?", data)
+            return
         e554 = tcp[554][0]
         if self.loopback:
             self.add("localnet", "TCP 554 (RTSP)", INFO, f"{describe(e554)} (twin: RTSP is on {rtsp_port})")
@@ -366,6 +383,8 @@ class Preflight:
         return self.a.rtsp_url or f"rtsp://{self.a.drone_ip}{RTSP_PATH}"
 
     def check_video(self) -> None:
+        if self.lewei:
+            return self.check_video_lewei()
         url = self.rtsp_url()
         if self.backend_running() and not self.loopback:
             self.add("video", "backend not running", WARN, f"something listens on 127.0.0.1:{self.a.backend_port}",
@@ -413,6 +432,84 @@ class Preflight:
         self.add("video", "second simultaneous client", status,
                  f"{text} (A: {sc['a_frames']} frames, {sc['a_frames_during_b']} while B ran; B: {sc['b_frames']})",
                  fix, sc)
+
+    def check_video_lewei(self) -> None:
+        """Two short reads through our own Lewei client (start-video, heartbeat, stop-video only).
+        Measured on 2026-11-04: a second reader does not disturb the first on this board."""
+        if str(TREE / "src") not in sys.path:
+            sys.path.insert(0, str(TREE / "src"))
+        from mhd.lewei.protocol import LeweiStream
+        secs = max(2.0, self.a.probe_seconds)
+        stats = {"a": {"frames": 0, "bytes": 0, "err": None, "during_b": 0}, "b": {"frames": 0, "bytes": 0, "err": None}}
+        sample = bytearray()
+        b_window = [None, None]
+
+        def reader(key: str, delay: float, dur: float) -> None:
+            time.sleep(delay)
+            if key == "b":
+                b_window[0] = time.monotonic()
+            end = time.monotonic() + dur
+            try:
+                with LeweiStream(self.a.drone_ip, LEWEI_VIDEO_PORT, read_timeout=3.0) as cam:
+                    for f in cam.frames():
+                        st = stats[key]
+                        st["frames"] += 1
+                        st["bytes"] += len(f.data)
+                        if key == "a":
+                            if len(sample) < 3_000_000:
+                                sample.extend(f.data)
+                            if b_window[0] and not b_window[1]:
+                                st["during_b"] += 1
+                        if time.monotonic() >= end:
+                            break
+            except Exception as exc:  # noqa: BLE001 - reported below
+                stats[key]["err"] = f"{type(exc).__name__}: {exc}"
+            if key == "b":
+                b_window[1] = time.monotonic()
+
+        ta = threading.Thread(target=reader, args=("a", 0.0, secs), daemon=True)
+        ta.start()
+        tb = None
+        if not self.a.skip_second_client:
+            tb = threading.Thread(target=reader, args=("b", secs / 3, secs / 3), daemon=True)
+            tb.start()
+        ta.join(secs + 20)
+        if tb:
+            tb.join(secs + 20)
+        a_st = stats["a"]
+        if a_st["frames"] == 0:
+            self.add("video", "Lewei video stream", FAIL, a_st["err"] or "no frames",
+                     "power the drone (it switches off a few minutes after video stops) and join its Wi-Fi", stats)
+            return
+        fps, mbps = a_st["frames"] / secs, a_st["bytes"] * 8 / secs / 1e6
+        info = {}
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            tmp = TREE / ".cache" / "tmp" / f"preflight_lewei_{os.getpid()}.h264"
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_bytes(bytes(sample))
+            code, out = run([ffprobe, "-v", "error", "-show_entries", "stream=codec_name,width,height,profile",
+                             "-of", "json", str(tmp)])
+            try:
+                info = (json.loads(out[out.index("{"):]).get("streams") or [{}])[0] if code == 0 else {}
+            except ValueError:
+                info = {}
+            tmp.unlink(missing_ok=True)
+        ok = fps >= 10 and info.get("width")
+        self.add("video", "Lewei video stream", PASS if ok else WARN,
+                 f"{info.get('codec_name', '?')} {info.get('width', '?')}x{info.get('height', '?')} "
+                 f"{info.get('profile') or ''}, {fps:.1f} fps, {mbps:.2f} Mbit/s over TCP {LEWEI_VIDEO_PORT}",
+                 "" if ok else "low frame rate or undecodable sample: check light, distance and Wi-Fi", {**stats, **info})
+        if tb is None:
+            self.add("video", "second simultaneous client", SKIP, "--skip-second-client")
+        else:
+            b_st = stats["b"]
+            both = b_st["frames"] > 0 and a_st["during_b"] > 0
+            self.add("video", "second simultaneous client", PASS if both else WARN,
+                     f"A: {a_st['frames']} frames ({a_st['during_b']} while B ran); B: {b_st['frames']} frames"
+                     + (f"; B error {b_st['err']}" if b_st["err"] else ""),
+                     "" if both else "a second reader disturbed the first: record only from the backend while flying",
+                     stats)
 
     def backend_running(self) -> bool:
         with socket.socket() as s:
@@ -642,7 +739,9 @@ def print_table(results: list[Result], color: bool) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-    ap.add_argument("--drone-ip", default=DRONE_IP, help="drone address for every drone-facing check")
+    ap.add_argument("--board", choices=BOARDS, default="x69_lg",
+                    help=f"x69_lg (172.16.11.1, RTSP) or lewei (our unit: {LEWEI_IP}, video TCP {LEWEI_VIDEO_PORT})")
+    ap.add_argument("--drone-ip", default=None, help=f"drone address (default {DRONE_IP}, or {LEWEI_IP} with --board lewei)")
     ap.add_argument("--rtsp-url", default=None, help=f"default rtsp://<drone-ip>{RTSP_PATH}")
     ap.add_argument("--only", default="", help=f"comma list of groups: {','.join(GROUPS)}")
     ap.add_argument("--skip", default="", help="comma list of groups to skip")
@@ -657,22 +756,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--json", default=None, help="results file (default logs/preflight-<time>.json)")
     ap.add_argument("--no-color", action="store_true")
     a = ap.parse_args(argv)
+    a.drone_ip = a.drone_ip or (LEWEI_IP if a.board == "lewei" else DRONE_IP)
     try:
         ip = ipaddress.ip_address(a.drone_ip)
     except ValueError:
         raise SystemExit(f"--drone-ip {a.drone_ip!r} is not an IPv4 address")
     if os.environ.get("MHD_OPS_LOOPBACK_ONLY") == "1" and not ip.is_loopback:
         raise SystemExit("MHD_OPS_LOOPBACK_ONLY=1: refusing a non-loopback --drone-ip")
-    if not ip.is_loopback and a.drone_ip != DRONE_IP:
-        print(f"note: --drone-ip {a.drone_ip} is neither the X69 ({DRONE_IP}) nor loopback", file=sys.stderr)
+    if not ip.is_loopback and a.drone_ip not in (DRONE_IP, LEWEI_IP):
+        print(f"note: --drone-ip {a.drone_ip} is neither the X69 ({DRONE_IP}), the Lewei board ({LEWEI_IP}) "
+              "nor loopback", file=sys.stderr)
     pf = Preflight(a)
-    print(f"preflight: drone {a.drone_ip} ({'loopback/twin' if pf.loopback else 'REAL drone'}), "
-          f"RTSP {pf.rtsp_url()}, Wi-Fi {pf.wifi_dev}, iPhone USB {pf.iphone_dev or 'not present'}, app {pf.app}")
+    print(f"preflight: drone {a.drone_ip} ({'loopback/twin' if pf.loopback else 'REAL drone'}, board {a.board}), "
+          f"{'video TCP ' + str(LEWEI_VIDEO_PORT) if pf.lewei else 'RTSP ' + pf.rtsp_url()}, Wi-Fi {pf.wifi_dev}, iPhone USB {pf.iphone_dev or 'not present'}, app {pf.app}")
     code = pf.run()
     print_table(pf.results, color=sys.stdout.isatty() and not a.no_color)
     out = Path(a.json) if a.json else TREE / "logs" / f"preflight-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "drone_ip": a.drone_ip,
+    out.write_text(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "drone_ip": a.drone_ip, "board": a.board,
                                "rtsp_url": pf.rtsp_url(), "loopback": pf.loopback, "exit_code": code,
                                "results": [asdict(r) for r in pf.results]}, indent=1, default=str))
     print(f"results: {out}")

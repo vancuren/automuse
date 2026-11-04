@@ -9,6 +9,11 @@ carry into Session B (MHD_CAPTURE_OFFSET_MS, HFOV, theta, land fallback, link-lo
     $MHD_PY scripts/session_a.py                       # the real X69 (172.16.11.1), interactive
     $MHD_PY scripts/session_a.py --only flags,linkloss_rcpause --resume logs/session_a-....json
     $MHD_PY scripts/session_a.py --list                # step names
+    $MHD_PY scripts/session_a.py --board lewei         # OUR unit: Lewei camera board at 192.168.0.1
+
+With --board lewei the stack must run from the start (run_stack.sh --mode real --board lewei ...): its
+video relay feeds the backend and keeps the drone awake (it powers off when video stops), and a second
+video reader is fine on this board, so no step asks you to stop the backend.
 
 Answers: y / n / ? (unknown) / s (skip the step) / q (save and quit). Enter takes the [default].
 
@@ -45,6 +50,8 @@ PY = os.environ.get("MHD_PY", sys.executable)
 warnings.filterwarnings("ignore", message=r"connect\(\) must be used as a context manager", category=DeprecationWarning)
 ML_PY = os.environ.get("MHD_ML_PY", "")
 DRONE_IP = "172.16.11.1"
+LEWEI_IP = "192.168.0.1"
+LEWEI_RTSP = "rtsp://127.0.0.1:8554/live/ch00_1"   # the lewei_bridge relay inside run_stack.sh
 
 
 class Quit(Exception):
@@ -349,7 +356,10 @@ class Session:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.media_dir = Path(a.media_dir) if a.media_dir else TREE / "media" / self.out_dir.name
         self.drone_ip = "127.0.0.1" if self.auto else a.drone_ip
-        self.rtsp_url = a.rtsp_url or f"rtsp://{self.drone_ip}/live/ch00_1"
+        self.lewei = getattr(a, "board", "x69_lg") == "lewei" and not self.auto
+        self.rtsp_url = a.rtsp_url or (LEWEI_RTSP if self.lewei else f"rtsp://{self.drone_ip}/live/ch00_1")
+        board = " --board lewei" if self.lewei else ""
+        self.stack_cmd = f"scripts/run_stack.sh --mode real{board} --no-perception --no-agent"
 
     # ------------------------------------------------------------------ process helpers
     def spawn(self, cmd: list[str], log: Path, env: Optional[dict] = None) -> subprocess.Popen:
@@ -406,7 +416,7 @@ class Session:
                 continue
             self.io.warn(f"no backend on 127.0.0.1:{self.a.backend_port}")
             self.io.do("start it in a second window of the SAME terminal app:",
-                       "  scripts/run_stack.sh --mode real --no-perception --no-agent   (backend + UI)")
+                       f"  {self.stack_cmd}   (backend + UI)")
             self.io.enter("press Enter once it is up (s = skip this step)")
         s = self.be.state()
         if not self.auto and s.get("flight_mode") != "real":
@@ -534,6 +544,8 @@ class Session:
         out = self.out_dir / f"preflight-{only.replace(',', '_')}.json"
         cmd = [PY, str(TREE / "scripts" / "preflight.py"), "--drone-ip", self.drone_ip, "--only", only,
                "--rtsp-url", self.rtsp_url, "--json", str(out), "--backend-port", str(self.a.backend_port)]
+        if self.lewei:
+            cmd += ["--board", "lewei"]
         if self.a.skip_ml:
             cmd.append("--skip-ml")
         while True:
@@ -568,12 +580,21 @@ class Session:
 
     def step_ffprobe(self, st: str) -> None:
         io = self.io
-        if self.be.up() and not self.auto:
+        if self.be.up() and not self.auto and not self.lewei:
             io.warn("a backend is running: stop it for this step (the X69 may allow only one RTSP client)")
             io.enter("press Enter when the backend is stopped (s = skip)")
         io.say("ffprobe: frame rate, keyframe interval, bitrate, and whether a second RTSP client is allowed")
         res = self.run_preflight(st, "video")
         rows = {r["name"]: r for r in res.get("results", []) if r["group"] == "video"}
+        if self.lewei:
+            lw = rows.get("Lewei video stream", {})
+            sc = rows.get("second simultaneous client", {})
+            d = lw.get("data", {})
+            self.rec.measure(st, "stream", {k: d.get(k) for k in ("codec_name", "width", "height", "profile")})
+            self.rec.measure(st, "detail", lw.get("detail"))
+            self.rec.measure(st, "second_client", "both" if sc.get("status") == "PASS" else sc.get("status"))
+            self.rec.measure(st, "ok", lw.get("status") == "PASS")
+            return
         stream = rows.get("RTSP stream", {}).get("data", {})
         stats = rows.get("fps / keyframes / bitrate", {}).get("data", {})
         sc = rows.get("second simultaneous client", {}).get("data", {})
@@ -590,7 +611,11 @@ class Session:
         io = self.io
         single = self.rec.get("ffprobe", "measured", "second_client") in ("only_one", "kicks_first")
         io.say(f"recordings go to {self.media_dir} (gitignored; raw footage of people never enters the repo)")
-        if self.be.up() and single and not self.auto:
+        if self.lewei and not self.be.up():
+            io.warn(f"with --board lewei the recordings read the stack's video relay ({self.rtsp_url})")
+            io.do("start it in a second window of the SAME terminal app:", f"  {self.stack_cmd}")
+            io.enter("press Enter once it is up (s = skip)")
+        if self.be.up() and single and not self.auto and not self.lewei:
             io.warn("the backend is running and the drone allows one client: stop the backend for these recordings")
             io.enter("press Enter when the backend is stopped (s = skip)")
         self.media_dir.mkdir(parents=True, exist_ok=True)
@@ -638,7 +663,7 @@ class Session:
                 self.start_twin_backend()
         else:
             io.do("in a second window of the SAME terminal app:",
-                  "  scripts/run_stack.sh --mode real --no-perception --no-agent",
+                  f"  {self.stack_cmd}",
                   "then open the URL it prints (http://127.0.0.1:5173) in its own Chrome window, never minimized")
             io.enter("press Enter when the stack says it is up")
         s = self.need_backend(st)
@@ -1249,8 +1274,10 @@ def expand(names: str) -> list[str]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Session A props-off checklist", epilog=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--drone-ip", default=DRONE_IP)
-    ap.add_argument("--rtsp-url", default=None, help="default rtsp://<drone-ip>/live/ch00_1")
+    ap.add_argument("--board", choices=("x69_lg", "lewei"), default="x69_lg",
+                    help=f"x69_lg ({DRONE_IP}) or lewei (our unit: {LEWEI_IP}, video through the stack's relay)")
+    ap.add_argument("--drone-ip", default=None, help=f"default {DRONE_IP}, or {LEWEI_IP} with --board lewei")
+    ap.add_argument("--rtsp-url", default=None, help=f"default rtsp://<drone-ip>/live/ch00_1, or {LEWEI_RTSP} with --board lewei")
     ap.add_argument("--backend-port", type=int, default=8000)
     ap.add_argument("--counter-port", type=int, default=8766, help="screen counter page (the twin is off in real mode)")
     ap.add_argument("--only", default="", help="comma list of steps (aliases: flags, linkloss)")
@@ -1269,6 +1296,7 @@ def main(argv=None) -> int:
     ap.add_argument("--twin-hfov-deg", type=float, default=75.0, help="auto-twin: the twin camera's HFOV")
     ap.add_argument("--no-color", action="store_true")
     a = ap.parse_args(argv)
+    a.drone_ip = a.drone_ip or (LEWEI_IP if a.board == "lewei" else DRONE_IP)
     if a.list:
         for name, title, _ in STEPS:
             print(f"{name:20s} {title}")
@@ -1290,7 +1318,7 @@ def main(argv=None) -> int:
     path = Path(a.resume) if a.resume else TREE / "logs" / f"session_a-{time.strftime('%Y%m%d-%H%M%S')}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = Recorder(path, {"started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "mode": "auto-twin" if a.auto_twin else "real",
-                          "drone_ip": a.drone_ip, "argv": sys.argv[1:]}, resume)
+                          "drone_ip": a.drone_ip, "board": a.board, "argv": sys.argv[1:]}, resume)
     s = Session(a, io, rec)
     names = expand(a.only) if a.only else [x[0] for x in STEPS]
     skip = set(expand(a.skip)) if a.skip else set()
