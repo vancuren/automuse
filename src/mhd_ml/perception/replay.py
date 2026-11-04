@@ -112,14 +112,23 @@ def annotate(img: np.ndarray, obs: Optional[SubjectObs], cands: Optional[Candida
     return out
 
 
-def load_truth(path: Optional[str]) -> dict[int, tuple]:
+def load_truth(path: Optional[str], label: Optional[str] = None) -> dict[int, tuple]:
+    """Truth boxes by frame index. Two formats:
+    - {"frame": i, "box": [x1, y1, x2, y2]} per line;
+    - the twin's mhd.contracts.Truth per line (a frame folder's truth.jsonl, in frame order): the
+      box of the actor whose label equals `label` (frames where it is off screen are skipped)."""
     if not path:
         return {}
     out = {}
     with open(path) as f:
-        for line in f:
+        for i, line in enumerate(f):
             row = json.loads(line)
-            if row.get("box"):
+            if row.get("type") == "truth":
+                for a in row.get("actors", []):
+                    if a.get("label") == label and a.get("box"):
+                        b = a["box"]
+                        out[i] = (b["x1"], b["y1"], b["x2"], b["y2"])
+            elif row.get("box"):
                 out[int(row["frame"])] = tuple(row["box"])
     return out
 
@@ -234,7 +243,8 @@ def main() -> None:
     ap.add_argument("--tracker", default="auto", choices=["auto", "sam_mlx", "vit", "kcf", "csrt"])
     ap.add_argument("--fps", type=float, default=15.0)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--truth", default=None)
+    ap.add_argument("--truth", default=None, help="truth JSONL (frame/box lines, or a twin truth.jsonl)")
+    ap.add_argument("--truth-label", default=None, help="actor label to score in a twin truth.jsonl (default: --phrase)")
     ap.add_argument("--max-frames", type=int, default=None)
     ap.add_argument("--det-latency-ms", type=float, default=None,
                     help="fixed detector latency in the synthetic clock (default: measured)")
@@ -251,7 +261,8 @@ def main() -> None:
     cfg = PerceptionConfig(min_score=args.min_score, mask_counter=args.mask_counter)
     try:
         summary = replay(iter_frames(args.input, args.max_frames), args.phrase, args.category, args.color,
-                         det, args.tracker, args.fps, args.out, load_truth(args.truth), args.det_latency_ms,
+                         det, args.tracker, args.fps, args.out,
+                         load_truth(args.truth, args.truth_label or args.phrase), args.det_latency_ms,
                          cfg, not args.no_video, args.flight_mode)
     finally:
         close = getattr(det, "close", None)

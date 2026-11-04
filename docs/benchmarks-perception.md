@@ -173,3 +173,57 @@ The 1 Hz follow rate plus a 625 ms detector gives a confirmation age up to about
 autopilot's forward-motion rule needs less than 1.5 s, so under GPU load either raise the
 follow rate (`--follow-hz 1.5`) or accept yaw-only moments. With an idle GPU (real flights,
 234 ms detector) the maximum is about 1.25 s.
+
+## G2: SAM 3.1 on twin frames that went through the full HEVC path (00:29-00:33 ET)
+
+**Frames:** the twin's second capture in `media/shared/twin` (00:25-00:28 ET), snapshot copied
+to `media/g2/` (not in git). Per the twin's README, every frame went: Three.js render, blur and
+sensor noise, counter block, hevc_videotoolbox at 3 Mb/s, RTSP, cv2 decode, JPEG q95.
+60 frames per scenario (every 8th render, so about 3.1 fps). Truth: one `Truth` per frame.
+The counter block was masked with the twin's own ROI (1008, 640, 1280, 720).
+**Load:** Glimmer LoRA training on the GPU; detector input 672 (backbone p50 about 420 ms).
+Reproduce: `MHD_COUNTER_ROI=1008,640,1280,720 $MHD_ML_PY -m mhd_ml.perception.bench_g2 --twin media/g2/<snapshot>`
+
+Hit = a detection with score >= 0.4 and IoU >= 0.5 with the actor's truth box.
+"Mostly visible" = the twin's visible_frac >= 0.5 (in frame and not occluded).
+
+| Scenario, prompt | frames visible | recall (IoU 0.5) | recall, mostly visible | median hit score | false alarms while off screen: raw / after color gate |
+|---|---|---|---|---|---|
+| S1 "person in blue shirt" | 60 | **100%** | 100% (60) | 0.95 | none off screen |
+| S2 "person in blue shirt" | 60 | **98.3%** | 100% (56) | 0.95 | none off screen |
+| S2 "person in red shirt" | 24 | 83.3% | 100% (17) | 0.92 | **34 of 36 -> 0** |
+| S3 "green car" (toy RC car, 0.5-4% of the frame) | 60 | **100%** | 100% (60) | 0.94 | none off screen |
+| S3 "person in yellow shirt" | 52 | 86.5% | 100% (45) | 0.94 | 0 of 8 |
+| S3 "red car" | 32 | 84.4% | 100% (18) | 0.91 | 0 of 28 |
+
+**G2 verdict: go.** S1 recall is 100% against the 90% gate, and every actor that is at least half
+visible is found in every frame. Every miss is an actor cut by the frame edge or hidden behind
+the other walker (example crops below).
+
+**The color gate (found here, fixed in `pipeline.py`).** With the red walker off screen,
+"person in red shirt" boxes the blue walker with scores 0.47-0.72 (true hits score 0.92). Ranking
+by color alone cannot stop this, because there is no other candidate. So candidates whose
+upper-body mask region matches the requested color in less than 8% of its pixels are dropped.
+On these frames that removes all 34 false alarms and none of the true detections.
+`tests/percep/test_pipeline.py::test_wrong_color_detection_never_becomes_a_track` covers it.
+
+![G2 examples: white = twin truth box, green = SAM's top box (hit), red = miss or wrong](img/percep/g2_examples.jpg)
+
+The first capture (00:17-00:20 ET, smaller subjects) gave lower IoU-based recall for the blue
+walker (54-57%). That was not a detection failure: SAM found it in every frame at score 0.95, but
+its box spanned the walker's full stride, and that capture's truth boxes were about half as wide
+(IoU 0.40-0.45). The twin re-captured at 00:25.
+
+### The full pipeline on the twin frames (replay, SAM MLX 672 + VitTrack, 3.1 fps)
+
+`$MHD_ML_PY -m mhd_ml.perception.replay --input media/g2/<snapshot>/s2 --phrase "person in blue shirt" --color blue --fps 3.125 --flight-mode twin --truth .../s2/truth.jsonl`
+
+| Scenario, subject | time to confirmed | identity switches | locked (IoU >= 0.5) after confirmation | boxed with IoU >= 0.3 after confirmation |
+|---|---|---|---|---|
+| S1 blue walker | 2.2 s | 0 | 86.8% | **100%** (46 >= 0.5, 7 at 0.3-0.5) |
+| S2 blue walker, red one crossing in front | 1.9 s | **0** | **92.6%** | |
+| S3 green RC car | 2.2 s | 0 | **100%** | |
+| S2 red walker (visible 24 frames, close and fast) | 5.4 s | 0 | 60% | 87% |
+
+These saved frames are only 3.1 fps, so the tracker sees 8 render frames of motion per step.
+Live at 25 fps it has an easier job.

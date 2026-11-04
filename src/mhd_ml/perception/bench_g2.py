@@ -20,8 +20,14 @@ from pathlib import Path
 import numpy as np
 
 from .benchutil import load_snapshot
-from .fusion import mask_counter
+from .fusion import color_fraction, mask_counter, normalize_color, work_image
 from .types import iou
+
+MIN_COLOR_FRAC = 0.08     # the pipeline's color gate (PerceptionConfig.min_color_frac)
+
+
+def _color_of(label: str):
+    return next((w for w in label.lower().split() if normalize_color(w)), None)
 
 
 def _box(b):
@@ -53,9 +59,13 @@ def run_scenario(eng, folder: Path, res: int, min_score: float, every: int = 1) 
                 dets = eng.to_detections(eng.detect_features(feats, lab, 0.2), lab)
                 per_label[lab] = (dets, (time.perf_counter() - t1) * 1e3)
         actors = {a["label"]: a for a in t["actors"]}
+        work = work_image(img, False)
         for lab in labels:
             dets, head_ms = per_label[lab]
             good = [d for d in dets if d.score >= min_score]
+            color, cat = _color_of(lab), ("car" if "car" in lab else "person")
+            fracs = [color_fraction(work, d.box, d.mask, color, cat) for d in good]
+            gated = [d for d, fr in zip(good, fracs) if fr is None or fr >= MIN_COLOR_FRAC]
             a = actors.get(lab)
             tb = _box(a["box"]) if a else None
             others = [_box(o["box"]) for o in t["actors"] if o["label"] != lab and o["box"]]
@@ -65,14 +75,18 @@ def run_scenario(eng, folder: Path, res: int, min_score: float, every: int = 1) 
                    "backbone_ms": round(t_bb, 1), "head_ms": round(head_ms, 1),
                    "top": [round(v, 1) for v in good[0].box] if good else None,
                    "top_score": round(good[0].score, 3) if good else 0.0}
+            row["top_frac"] = round(fracs[0], 3) if fracs and fracs[0] is not None else None
             if tb is not None:
                 hits = [d for d in good if iou(d.box, tb) >= 0.5]
                 row["hit"] = bool(hits)
+                row["hit_relaxed"] = any(iou(d.box, tb) >= 0.3 for d in good)
+                row["hit_relaxed_gated"] = any(iou(d.box, tb) >= 0.3 for d in gated)
                 row["hit_score"] = round(max((d.score for d in hits), default=0.0), 3)
                 row["top1_ok"] = bool(good) and iou(good[0].box, tb) >= 0.5
                 row["confused"] = bool(good) and not row["top1_ok"] and any(iou(good[0].box, o) >= 0.5 for o in others)
             else:
                 row["false_alarm"] = bool(good)
+                row["false_alarm_gated"] = bool(gated)
                 row["confused"] = bool(good) and any(iou(good[0].box, o) >= 0.5 for o in others)
             rows.append(row)
     out = {"labels": labels, "rows": rows}
@@ -80,9 +94,17 @@ def run_scenario(eng, folder: Path, res: int, min_score: float, every: int = 1) 
         vis = [r for r in rows if r["label"] == lab and r["visible"]]
         invis = [r for r in rows if r["label"] == lab and not r["visible"]]
         big = [r for r in vis if r["area"] >= 0.05]
+        mostly = [r for r in vis if r["visible_frac"] >= 0.5]
+        frac_of = lambda key, sel: round(sum(r[key] for r in sel) / len(sel), 3) if sel else None
         out[lab] = {
             "visible_frames": len(vis),
             "recall": round(sum(r["hit"] for r in vis) / len(vis), 3) if vis else None,
+            "recall_iou30": frac_of("hit_relaxed", vis),
+            "mostly_visible_frames": len(mostly),
+            "recall_iou50_mostly_visible": frac_of("hit", mostly),
+            "recall_iou30_mostly_visible": frac_of("hit_relaxed", mostly),
+            "recall_iou30_mostly_visible_after_color_gate": frac_of("hit_relaxed_gated", mostly),
+            "false_alarms_offscreen_after_color_gate": sum(r.get("false_alarm_gated", False) for r in invis),
             "top1": round(sum(r["top1_ok"] for r in vis) / len(vis), 3) if vis else None,
             "confused": sum(r["confused"] for r in vis),
             "recall_area_ge_5pct": (round(sum(r["hit"] for r in big) / len(big), 3) if big else None),
