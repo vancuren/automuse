@@ -180,3 +180,90 @@ def test_low_scores_and_counter_detections_ignored():
     obs = [m for m in msgs if m.type == "subject_obs"]
     assert all(o.state == SubjectState.searching for o in obs)
     assert obs[-1].source.value == "sam_api"
+
+
+def test_repeated_find_request_does_not_reset_the_track():
+    core = _core()
+    scene = Scene([Person(500, 200, shirt=BLUE)])
+    req = FindRequest(mission_id="r1", subject_phrase="person in blue shirt", category="person", color="blue")
+    core.on_find(req)
+    run(core, scene, 30, det_fn=lambda job, boxes: truth_dets(boxes))
+    tid = core.track.track_id
+    core.on_find(req)                                    # e.g. the backend re-sends on reconnect
+    assert core.track is not None and core.track.track_id == tid
+    core.on_find(FindRequest(mission_id="r2", subject_phrase="person in red shirt", category="person", color="red"))
+    assert core.track is None and core.mission.mission_id == "r2"
+
+
+def test_empty_phrase_falls_back_to_category_or_is_ignored():
+    core = _core()
+    core.on_find(FindRequest(mission_id="e1", subject_phrase="  ", category="car"))
+    assert core.mission.phrase == "car"
+    core2 = _core()
+    core2.on_find(FindRequest(mission_id="e2", subject_phrase="", category="none"))
+    assert core2.mission is None
+
+
+def test_late_select_reidentifies_the_chosen_subject():
+    core = _core()
+    left, right = Person(200, 200, shirt=BLUE), Person(800, 200, shirt=BLUE)
+    scene = Scene([left, right])
+    core.on_find(FindRequest(mission_id="s1", subject_phrase="person in blue shirt", category="person", color="blue"))
+    msgs = run(core, scene, 6, det_fn=lambda job, boxes: truth_dets(boxes))
+    assert any(isinstance(m, Candidates) for m in msgs)
+    # The user answers 3 s later: both people have walked 120 px to the right meanwhile.
+    left.vx = right.vx = 40.0
+    run(core, scene, 60, start=6, det_fn=lambda job, boxes: [])     # detector sees nobody meanwhile
+    core.on_select(Select(mission_id="s1", index=2))
+    assert core.track is None and core.selected is not None
+    msgs = run(core, scene, 10, start=66, det_fn=lambda job, boxes: truth_dets(boxes))
+    last = [m for m in msgs if m.type == "subject_obs"][-1]
+    assert last.state == SubjectState.confirmed and last.box.x1 > 700           # still the right one
+
+
+def test_candidate_numbers_stay_fixed_until_resent():
+    core = _core(candidates_resend_ms=10_000)
+    scene = Scene([Person(200, 200, shirt=BLUE), Person(800, 200, shirt=BLUE)])
+    core.on_find(FindRequest(mission_id="c1", subject_phrase="person in blue shirt", category="person", color="blue"))
+    run(core, scene, 4, det_fn=lambda job, boxes: truth_dets(boxes))
+    first_items = [c.det.box for c in core.pending.items]
+    # A third look-alike appears on the far left; the set the user is looking at must not change.
+    scene.people.append(Person(20, 200, shirt=BLUE))
+    run(core, scene, 20, start=4, det_fn=lambda job, boxes: truth_dets(boxes))
+    assert [c.det.box for c in core.pending.items] == first_items
+
+
+def test_backend_restart_resets_buffer_and_track():
+    core = _core()
+    scene = Scene([Person(500, 200, shirt=BLUE)])
+    core.on_find(FindRequest(mission_id="b1", subject_phrase="person", category="person"))
+    run(core, scene, 30, det_fn=lambda job, boxes: truth_dets(boxes))
+    img, _ = scene.frame(0)
+    out = core.on_frame(_meta(0, 99_000.0), img)              # frame ids start again at 0
+    assert out[0].state == SubjectState.lost and len(core.ring) == 1
+
+
+def test_no_blind_start_from_a_stale_detection():
+    core = _core()
+    scene = Scene([Person(500, 200, vx=200, shirt=BLUE)])
+    core.on_find(FindRequest(mission_id="st1", subject_phrase="person", category="person"))
+    img, boxes = scene.frame(0)
+    core.on_frame(_meta(0, 0.0), img)
+    job = core.detection_due(0.0)
+    for i in range(1, 60):                                   # 3 s pass: frame 0 leaves the buffer
+        img, _ = scene.frame(i)
+        core.on_frame(_meta(i, i * 50.0), img)
+    assert core.ring.get(0) is None
+    core.on_detection(job, truth_dets(boxes), now_ms=3000.0)
+    assert core.track is None                                # refused: 2.95 s old, no replay
+
+
+def test_subject_leaving_the_frame_edge_is_lost_not_degenerate():
+    core = _core()
+    p = Person(1000, 200, vx=600, shirt=BLUE)                # runs off the right edge
+    scene = Scene([p])
+    core.on_find(FindRequest(mission_id="edge", subject_phrase="person", category="person"))
+    msgs = run(core, scene, 25, det_fn=lambda job, boxes: truth_dets(
+        [b for b in boxes if b[0] < 1270]))
+    for o in [m for m in msgs if m.type == "subject_obs" and m.box is not None]:
+        assert o.box.w >= 8 and o.box.h >= 8

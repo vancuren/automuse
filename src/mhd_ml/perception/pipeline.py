@@ -57,6 +57,8 @@ class PerceptionConfig:
     mask_counter: str = "auto"        # auto (twin frames only), on, off
     hfov_deg: float = DEFAULT_HFOV_DEG
     history_ms: float = 2500.0
+    max_blind_start_ms: float = 300.0  # start without replay only from a detection this fresh
+    min_box_px: float = 8.0           # a fused box smaller than this (at the frame edge) = lost
 
 
 @dataclass
@@ -142,6 +144,7 @@ class PerceptionCore:
         self.mission: Optional[MissionSpec] = None
         self.track: Optional[Track] = None
         self.pending: Optional[PendingTie] = None
+        self.selected: Optional[Cand] = None      # the user's pick, waiting for a fresh detection
         self.ring = FrameRing(span_ms=2000.0)
         self.det_inflight = False
         self.last_det_submit_ms = -1e18
@@ -167,9 +170,17 @@ class PerceptionCore:
     # ----- commands from the backend --------------------------------------------------------
     def on_find(self, msg: FindRequest) -> None:
         with self.lock:
-            self.mission = MissionSpec(msg.mission_id, msg.subject_phrase.strip(), msg.category, msg.color)
+            phrase = msg.subject_phrase.strip() or (msg.category if msg.category != "none" else "")
+            if not phrase:
+                log.warning("find %s has no subject phrase; ignored", msg.mission_id)
+                return
+            spec = MissionSpec(msg.mission_id, phrase, msg.category, msg.color)
+            if self.mission == spec:
+                return                            # a repeated FindRequest must not reset the track
+            self.mission = spec
             self.track = None
             self.pending = None
+            self.selected = None
             self.last_det_submit_ms = -1e18       # detect at once
             log.info("find %s: %r (category %s, color %s)", msg.mission_id, msg.subject_phrase,
                      msg.category, msg.color)
@@ -183,6 +194,7 @@ class PerceptionCore:
             self.mission = None
             self.track = None
             self.pending = None
+            self.selected = None
 
     def on_select(self, msg: Select) -> list:
         """The user picked one of the numbered candidates."""
@@ -195,7 +207,15 @@ class PerceptionCore:
                 log.info("select index %s out of range", msg.index)
                 return []
             p = self.pending
-            self._start_track(chosen, p.frame_id, p.capture_ms, None, confirms=self.cfg.confirm_needed)
+            if self.ring.get(p.frame_id) is not None:
+                self._start_track(chosen, p.frame_id, p.capture_ms, None, confirms=self.cfg.confirm_needed)
+            else:
+                # The frame the user looked at is gone from the buffer (they took > 2 s): the
+                # subject has moved, so find the chosen one again in the next detection.
+                self.selected = chosen
+                self.pending = None
+                self.last_det_submit_ms = -1e18
+                log.info("select %d: re-identifying in the next detection", msg.index)
             return []
 
     # ----- camera frames --------------------------------------------------------------------
@@ -206,6 +226,14 @@ class PerceptionCore:
             if self.mission is None:
                 self._latest = (meta, img_bgr)
                 return []
+            newest = self.ring.latest()
+            if newest is not None and meta.frame_id <= newest.frame_id:
+                # Frame ids went backwards: the backend restarted. Old frames and the track's
+                # history would be matched to the wrong images, so start over.
+                log.warning("frame id %d after %d: backend restarted; resetting", meta.frame_id, newest.frame_id)
+                self.ring = FrameRing(span_ms=self.ring.span_ms)
+                if self.track is not None:
+                    self.track.lost = True
             work = work_image(img_bgr, self._mask_counter_for(meta))
             self.ring.add(meta.frame_id, meta.capture_ms, work)
             self._latest = (meta, img_bgr)
@@ -223,6 +251,10 @@ class PerceptionCore:
                 else:
                     tr.misses = 0
                     tr.kf.update(meta.capture_ms, clip_box(box), "tracker", score)
+                fx1, fy1, fx2, fy2 = clip_box(tr.kf.box())
+                if not tr.lost and (fx2 - fx1 < self.cfg.min_box_px or fy2 - fy1 < self.cfg.min_box_px):
+                    tr.lost = True                # the subject left the frame
+                    log.info("track %d left the frame", tr.track_id)
                 tr.history.append((meta.frame_id, meta.capture_ms, tr.kf.box()))
             return [self._obs(meta)]
 
@@ -326,19 +358,30 @@ class PerceptionCore:
                 sim = hist_intersection(lost.hist, c.hist)
                 c.rank *= 0.5 + 0.5 * (sim if sim is not None else 0.5)
             cands.sort(key=lambda c: -c.rank)
+        if self.selected is not None:
+            # Re-identify the user's pick: closest in position and color to what they chose.
+            sel = self.selected
+            i = associate(sel.det.box, sel.hist, [c.det for c in cands], [c.hist for c in cands],
+                          min_iou=0.0, max_offset=2.0)
+            if i is None:
+                return []
+            self.selected = None
+            self._start_track(cands[i], job.frame_id, job.capture_ms, latency_ms,
+                              confirms=self.cfg.confirm_needed)
+            return []
         if self._tie(cands):
-            items = sorted([c for c in cands if c.rank >= self.cfg.tie_ratio * cands[0].rank][:6],
-                           key=lambda c: c.det.box[0] + c.det.box[2])     # number left to right
-            first = self.pending is None
-            self.pending = PendingTie(job.frame_id, job.capture_ms, items,
-                                      self.pending.sent_ms if self.pending else -1e18)
-            if first or now_ms - self.pending.sent_ms >= self.cfg.candidates_resend_ms:
-                self.pending.sent_ms = now_ms
+            # Number the look-alikes left to right. The set the user sees stays fixed until it is
+            # re-sent, so a Select index always refers to the boxes on their screen.
+            if self.pending is None or now_ms - self.pending.sent_ms >= self.cfg.candidates_resend_ms:
+                items = sorted([c for c in cands if c.rank >= self.cfg.tie_ratio * cands[0].rank][:6],
+                               key=lambda c: c.det.box[0] + c.det.box[2])
+                self.pending = PendingTie(job.frame_id, job.capture_ms, items, sent_ms=now_ms)
                 self.stats["candidates_sent"] += 1
                 return [Candidates(mission_id=job.mission_id, frame_id=job.frame_id, items=[
                     Candidate(index=i, box=c.det.to_box(), confidence=round(c.det.score, 4),
                               color_score=round(c.color, 4)) for i, c in enumerate(items, start=1)])]
             return []
+        self.pending = None                       # the tie resolved itself
         self._start_track(cands[0], job.frame_id, job.capture_ms, latency_ms)
         return []
 
@@ -347,10 +390,12 @@ class PerceptionCore:
         if rs is not None:
             tracker, box, t, score = rs.tracker, rs.box, rs.capture_ms, rs.score
         else:
-            # The detection frame left the buffer or the replay failed: start on the newest frame
-            # with the detection box (the subject may have moved a little since).
+            # The detection frame left the buffer or the replay failed. Starting on the newest
+            # frame with the detection box is only safe if little time has passed since then.
             newest = self.ring.latest()
-            if newest is None:
+            if newest is None or newest.capture_ms - capture_ms > self.cfg.max_blind_start_ms:
+                log.info("not starting a track from a %s ms old detection without replay",
+                         None if newest is None else round(newest.capture_ms - capture_ms))
                 return
             tracker = self.make_tracker()
             tracker.init(newest.img, c.det.box)
