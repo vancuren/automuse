@@ -861,7 +861,7 @@ class Governor:
             self._ap_fault_until = now + self.cfg.autopilot.fault_neutral_s * 1000.0
             return dict(ZERO)
         self._ap = new_state
-        speak = self._state == FlightState.airborne and not self._ap_paused
+        speak = self._state == FlightState.airborne and not self._ap_paused and not self._wrong_way_hold
         for ev in events:
             # Spoken lines only while the autopilot may fly: during a landing or a pause its state
             # machine keeps running and used to say "I lost the subject. Looking around." (demo).

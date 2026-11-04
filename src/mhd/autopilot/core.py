@@ -320,8 +320,13 @@ def _box_t(obs: SubjectObs) -> tuple[float, float, float, float]:
 
 
 def _is_candidate(obs: SubjectObs, params: AutopilotConfig) -> bool:
+    # A box whose detector confirmation is older than the LOST age is a tracker coasting on an
+    # unconfirmed track: CONFIRM could never promote it (FOLLOW needs a fresh confirmation), and
+    # entering CONFIRM on it flapped LOST <-> CONFIRM in the air (demo take 05:10).
+    lc = params.lifecycle
     return (_has_box(obs) and obs.state in (SubjectState.candidate, SubjectState.confirmed)
-            and obs.tracker_score >= params.lifecycle.confirm_min_score)
+            and obs.tracker_score >= lc.confirm_min_score
+            and obs.confirm_age_ms <= lc.lost_confirm_age_min_s * 1000.0)
 
 
 def _begin_confirm(w: dict, obs: SubjectObs) -> None:

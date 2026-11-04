@@ -388,3 +388,15 @@ def test_confirm_does_not_flap_on_a_score_at_the_threshold():
     flips = sum(1 for a, b in zip(states, states[1:]) if a != b)
     assert flips <= 2 and d.s.mode == S.follow       # FIND -> CONFIRM -> FOLLOW, no flapping
 
+
+def test_a_box_with_a_stale_confirmation_is_not_a_candidate():
+    d = Driver()
+    d.run(1.3, cx=1000)
+    d.step(d.obs(state="lost", w=0))
+    d.run(3.0, state="searching", w=0)
+    assert d.s.mode in (S.lost, S.search)
+    d.run(1.0, cx=700, confirm_age_ms=6000.0)        # the tracker coasts; SAM has not confirmed it
+    assert d.s.mode in (S.lost, S.search)
+    d.step(d.obs(cx=700, confirm_age_ms=100.0))      # a fresh confirmation
+    assert d.s.mode == S.confirm
+

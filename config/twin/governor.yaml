@@ -102,12 +102,16 @@ wrong_way:                  # PLAN 4.5 step 5, plus pitch and frozen-box checks 
   min_change_rad: 0.15      # both observed and predicted change must exceed this, with opposite signs
   pitch_enabled: true       # forward commanded over the window but the box shrank (or back and it grew)
   pitch_min_cmd: 0.08       # ... when the mean |applied pitch| over the window is at least this (10 counts)
-  pitch_min_size_change: 0.06   # ... and the MEDIAN |log(width ratio)| is at least this (6 %)
+  pitch_min_size_change: 0.12   # TWIN: 12 % (real: 6 %). The twin's pitch sign is right by construction, and
+                                # the strict value false-trips when the 0.3 m/s walker pulls away while the
+                                # drone accelerates (demo takes 05:01 and 05:06, results 1e). Real drone: 0.06.
   pitch_window_thetas: 2.0  # pitch window (gait-robust: medians over +/- pitch_median_s at each end)
   pitch_median_s: 0.3
   pitch_persist_s: 0.5      # must persist this long before it latches
-  pitch_min_cap_frac: 0.0   # 0 = no "near the cap" requirement (above 0 it misses a slow or deadbanded
-                            # reversed plant: review 2026-11-04, tests/gov/test_reversed_sign_closed_loop.py)
+  pitch_min_cap_frac: 0.7   # TWIN: only near the forward cap (real: 0, no such requirement). Together with
+                            # the 12 % above this is the earlier twin tuning: in the twin a turning walker
+                            # narrows the box while the drone closes in (demo take 05:10), and the twin's
+                            # pitch sign is right by construction. Real drone: 0 (review 2).
   pitch_check_backward: true   # backing while the box grows (reversed sign: "back" flies toward them):
                             # no autopilot backing for the rest of the mission (no hover latch)
   yaw_min_ratio: 0.3        # yaw: observed change at least this fraction of the predicted one

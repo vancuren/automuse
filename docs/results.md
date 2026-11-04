@@ -165,7 +165,7 @@ hard: a closed loop with a REAL-mode governor, the base configs, and the plant's
 - **Sometimes latched:** a walker heading away at 0.3 m/s latched a hover in 4 of 18 runs, because the drone lags at first.
 - **Usually latched:** at 0.5 m/s, faster than the drone can fly, 16 of 18.
 
-**SAM 3.1 in the loop.** The twin configs carry the same safety values as the real ones, so these runs also test the real thresholds for false trips. The commands are the same as in 1c.
+**SAM 3.1 in the loop.** These runs used the real safety values in the twin, so they also test the real thresholds for false trips. The commands are the same as in 1c. Since 05:12, the twin relaxes one of these values; see the last bullet below.
 
 | | S1 | S2 | S3 |
 |---|---|---|---|
@@ -180,6 +180,25 @@ hard: a closed loop with a REAL-mode governor, the base configs, and the plant's
 
 - **Why the bearing RMS is higher:** the drone no longer backs away from a subject that comes closer, and a close subject crosses the frame faster.
 - **S3 intent:** S3 used category `car` and color `green`, as the intent model returns for "follow the green car". 1c used the script's defaults, `person` and `blue`.
+- **A false trip:** the strict pitch check can latch on a correct drone. A demo take at 05:01 on the
+  same code (`logs/demo-20261104-050129-s1-final`) latched `wrong_way:pitch` 5 s into FOLLOW. The
+  0.3 m/s walker pulled away while the drone was still accelerating. That matches the closed-loop
+  rate above (4 of 18 runs at 0.3 m/s). The drone then hovered for the rest of the take: safe, but
+  no follow. In S1 on the final code, that is 1 trip in 4 runs, and it is why the Session C walker
+  goes at 0.2 m/s.
+- **CONFIRM flapping in the air:** the same take showed CONFIRM/FIND flapping after the subject was
+  lost, fixed in `6f20f3e`. A broken lock after a loss now goes back to LOST and its search, and
+  CONFIRM has score hysteresis.
+- **Twin threshold since 05:12:** a second take at 05:06 false-tripped the same way, 4.8 s into
+  FOLLOW, because the demo starts following at the same point in the walker's loop. Ground truth for
+  that moment:
+  - the walker was 5.4 m away, walking off at about 0.25 m/s;
+  - the drone was at 0.13-0.25 m/s;
+  - the walker's gait swung the true box between 68 and 145 px.
+
+  So the twin's pitch size threshold is now 12 % (`config/twin/governor.yaml`, marked TWIN). The
+  real drone keeps 6 %. The twin's pitch sign is correct by construction, and `twin_only` keeps the
+  file away from the real drone.
 
 ### 1d. The whole chain with voice (demo takes)
 

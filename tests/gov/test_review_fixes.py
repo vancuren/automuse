@@ -947,3 +947,17 @@ def test_no_spoken_lines_while_landing_and_the_mission_ends_at_touchdown(rig):
     r.run(3.0)
     assert not any(e.get("kind") == "state" for e in r.g.drain_events())       # no FIND/CONFIRM flapping
 
+
+def test_no_spoken_lines_during_a_wrong_way_hold(rig):
+    r = rig()
+    r.following(cx=640, w=100, h=300)
+    r.obs_fn = _Plant(r, d0=3.75, u=0.0, sign=-1.0)          # reversed pitch: latches a hover
+    r.run(8.0)
+    assert r.g.wrong_way_hold if hasattr(r.g, "wrong_way_hold") else r.g._wrong_way_hold
+    r.g.drain_events()
+    r.obs_fn = None                                          # the subject is gone: LOST
+    r.run(6.0)
+    evs = r.g.drain_events()
+    assert any(e.get("kind") == "state" and e.get("to") == "LOST" for e in evs)
+    assert not any(e.get("kind") == "announce" for e in evs)
+

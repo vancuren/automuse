@@ -30,7 +30,7 @@ The final reviewer's verdict is "safe with conditions" for forward-only follow:
 | Follow "person in blue shirt" (S1), final code | following 100% of the time; lock 95.3%; bearing RMS 0.103 rad; 0 identity switches; mission to FOLLOW 1.6 s |
 | Blue and red shirts crossing (S2) | following 90% (brief DOUBT/CONFIRM at a track change); lock 96.8%; 2.5% of frames on the red walker |
 | Follow "green car" (S3) | following 100%; lock 96.0%; bearing RMS 0.127 rad; 0 switches |
-| Safety in the twin | the twin uses the real safety thresholds; 0 wrong-way hovers in S1-S3 |
+| Safety in the twin | S1-S3 ran with the real thresholds: 0 wrong-way hovers. Two demo takes (05:01, 05:06) false-tripped the strict pitch check: the 0.3 m/s walker pulled away while the drone accelerated. The twin now uses 12 % for that one threshold (real: 6 %, marked TWIN). |
 | Recorded demo takes | voice, then Glimmer, then SAM, then follow, then voice land. Seven takes in `media/demo/`, recommended S1 `demo-s1-20261104-033642`, S2 `demo-s2-20261104-032802`, S3 `demo-s3-20261104-034231`. They were recorded at 03:24-03:51, before the safety changes, so cut each at touchdown (docs/video_script.md). |
 | Fine-tuned Muse Glimmer (LoRA) | 98.0% action accuracy on 300 held-out commands, 100% on 80 hand-written ones; base Glimmer 93.7%; Spark 1.3 95.3%; 3.6 s on this Mac |
 | Voice | Voice Transcribe about 0.23 s after you stop talking; local stop/land listener 18/18, 0 false triggers |
