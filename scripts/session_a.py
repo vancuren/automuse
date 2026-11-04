@@ -1283,8 +1283,8 @@ def main(argv=None) -> int:
         a.latency_s = min(a.latency_s, 10.0)
         a.link_s = min(a.link_s, 6.0)
         a.motor_s = min(a.motor_s, 4.0)
-    elif os.environ.get("MHD_OPS_LOOPBACK_ONLY") == "1":
-        raise SystemExit("MHD_OPS_LOOPBACK_ONLY=1: only --auto-twin may run")
+    elif os.environ.get("MHD_OPS_LOOPBACK_ONLY") == "1" and not a.drone_ip.startswith("127."):
+        raise SystemExit("MHD_OPS_LOOPBACK_ONLY=1: refusing a non-loopback --drone-ip")
     io = IO(a.auto_twin, sys.stdout.isatty() and not a.no_color)
     resume = json.loads(Path(a.resume).read_text()) if a.resume else None
     path = Path(a.resume) if a.resume else TREE / "logs" / f"session_a-{time.strftime('%Y%m%d-%H%M%S')}.json"
