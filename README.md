@@ -227,8 +227,12 @@ the twin; Ctrl-C stops it all, the backend first so the drone lands:
 ```bash
 scripts/run_stack.sh --mode twin --scenario s1 --glimmer local --agent-extra "--intent glimmer"
 scripts/run_stack.sh --mode real --no-perception --no-agent     # Session A and B: backend and UI only
-scripts/run_stack.sh --mode real --glimmer local                # real flights; run scripts/preflight.py first
+scripts/run_stack.sh --mode real                                # flights; run scripts/preflight.py first
 ```
+
+`--agent-extra "--intent glimmer"` makes the local LoRA answer every command (see below). PLAN.md
+stops the local LLM during real flights to keep the Mac's GPU and memory free; docs/RUNBOOK.md has
+the flight-day choice.
 
 **The full stack by hand** (one terminal each):
 
