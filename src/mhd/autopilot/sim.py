@@ -17,10 +17,8 @@ from __future__ import annotations
 import argparse
 import math
 import random
-import tempfile
 from collections import deque
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
 from mhd.contracts import Box, Intent, Mission, SubjectObs
@@ -109,9 +107,8 @@ def run(p: SimParams, gov_cfg: Optional[GovernorConfig] = None,
     acfg = replace(acfg, **{"delay.theta_s": p.total_delay_s, "yaw.feedforward.enabled": p.feedforward})
     gcfg = replace(gcfg, **{"wire.deadband_counts.yaw": 0}) if p.firmware_deadband_counts == 0 else gcfg
     clock = {"t": 0.0}
-    tmp = Path(tempfile.mkdtemp(prefix="mhd-sim-"))
-    gov = Governor(gcfg, acfg, "twin", clock=lambda: clock["t"], log_dir=tmp, persist_timer=False,
-                   tick_log=False)
+    # No flight-timer file and no tick log: the sim writes nothing to disk.
+    gov = Governor(gcfg, acfg, "twin", clock=lambda: clock["t"], persist_timer=False, tick_log=False)
 
     W, H = acfg.camera.frame_w, acfg.camera.frame_h
     f = (W / 2) / math.tan(math.radians(acfg.camera.hfov_deg) / 2)

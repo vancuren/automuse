@@ -3,6 +3,7 @@
 #
 #   scripts/run_backend.sh --mode twin [--port 8000] [--control-port 23458] [--local-control-port N]
 #                          [--rtsp-url rtsp://127.0.0.1:8554/live/ch00_1] [--headless] [--host 127.0.0.1]
+#                          [--logs DIR]   (default $MHD_LOGS: control-*.jsonl and flight_timer.json)
 #   scripts/run_backend.sh --mode real [--port 8000]          # DRONE_IP=172.16.11.1, RTSP from the drone
 #
 # --mode is required (FLIGHT_MODE has no default). Twin mode talks only to loopback. --headless sets
@@ -16,7 +17,7 @@ source "$TREE/env.sh"
 
 usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
 
-MODE="" PORT="" CONTROL_PORT="" LOCAL_CONTROL_PORT="" RTSP_URL="" HEADLESS=0 HOST="127.0.0.1"
+MODE="" PORT="" CONTROL_PORT="" LOCAL_CONTROL_PORT="" RTSP_URL="" HEADLESS=0 HOST="127.0.0.1" LOGS=""
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -28,6 +29,7 @@ while [[ $# -gt 0 ]]; do
     --governor-config) export GOVERNOR_CONFIG="$2"; shift 2 ;;
     --autopilot-config) export AUTOPILOT_CONFIG="$2"; shift 2 ;;
     --headless) HEADLESS=1; shift ;;
+    --logs) LOGS="$2"; shift 2 ;;
     --host) HOST="$2"; shift 2 ;;
     --log-level) LOG_LEVEL="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -55,7 +57,8 @@ export CONTROL_PORT="${CONTROL_PORT:-23458}"
 [[ -n "$LOCAL_CONTROL_PORT" ]] && export X69_LG_LOCAL_CONTROL_PORT="$LOCAL_CONTROL_PORT"
 if [[ "$HEADLESS" == 1 ]]; then export GOVERNOR_TWIN_HEADLESS=1; else unset GOVERNOR_TWIN_HEADLESS; fi
 PORT="${PORT:-8000}"
+if [[ -n "$LOGS" ]]; then mkdir -p "$LOGS"; export MHD_LOGS="$(cd "$LOGS" && pwd)"; fi
 
-echo "[run_backend] tree=$TREE mode=$FLIGHT_MODE drone=$DRONE_IP:$CONTROL_PORT rtsp=${X69_LG_RTSP_URL:-<drone default>} http=$HOST:$PORT headless=$HEADLESS" >&2
+echo "[run_backend] tree=$TREE logs=$MHD_LOGS mode=$FLIGHT_MODE drone=$DRONE_IP:$CONTROL_PORT rtsp=${X69_LG_RTSP_URL:-<drone default>} http=$HOST:$PORT headless=$HEADLESS" >&2
 cd "$TREE/turbodrone/backend"
 exec "$MHD_PY" -m uvicorn web_server:app --host "$HOST" --port "$PORT" --log-level "$(echo "$LOG_LEVEL" | tr '[:upper:]' '[:lower:]')"

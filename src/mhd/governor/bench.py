@@ -10,6 +10,7 @@ to show GIL contention, which is what the RC thread sees inside the backend.
 from __future__ import annotations
 
 import argparse
+import shutil
 import tempfile
 import threading
 import time
@@ -28,8 +29,9 @@ def _pct(vals, q):
 
 def run(ticks: int = 5000, threads: int = 0) -> dict:
     clock = {"t": 10_000.0}
+    tmp = Path(tempfile.mkdtemp(prefix="mhd-bench-"))       # tick log on (realistic cost), removed after
     gov = Governor(load_governor_config(), load_autopilot_config(), "twin", clock=lambda: clock["t"],
-                   log_dir=Path(tempfile.mkdtemp(prefix="mhd-bench-")), persist_timer=False, tick_log=True)
+                   log_dir=tmp, persist_timer=False, tick_log=True)
     stop = threading.Event()
 
     def busy():
@@ -73,6 +75,7 @@ def run(ticks: int = 5000, threads: int = 0) -> dict:
     stop.set()
     mode = gov.autopilot.mode.value
     gov.close()
+    shutil.rmtree(tmp, ignore_errors=True)
     return {"ticks": ticks, "threads": threads, "autopilot": mode,
             "wall_us": {"p50": round(_pct(wall, 0.5), 1), "p99": round(_pct(wall, 0.99), 1), "max": round(max(wall), 1)},
             "cpu_us": {"p50": round(_pct(cpu, 0.5), 1), "p99": round(_pct(cpu, 0.99), 1), "max": round(max(cpu), 1)}}

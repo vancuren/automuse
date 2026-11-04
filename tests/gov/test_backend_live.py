@@ -32,7 +32,8 @@ def live_backend(rtsp_stream, tmp_path):  # noqa: F811
     env = dict(os.environ, LOG_LEVEL="WARNING")
     proc = subprocess.Popen([str(ROOT / "scripts" / "run_backend.sh"), "--mode", "twin", "--port", "8100",
                              "--control-port", "23512", "--local-control-port", "23513",
-                             "--rtsp-url", "rtsp://127.0.0.1:8105/live/ch00_1", "--headless"],
+                             "--rtsp-url", "rtsp://127.0.0.1:8105/live/ch00_1", "--headless",
+                             "--logs", str(tmp_path / "backend-logs")],
                             stdout=log, stderr=log, env=env)
     try:
         ok = False

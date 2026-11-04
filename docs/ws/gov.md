@@ -34,7 +34,7 @@ scripts/run_backend.sh --mode twin --port 8100 --control-port 23512 --rtsp-url r
 scripts/run_backend.sh --mode real --port 8000
 ```
 
-Without `--mode` it refuses to start. The server binds 127.0.0.1 and never uses `--reload`. Control logs go to `$MHD_LOGS/control-*.jsonl`, the flight timer to `$MHD_LOGS/flight_timer.json`.
+Without `--mode` it refuses to start. The server binds 127.0.0.1 and never uses `--reload`. Control logs go to `$MHD_LOGS/control-*.jsonl`, the flight timer to `$MHD_LOGS/flight_timer.json`; `--logs DIR` puts both elsewhere (the tests use it so they never add flight time to a real pack). Send `pack_swap` with a `pack_id` at the start of each session.
 
 Tests and tools:
 
@@ -58,7 +58,7 @@ It refuses unless AIRBORNE, aborts the moment the drone isn't, and flies each am
 
 `-p no:logging` only hides pytest's captured-log dump on failures.
 
-## Test results (final run, 00:43 ET)
+## Test results (final run, 00:52 ET)
 
 - `tests/gov`: **106 passed, 0 failed.**
   - 42 governor rule tests (`test_governor_rules.py`), including the throttle-ramp landing fallback.
@@ -72,7 +72,8 @@ It refuses unless AIRBORNE, aborts the moment the drone isn't, and flies each am
   - 1 live end-to-end test (`run_backend.sh` with uvicorn, RTSP and a UDP drone stand-in).
   - 4 sysid tests: schedule limits, ArUco bearing and range on a synthetic frame, fit recovering K / deadband / lag, and a live run through the real backend with an ArUco HEVC stream.
 - Upstream x69_lg unit tests: **15 passed.**
-- Repo-level `tests/test_contracts.py` and `tests/test_intent_spec.py`: **6 passed.**
+- Repo-level `tests/test_contracts.py` and `tests/test_intent_spec.py`: **6 passed.** All tests together: **112 passed.**
+  - One run showed a single transient pytest thread warning at backend teardown (upstream's video receiver thread outliving its 1 s join). It did not reproduce in the next two runs.
 
 ## Measurements
 

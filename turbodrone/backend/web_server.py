@@ -41,20 +41,21 @@ from protocols.x69_lg_rtsp_video_protocol import X69LgRtspVideoProtocolAdapter
 from protocols.x69_lg_jpeg_video_protocol import X69LgJpegVideoProtocolAdapter
 from protocols.x69_lg_video_mode import normalize_x69_video_mode
 from plugins.manager import PluginManager
-# --- MHD patch: safety governor, FLIGHT_MODE gate, capture-time estimate (src/mhd/backend) ---
-from mhd.backend.modes import ModeError, apply_env_defaults, validate_env
-from mhd.backend.hub import Hub, install_routes
-from mhd.backend.capture import TimedX69RtspAdapter
-from mhd.governor.turbodrone_glue import PacedFlightController
-
-apply_env_defaults()   # 2 s RTSP socket timeout, PLUGINS_ENABLED=false
-HUB = Hub()
 from utils.dropping_queue import DroppingQueue
 from utils.wifi_uav_variants import (
     WIFI_UAV_DRONE_TYPES,
     resolve_wifi_uav_capabilities,
     resolve_wifi_uav_variant,
 )
+
+# --- MHD patch: safety governor, FLIGHT_MODE gate, capture-time estimate (src/mhd/backend) ---
+from mhd.backend.modes import apply_env_defaults, validate_env
+from mhd.backend.hub import Hub, install_routes
+from mhd.backend.capture import TimedX69RtspAdapter
+from mhd.governor.turbodrone_glue import PacedFlightController
+
+apply_env_defaults()   # RTSP 2 s socket timeout, 1 HEVC decoder thread, PLUGINS_ENABLED=false
+HUB = Hub()
 
 COOINGDV_DRONE_TYPES = {"cooingdv", "cooingdv_jieli"}
 
@@ -404,7 +405,7 @@ async def lifespan(app: FastAPI):
             logger.info("[main] Using X69/LG RTSP video.")
             default_rtsp_port = 554
             video_port = int(os.getenv("VIDEO_PORT", os.getenv("X69_LG_RTSP_PORT", default_rtsp_port)))
-            video_adapter_cls = TimedX69RtspAdapter   # MHD patch: capture-time estimate, 2 s timeouts
+            video_adapter_cls = TimedX69RtspAdapter   # MHD patch: capture-time estimate, 2 s read timeout
             video_adapter_args = {
                 "flight_mode": mhd_env.flight_mode,
                 "drone_ip": drone_ip,
