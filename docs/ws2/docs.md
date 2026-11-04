@@ -11,7 +11,7 @@ Branch `ws2/docs`, from `integration` at `6bb13fb`. Written 2026-11-04, 03:05-05
 | `docs/video_script.md` | The 3-minute video: storyboard A (real-flight-led) and B (twin-led), shot by shot with timings, on-screen content, narration (368 words, timed per beat), captions, and the recordings to use. |
 | `LICENSE` | `turbodrone/LICENSE` byte for byte (CRLF kept), with the appendix line set to "Copyright 2026 Russell Van Curen". |
 | `NOTICE` | turbodrone's NOTICE block verbatim (byte-identical prefix), our attribution lines below it. |
-| `THIRD_PARTY_NOTICES.md` | turbodrone and the upstream files we modified or deleted (Apache-2.0 4(b)); the Meta models' licenses; silero VAD and VitTrack; mediamtx, FFmpeg, Chrome; the JS packages; all 105 installed Python packages with licenses read from their metadata. |
+| `THIRD_PARTY_NOTICES.md` | turbodrone and the upstream files we modified or deleted (Apache-2.0 4(b)); the Meta models' licenses; silero VAD, VitTrack and the CLIP tokenizer files SAM 3.1 MLX loads; mediamtx, FFmpeg, Chrome; the JS packages; all 105 installed Python packages with licenses read from their metadata. |
 | `licenses/SAM_LICENSE.txt` | The SAM License, copied unchanged from the installed meta-sam-parser 0.1.0 wheel. |
 | `docs/SUBMISSION.md` | The submission checklist: portal checks, drafts of every form field, the new-work statement, the secret-scan command, making the repo public, the video, submitting. |
 | `scripts/secret_scan.py` | The pre-publication scan (stdlib only). |
@@ -47,7 +47,9 @@ hit reports only the variable name and the file or commit. It also flags credent
 - Every number in README.md and docs/results.md was taken from, or recomputed from, the sources the
   brief allows: docs/ws/*.md, docs/eval/*, docs/benchmarks-perception.md, PLAN.md, docs/STATUS.md,
   `logs/e2e-*/` (e2e_result.json, report.json, rows.csv, telemetry.jsonl, obs.jsonl), `logs/ffcfg/`,
-  `logs/spend.jsonl`, and git. Numbers recomputed from logs, and how:
+  `logs/spend.jsonl`, and git; plus, for results.md 1d and the README stills, the demo workstream's
+  `logs/demo-<stamp>-<take>/demo_result.json` (its worktree) and committed `docs/img/demo_*.png`.
+  Numbers recomputed from logs, and how:
   - S2's 49 red-walker frames come in three episodes about 21 s apart (11 frames at 21.7 s, five
     flickers of 1-4 frames at 41-43 s, 30 frames at 63-64 s): the `identity` column of
     `logs/e2e-20261104-030039-s2-sam_mlx/rows.csv`. 21 s is the scenario's crossing period (6 m at
