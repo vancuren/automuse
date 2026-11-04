@@ -706,6 +706,8 @@ When time runs short, cut in this order:
 | Safety words | always-on local listener | push-to-talk only | works with no internet and with no hands |
 | Speech | Muse Voice Transcribe plus Omnilingual | Whisper | Meta-only and offline-capable |
 | Python | 3.13 | 3.15 | wheel availability |
+| Pitch wrong-way check (2026-11-04, after a second safety review) | strict thresholds, plus a 3 s hold-and-compare probe before latching a forward hover; backing up stops for the mission when the box grows while backing; standoff hover-only; 0.5 m backward budget per flight | the gait-robust thresholds from the twin tuning; no backward check | the tuned thresholds missed a reversed pitch sign (11-13 m runaways in closed loop); the probe keeps that detection but stops a person who merely outpaces the drone from latching a hover; a stopped drone is the safe side |
+| Real mode and twin configs | `twin_only: true` refused by the governor in real mode; `run_backend.sh` real mode reads configs only from `config/` and `config/real/` | path conventions only | the review showed twin caps and deadband compensation could reach the real drone through a flag or an exported variable |
 
 ## 11. Open questions and the defaults I will use
 Questions for you:

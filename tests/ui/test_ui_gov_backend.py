@@ -133,6 +133,10 @@ def test_escape_estops_the_real_governor_and_reset_works(gov_backend, gov_page):
     assert state(gov_backend)["flight_state"] == "ESTOPPED"
     gov_page.click(sel("estop-reset-btn"))
     gov_page.click(sel("estop-reset-btn"))
+    # The governor's reset goes to LANDING (if 0x02 did not cut the motors, the drone must land);
+    # the operator then confirms touchdown, as after any landing.
+    gov_page.wait_for_selector(f'{sel("flight-state")}[data-state="LANDING"]', timeout=3000)
+    gov_page.click(sel("touchdown-btn"))
     gov_page.wait_for_selector(f'{sel("flight-state")}[data-state="ON_GROUND"]', timeout=3000)
 
 
