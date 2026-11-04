@@ -14,9 +14,10 @@ the blue shirt", "the green car"), never by identity. Ask it to "follow John" an
 can't follow someone by identity. Tell me what they're wearing instead." It films only people who
 agreed to be filmed, and it calls the person or thing it follows the *subject*.
 
-> **Status, 2026-11-04 03:30 ET.** The whole chain runs end to end in a wire-level digital twin on
-> one Mac: real X69 packets out, HEVC video back. The real drone flies this morning, after a
-> props-off hardware check (Session A). This line will be updated with the result.
+> **Status, 2026-11-04 03:30 ET.** In a wire-level digital twin on one Mac, a follow mission runs
+> through SAM 3.1, the autopilot and the safety governor to real X69 control packets, and HEVC video
+> comes back. The voice agent drives the same backend in its own tests. The real drone flies this
+> morning, after a props-off hardware check (Session A). This line will be updated with the result.
 
 **Demo video (3 min):** _link coming: VIDEO_LINK_
 
@@ -52,7 +53,7 @@ agreed to be filmed, and it calls the person or thing it follows the *subject*.
  agent (CPU)                                                  safety listener: silero VAD +
    Muse Voice Transcribe (Meta API) -> transcript             Omnilingual ASR CTC-300M -> land / pause
    Glimmer 30B + LoRA (Mac) | Muse Spark 1.3 (Meta API)         |
-     race -> strict JSON mission; MMS-TTS speaks the reply      |
+     race -> JSON mission (schema-checked); MMS-TTS replies     |
    | POST /mission                                              | POST /command
    v                                                            v
  drone backend: patched turbodrone FastAPI, :8000  <----  operator UI: patched turbodrone React, :5173
@@ -97,9 +98,9 @@ Kalman filter, a proportional controller, and the governor's rules.
 All numbers come from runs on one MacBook Pro (M5 Pro, 48 GB). Conditions, source files, and the
 full tables are in [docs/results.md](docs/results.md). The real drone has not flown this stack yet.
 
-**End to end in the wire-level twin** (`scripts/e2e_twin.py`): voice mission, SAM 3.1 on the Mac,
-VitTrack and the Kalman filter, the autopilot with feed-forward, the governor, real X69 packets,
-500 ms total video latency, 60 s of following.
+**End to end in the wire-level twin** (`scripts/e2e_twin.py`): a follow mission posted to the
+backend, SAM 3.1 on the Mac, VitTrack and the Kalman filter, the autopilot with feed-forward, the
+governor, real X69 packets, 500 ms total video latency, 60 s of following.
 
 | Scenario | Subject phrase | Time in FOLLOW | Bearing error RMS | Lock rate | Frames on the wrong subject | Mission to FOLLOW |
 |---|---|---|---|---|---|---|
@@ -116,8 +117,8 @@ frames (gate: 90%). The hosted `sam-3.1` answers in 697 ms p50 / 1,277 ms p95 at
 98.0% of the time (base Glimmer 93.7%, Muse Spark 1.3 95.3%), and 100% on 80 hand-written commands
 (93.8% and 95.0%), with 100% valid JSON. It writes the subject phrase exactly in our label convention
 ("person in blue shirt") 92.9% of the time (base 41.4%, Spark 52.7%), and answers in 3.6 s p50 on
-the Mac. Its weak spot is
-noisy speech: 88.8% on the hand-written set spoken through `say` and Omnilingual ASR, vs. Spark's 90.0%.
+the Mac. Its weak spot is noisy speech: 88.8% on the hand-written set spoken through `say` and
+Omnilingual ASR, vs. Spark's 90.0%.
 
 **Voice.** Muse Voice Transcribe: final transcript 226 ms p50 / 267 ms p95 after you stop talking.
 Muse Spark 1.3 at minimal effort: 1.64 s p50 / 2.47 s p95 to a valid mission. 20 of 20 scripted
