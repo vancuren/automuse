@@ -194,3 +194,105 @@ def test_keyword_only_mode_and_hover_command(backend, llm, audio_items, recogniz
     assert backend.missions[-1]["intent"]["action"] == "hover" and backend.missions[-1]["model"] == "keyword"
     assert any(c["command"] == "pause" for c in backend.commands[n_cmd:])
     assert len(llm.requests) == n_req                  # keyword mode never calls a model
+
+
+class RecordingSpeaker:
+    """Stands in for tts.Speaker: records what would be spoken."""
+
+    def __init__(self):
+        self.lines = []
+
+    def speak(self, text, interrupt=True):
+        self.lines.append((text, interrupt))
+
+    def wait_ready(self, timeout=0):
+        return True
+
+    def wait_idle(self, timeout=0):
+        return True
+
+    def close(self, interrupt=True):
+        pass
+
+
+async def run_with_speaker(backend, cfg, script, speaker):
+    hub = MicHub(sample_rate=24000)
+    svc = AgentService(cfg, hub=hub, start_mic=False, speaker=speaker)
+    await svc.start()
+    try:
+        assert await wait_for(lambda: backend.agent_count() >= 1, 5)
+        await script(svc, hub)
+        await svc.wait_idle(15)
+    finally:
+        await svc.stop()
+    return svc
+
+
+def test_slow_intent_gets_a_short_acknowledgment(backend, llm, audio_items):
+    asr = FakeRealtimeASR(port=ASR_PORT, transcript="follow the red car").start()
+    llm.behaviours = {"glimmer-slow": {"delay_s": 1.0}}
+    cfg = make_cfg(asr.url)
+    cfg["glimmer"]["model"] = "glimmer-slow"
+    cfg["tts"] = {"engine": "mms", "ack_after_s": 0.3, "ack_text": "Okay."}
+    sp = RecordingSpeaker()
+    try:
+        async def script(svc, hub):
+            await svc.simulate_file(item(audio_items, "commands", "c02", 24000)["abspath"], realtime=False)
+
+        asyncio.run(run_with_speaker(backend, cfg, script, sp))
+    finally:
+        asr.stop()
+        llm.behaviours = {}
+    assert sp.lines[0] == ("Okay.", True)
+    assert sp.lines[1] == ("Following the red car.", False)      # waits for the ack to finish
+
+
+def test_fast_intent_has_no_acknowledgment(backend, llm, audio_items):
+    asr = FakeRealtimeASR(port=ASR_PORT, transcript="follow the red car").start()
+    cfg = make_cfg(asr.url)
+    cfg["tts"] = {"engine": "mms", "ack_after_s": 1.0}
+    sp = RecordingSpeaker()
+    try:
+        async def script(svc, hub):
+            await svc.simulate_file(item(audio_items, "commands", "c02", 24000)["abspath"], realtime=False)
+
+        asyncio.run(run_with_speaker(backend, cfg, script, sp))
+    finally:
+        asr.stop()
+    assert sp.lines == [("Following the red car.", True)]
+
+
+def test_lost_ptt_up_ends_utterance(backend, llm, audio_items):
+    asr = FakeRealtimeASR(port=ASR_PORT, transcript="track the brown dog").start()
+    cfg = make_cfg(asr.url)
+    cfg["mic"]["max_ptt_s"] = 1.0
+    n0 = len(backend.missions)
+    try:
+        async def script(svc, hub):
+            x, sr = load_wav(item(audio_items, "commands", "c03", 24000)["abspath"])
+            await svc.ptt_down()
+            await asyncio.get_running_loop().run_in_executor(None, play_file_into, hub, x[: sr // 2], sr, False)
+            # no ptt_up: the watchdog must end the utterance
+            assert await wait_for(lambda: len(backend.missions) > n0, 6)
+
+        svc = asyncio.run(run_with_speaker(backend, cfg, script, RecordingSpeaker()))
+    finally:
+        asr.stop()
+    assert backend.missions[-1]["intent"]["subject_phrase"] == "brown dog"
+    assert any("released automatically" in (e.get("text") or "") for e in svc.events)
+
+
+def test_local_asr_mode(backend, llm, audio_items):
+    cfg = make_cfg("ws://127.0.0.1:8489")
+    cfg["asr"] = "local"
+    n0 = len(backend.missions)
+
+    async def script(svc, hub):
+        await svc.simulate_file(item(audio_items, "commands", "c16", 24000)["abspath"], realtime=False)
+        assert await wait_for(lambda: len(backend.missions) > n0, 10)
+
+    svc = asyncio.run(run_with_speaker(backend, cfg, script, RecordingSpeaker()))
+    m = backend.missions[-1]
+    assert m["intent"]["subject_phrase"] == "gray cat"
+    final = [e for e in svc.events if e["kind"] == "final"][-1]
+    assert final["data"]["model"] == "omnilingual-ctc-300m"

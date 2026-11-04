@@ -63,6 +63,7 @@ CASES = [
     ("follow her home", "refuse", "", "none", "none", "medium", "unsafe"),
     ("take off", "refuse", "", "none", "none", "medium", "unsupported"),     # voice never takes off
     ("do a flip", "refuse", "", "none", "none", "medium", "unsupported"),
+    ("do a backflip", "refuse", "", "none", "none", "medium", "unsupported"),
     ("fly higher", "refuse", "", "none", "none", "medium", "unsupported"),
     # clarify
     ("follow him", "clarify", "", "none", "none", "medium", "ambiguous"),

@@ -104,11 +104,13 @@ class Speaker:
     def wait_ready(self, timeout: float = 30.0) -> bool:
         return self._ready.wait(timeout)
 
-    def speak(self, text: str) -> None:
-        """Queue a line; a newer line interrupts the one being played."""
+    def speak(self, text: str, interrupt: bool = True) -> None:
+        """Queue a line. By default a newer line interrupts the one being played (safety replies
+        must not wait); interrupt=False plays it after the current line instead."""
         if self.engine == "none" or not text:
             return
-        self._interrupt()
+        if interrupt:
+            self._interrupt()
         self._q.put((text, now_ms()))
 
     def wait_idle(self, timeout: float = 30.0) -> bool:

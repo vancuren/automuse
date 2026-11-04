@@ -302,7 +302,17 @@ class AgentService:
         self._ptt = st
         if isinstance(self.asr, MetaRealtimeASR):
             st.task = asyncio.create_task(self._stream_to_meta(st))
+        self._spawn(self._ptt_watchdog(st), background=True)
         log.info("push-to-talk down")
+
+    async def _ptt_watchdog(self, st: PttState) -> None:
+        """A lost ptt_up (UI crash, dropped socket) must not record forever."""
+        max_s = float(self.cfg.get("mic", {}).get("max_ptt_s", 15.0))
+        await asyncio.sleep(max_s)
+        if self._ptt is st:
+            log.warning("push-to-talk held for %.0f s without release; ending the utterance", max_s)
+            await self.emit("status", f"Push-to-talk released automatically after {max_s:.0f} s")
+            await self.ptt_up()
 
     async def _chunks(self, st: PttState):
         """Mic chunks for this utterance as PCM at the ASR rate, until ptt_up and the queue is empty."""
@@ -383,7 +393,22 @@ class AgentService:
             await self._handle_transcript(t.text, st, t_final_ms, t.model)
 
     async def _handle_transcript(self, text: str, st: PttState, t_final_ms: float, asr_model: str) -> None:
-        res = await self.router.route(text)
+        tcfg = self.cfg.get("tts", {})
+        ack_after = tcfg.get("ack_after_s", 1.2)
+        acked = False
+
+        async def ack():
+            nonlocal acked
+            await asyncio.sleep(float(ack_after))
+            acked = True
+            self.speaker.speak(tcfg.get("ack_text", "Okay."))
+
+        ack_task = asyncio.create_task(ack()) if ack_after else None
+        try:
+            res = await self.router.route(text)
+        finally:
+            if ack_task:
+                ack_task.cancel()
         intent = res.intent
         reply = build_reply(intent)
         t_intent_ms = now_ms()
@@ -403,8 +428,8 @@ class AgentService:
             if not delivery.get("ok"):
                 await self.emit("error", "Mission could not reach the backend")
         await self.emit("reply", reply)
-        self.speaker.speak(reply)
-        rec = {"t_up_to_final_ms": round(t_final_ms - st.t_up_ms, 1),
+        self.speaker.speak(reply, interrupt=not acked)     # let a short "Okay." finish first
+        rec = {"t_up_to_final_ms": round(t_final_ms - st.t_up_ms, 1), "acked": acked,
                "final_to_intent_ms": round(t_intent_ms - t_final_ms, 1),
                "t_up_to_reply_queued_ms": round(now_ms() - st.t_up_ms, 1),
                "asr": asr_model, "intent_model": res.model, "reason": res.reason, "action": intent.action,
