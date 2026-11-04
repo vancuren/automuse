@@ -7,6 +7,8 @@ governor call (submit_human, heartbeat, command, set_mission, submit_obs, note_f
 Endpoints installed by install_routes(app, hub):
   WS /ws (via serve_ui)  POST /command  WS /ws/telemetry  GET /state  WS /ws/frames
   WS /ws/subject  WS /ws/agent?role=agent|ui  POST /mission
+  DEBUG: POST /debug/rc_pause {"seconds": N}  POST /debug/rc_resume  GET /debug/rc_pause
+         (Session A link-loss test 3; real mode only while ON_GROUND, at most 15 s)
 """
 from __future__ import annotations
 
@@ -26,8 +28,8 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from pydantic import ValidationError
 from starlette.websockets import WebSocketState
 
-from mhd.contracts import (AgentEvent, Candidates, FindRequest, Heartbeat, Mission, NextFrame, OperatorCommand,
-                           OperatorInput, Release, Select, SubjectObs, encode_frame, now_ms)
+from mhd.contracts import (AgentEvent, Candidates, FindRequest, FlightState, Heartbeat, Mission, NextFrame,
+                           OperatorCommand, OperatorInput, Release, Select, SubjectObs, encode_frame, now_ms)
 from mhd.governor.config import AXES, load_autopilot_config, load_governor_config, replace
 from mhd.governor.core import AGENT_COMMANDS, Governor
 from mhd.governor.telemetry import build_telemetry
@@ -43,6 +45,14 @@ LEGACY_TILT_HOLD_S = 0.3        # legacy UI repeats camera_tilt_direction at 30 
 # ?role=agent the agent whitelist applies (pause, land). Review finding: HTTP used to have full rights.
 HTTP_COMMANDS = frozenset({"land", "estop", "estop_reset", "pause"})
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+# POST /debug/rc_pause (Session A link-loss test 3: RC control packets stop, the 1 Hz keepalive
+# continues). Real mode: only while the governor is in one of these states (props-off test on the
+# bench), at most RC_PAUSE_MAX_S["real"]. Twin: any state. The pause also ends at once when the
+# flight state changes (LAND, E-STOP, TAKEOFF, a safety landing) or the backend shuts down, so those
+# packets always reach the drone.
+REAL_MODE_RC_PAUSE_STATES = frozenset({FlightState.on_ground})
+RC_PAUSE_MAX_S = {"real": 15.0, "twin": 60.0}
 
 
 def _no_constants(name: str):
@@ -443,6 +453,100 @@ class Hub:
         self._schedule(self._broadcast(self.agents | self.agent_uis, text))
 
     # ==========================================================================================
+    # Debug: RC pause (Session A link-loss test 3)
+
+    def rc_pause_status(self) -> dict:
+        ad = self.rc_adapter
+        if ad is None or not hasattr(ad, "rc_pause_status"):
+            return {"active": False, "available": False}
+        return {"available": True, **ad.rc_pause_status()}
+
+    def rc_pause(self, seconds: Any) -> dict:
+        """Stop RC control packets for `seconds` while the keepalive continues. DEBUG ONLY.
+
+        Real mode: only while the governor is ON_GROUND (the props-off bench test), at most 15 s.
+        Twin mode: any state, at most 60 s. Ends early (and that packet goes out) when the flight
+        state changes or the backend shuts down. Logged loudly, shown in telemetry as rc_paused.
+        """
+        gov, ad = self.gov, self.rc_adapter
+        mode = gov.flight_mode if gov is not None else (self.env.flight_mode if self.env else "unknown")
+        st = gov.state if gov is not None else None
+        base = {"flight_mode": mode, "flight_state": st.value if st is not None else "unknown"}
+
+        def no(reason: str, **kw) -> dict:
+            logger.warning("[hub] /debug/rc_pause refused: %s (%s)", reason, {**base, **kw})
+            return {"ok": False, "reason": reason, **base, **kw}
+
+        if gov is None:
+            return no("governor_not_running")
+        if ad is None or not hasattr(ad, "pause_rc"):
+            return no("no_governed_rc_adapter")
+        try:
+            secs = float(seconds)
+        except (TypeError, ValueError):
+            return no("seconds_not_a_number")
+        limit = RC_PAUSE_MAX_S.get(mode)
+        if limit is None:
+            return no("unknown_flight_mode")
+        if not (secs == secs and 0.0 < secs <= limit):   # NaN fails secs == secs
+            return no("seconds_out_of_range", max_s=limit)
+        if self.shutting_down:
+            return no("shutting_down")
+        if self.rc_pause_status().get("active"):
+            return no("already_paused")
+        if mode == "real" and st not in REAL_MODE_RC_PAUSE_STATES:
+            return no("real_mode_needs_on_ground",
+                      allowed_states=sorted(x.value for x in REAL_MODE_RC_PAUSE_STATES))
+        start_state = st
+
+        def keep_paused() -> bool:          # RC thread, every dropped packet: lock-free reads only
+            return (not self.shutting_down) and gov.state == start_state
+
+        status = ad.pause_rc(secs, keep_paused, note=f"{mode}/{start_state.value}")
+        banner = "=" * 24
+        logger.warning("%s RC PAUSE (DEBUG): RC control packets STOPPED for %.1f s, D1 keepalive continues "
+                       "(FLIGHT_MODE=%s, flight state %s). LAND / E-STOP / TAKEOFF end it at once. %s",
+                       banner, secs, mode, start_state.value, banner)
+        self._status_event(f"RC PAUSE (debug): control packets stopped for {secs:.0f} s, keepalive continues",
+                           {"kind": "rc_pause", "seconds": secs, "flight_state": start_state.value})
+        self._schedule_rc_pause_report(secs)
+        return {"ok": True, "seconds": secs, "max_s": limit, **base, "status": status}
+
+    def rc_resume(self) -> dict:
+        ad = self.rc_adapter
+        if ad is None or not hasattr(ad, "resume_rc"):
+            return {"ok": False, "reason": "no_governed_rc_adapter"}
+        was = self.rc_pause_status().get("active", False)
+        status = ad.resume_rc("debug_resume")
+        if was:
+            self._status_event("RC PAUSE ended by /debug/rc_resume", {"kind": "rc_pause_end",
+                                                                      "reason": "debug_resume"})
+        return {"ok": True, "was_active": was, "status": status}
+
+    def _schedule_rc_pause_report(self, secs: float) -> None:
+        """After the pause, tell the UI (and the log, already done by the adapter) how it ended."""
+        async def report():
+            await asyncio.sleep(min(secs, 60.0) + 0.2)
+            for _ in range(20):                       # the RC thread ends it on its next packet
+                st = self.rc_pause_status()
+                if not st.get("active"):
+                    break
+                await asyncio.sleep(0.1)
+            st = self.rc_pause_status()
+            await self._broadcast(self.agents | self.agent_uis, AgentEvent(
+                kind="status", ts_ms=now_ms(),
+                text=f"RC PAUSE ended ({st.get('end_reason')}): {st.get('dropped')} control packets dropped, "
+                     f"{st.get('keepalives_during')} keepalives sent",
+                data={"kind": "rc_pause_end", **{k: st.get(k) for k in
+                                                 ("end_reason", "dropped", "keepalives_during", "elapsed_s")}},
+            ).model_dump_json())
+        self._schedule(report())
+
+    def _status_event(self, text: str, data: dict) -> None:
+        msg = AgentEvent(kind="status", text=text, data=data, ts_ms=now_ms())
+        self._schedule(self._broadcast(self.agents | self.agent_uis, msg.model_dump_json()))
+
+    # ==========================================================================================
     # Telemetry and event relay
 
     def link_flags_and_stats(self) -> tuple[list, dict]:
@@ -471,6 +575,11 @@ class Hub:
         link_flags, link_extra = self.link_flags_and_stats()
         extra.update(link_extra)
         flags = list(link_flags)
+        pause = self.rc_pause_status()
+        if pause.get("active"):
+            flags.append("rc_paused")                 # debug RC pause: no control packets now
+            extra["rc_pause_left"] = round(1000.0 * float(pause.get("left_s") or 0.0), 1)
+            extra["rc_pause_dropped"] = pause.get("dropped", 0)
         if self.counters["legacy_axes_refused"]:
             flags.append("legacy_axes_refused")
         return build_telemetry(self.gov, alarm=self.strategy_alarm(), extra_flags=flags,
@@ -584,6 +693,27 @@ def install_routes(app: FastAPI, hub: Hub) -> None:
     async def post_mission(mission: Mission, request: Request):
         _check_origin(request, hub)
         return hub.apply_mission(mission)
+
+    @app.post("/debug/rc_pause")
+    async def post_rc_pause(request: Request):
+        # Session A link-loss test 3 (DEBUG): {"seconds": 10}. Real mode: ON_GROUND only, <= 15 s.
+        _check_origin(request, hub)
+        try:
+            body = loads_strict((await request.body()).decode() or "{}")
+        except (ValueError, UnicodeDecodeError):
+            raise HTTPException(422, "body must be JSON like {\"seconds\": 10}")
+        if not isinstance(body, dict) or "seconds" not in body:
+            raise HTTPException(422, "body must be JSON like {\"seconds\": 10}")
+        return hub.rc_pause(body["seconds"])
+
+    @app.post("/debug/rc_resume")
+    async def post_rc_resume(request: Request):
+        _check_origin(request, hub)
+        return hub.rc_resume()
+
+    @app.get("/debug/rc_pause")
+    async def get_rc_pause():
+        return hub.rc_pause_status()
 
     @app.get("/state")
     async def get_state():
