@@ -52,6 +52,10 @@ from .words import SafetyHit, safety_action_for_word
 log = logging.getLogger("mhd.agent.service")
 
 SORRY = "Sorry, I didn't catch that."
+# Said instead of "Following the ..." when the backend accepted the mission but the autopilot may not
+# move: a wrong-way latch or an earlier pause is still in force until the operator presses Resume.
+# (No safety word in it: the listener must not hear "hold" or "stop" in the agent's own voice.)
+HELD_REPLY = "I'm ready, but the autopilot is waiting. Press Resume to start following."
 
 
 def tree_root() -> Path:
@@ -200,7 +204,7 @@ class AgentService:
         if self.speaker is None:
             t = self.cfg.get("tts", {})
             self.speaker = Speaker(engine=t.get("engine", "mms"), voice=t.get("voice", "Samantha"),
-                                   play=not t.get("mute", False)).start()
+                                   play=not t.get("mute", False), elevenlabs=t.get("elevenlabs")).start()
         if self.start_mic:
             try:
                 self.hub.start()
@@ -514,6 +518,13 @@ class AgentService:
                 await self.emit("error", "Mission could not reach the backend")
             elif delivery.get("accepted") is False:
                 await self.emit("error", f"The backend refused the mission: {delivery.get('reason')}")
+        backend_reply = (delivery or {}).get("reply")
+        if intent.action == "follow" and isinstance(backend_reply, dict) and backend_reply.get("paused"):
+            # Flight 2026-11-04: a wrong-way latch from an earlier flight kept the autopilot at zero for
+            # three flights while the agent kept saying "Following ...". Say what is really happening.
+            reply = HELD_REPLY
+            await self.emit("status", "The autopilot is waiting for Resume",
+                            data={"kind": "held", "reason": backend_reply.get("reason")})
         await self.emit("reply", reply)
         self.speaker.speak(_speakable(reply, intent.action), interrupt=not acked)   # "Okay." finishes first
         rec = {"t_up_to_final_ms": round(t_final_ms - st.t_up_ms, 1), "acked": acked,
@@ -604,7 +615,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--glimmer-label", help="name recorded in Mission.model (glimmer-30b+lora, glimmer-30b)")
     ap.add_argument("--asr-endpoint", choices=["realtime", "file"])
     ap.add_argument("--no-warm", action="store_true", help="open a Voice Transcribe session per utterance")
-    ap.add_argument("--tts", choices=["mms", "say", "none"])
+    ap.add_argument("--tts", choices=["elevenlabs", "mms", "say", "none"])
     ap.add_argument("--mute", action="store_true", help="synthesize replies but do not play them")
     ap.add_argument("--no-safety", action="store_true", help="disable the local safety listener")
     ap.add_argument("--no-mic", action="store_true", help="do not open the microphone (dry runs)")

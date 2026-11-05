@@ -483,3 +483,11 @@ def test_dead_microphone_is_reported(backend, llm):
         asr.stop()
     assert st["mic_silent"] is True
     assert any(e["kind"] == "error" and "No audio from the microphone" in e["text"] for e in svc.events)
+
+
+def test_held_reply_has_no_safety_word():
+    from mhd_ml.agent.service import HELD_REPLY, _has_hover_word
+    from mhd_ml.agent.words import safety_action_for_word, words
+
+    assert not _has_hover_word(HELD_REPLY)
+    assert all(safety_action_for_word(w, fuzzy=True) is None for w in words(HELD_REPLY)), HELD_REPLY

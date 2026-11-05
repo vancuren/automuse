@@ -10,6 +10,8 @@ scripted path straight ahead of the drone:
   'walk:D0:V:STOP'         walks toward the drone from D0 at V m/s and stops at STOP m
   'away:D0:V:END'          walks away
   'cycle:D0:V:NEAR:FAR'    walks between NEAR and FAR
+  'side:D:VX:XMAX'         at D m ahead, walks sideways at VX m/s (to the right if positive) until
+                           XMAX m off axis, waits 3 s, walks back, waits 3 s, repeats
 run() returns a dict: lock, travel_toward_m (toward the subject), max_away_m, min_dist_m,
 ww_t_s / ww_reason (first wrong-way latch, seconds after FOLLOW), budget_t_s, final_ap, ...
 """
@@ -57,13 +59,28 @@ def subject_fn(spec: str):
                     tt -= dur
                 first = False
         return f
+    if kind == "side":
+        d, vx, xmax = map(float, parts[1:4])
+        leg = abs(xmax / vx)
+        def g(t):
+            tt = t % (2 * leg + 6.0)
+            if tt <= leg:
+                return (vx * tt, d)
+            if tt <= leg + 3.0:
+                return (vx * leg, d)
+            if tt <= 2 * leg + 3.0:
+                return (vx * (2 * leg + 3.0 - tt), d)
+            return (0.0, d)
+        return g
     raise ValueError(spec)
 
 
 def run(spec, *, cfg_dir, log_dir, pitch_sign=-1.0, yaw_sign=1.0, k_scale=1.0, speed_scale=1.0, plant_db=0,
         gov_over=None, ap_over=None, mode="real", dur_s=40.0, seed=1, fps=15.0, theta=1.0,
         distance="medium", noise_px=2.0, start_angle_deg=0.0, trace=False, gait_amp=0.0, gait_hz=1.8,
-        truth_log=None):
+        truth_log=None, path_from="lock"):
+    # path_from: "lock" = the subject's path starts when FOLLOW starts; "mission" = when the mission
+    # starts, so the subject is already moving during FIND and CONFIRM.
     rng = random.Random(seed)
     gcfg = load_governor_config(os.path.join(cfg_dir, "governor.yaml"))
     acfg = load_autopilot_config(os.path.join(cfg_dir, "autopilot.yaml"))
@@ -127,7 +144,11 @@ def run(spec, *, cfg_dir, log_dir, pitch_sign=-1.0, yaw_sign=1.0, k_scale=1.0, s
         if phase == "mission" and t - mission_t > 30_000.0:
             break
         st = 0.0 if lock_t is None else (t - lock_t) / 1000.0
-        sx0, sy0 = path(st)
+        if path_from == "mission":
+            pt = (t - mission_t) / 1000.0 if phase in ("mission", "follow") else 0.0
+        else:
+            pt = st
+        sx0, sy0 = path(pt)
         sx = sx0 * math.cos(ang0) + sy0 * math.sin(ang0)
         sy = -sx0 * math.sin(ang0) + sy0 * math.cos(ang0)
         dx, dy = sx - x, sy - y

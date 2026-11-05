@@ -7,6 +7,7 @@ governor call (submit_human, heartbeat, command, set_mission, submit_obs, note_f
 Endpoints installed by install_routes(app, hub):
   WS /ws (via serve_ui)  POST /command  WS /ws/telemetry  GET /state  WS /ws/frames
   WS /ws/subject  WS /ws/agent?role=agent|ui  POST /mission
+  GET /flights  /flights/{id}/events  /flights/{id}/frame/{n}   (recorder.py: saved flights, read-only)
   DEBUG: POST /debug/rc_pause {"seconds": N}  POST /debug/rc_resume  GET /debug/rc_pause
          (Session A link-loss test 3; real mode only while ON_GROUND, at most 15 s; on the Lewei
          board ALL packets stop: it has no keepalive)
@@ -36,6 +37,7 @@ from mhd.governor.core import AGENT_COMMANDS, Governor
 from mhd.governor.telemetry import build_telemetry
 
 from .frames import FrameStore
+from .recorder import FlightRecorder, install_replay_routes, recording_enabled
 from .modes import CAMERA_ONLY_FLAG, BackendEnv, camera_only_requested
 
 logger = logging.getLogger(__name__)
@@ -122,6 +124,8 @@ class Hub:
         self.agent_uis: set[WebSocket] = set()
         self.find_request: Optional[FindRequest] = None
         self._relay_task: Optional[asyncio.Task] = None
+        self._record_task: Optional[asyncio.Task] = None
+        self.recorder: Optional[FlightRecorder] = None   # flight replay (MHD_RECORD=1): files only
         self.counters = {"obs": 0, "obs_rejected": 0, "ui_msgs": 0, "bad_msgs": 0, "legacy_axes_refused": 0,
                          "origin_refused": 0}
         self.rc_adapter = None                     # GovernedX69LgRcAdapter (link stats for telemetry)
@@ -164,6 +168,9 @@ class Hub:
         self.loop = asyncio.get_running_loop()
         self.frames.bind_loop(self.loop)
         self._relay_task = asyncio.create_task(self._relay_events())
+        if recording_enabled() and self.gov is not None:
+            self.recorder = FlightRecorder(flight_mode="camera" if self.camera_only else self.gov.flight_mode)
+            self._record_task = asyncio.create_task(self._record_flights())
 
     def make_rc_adapter(self, drone_ip: str, control_port: int, local_port: int = 0):
         """The X69 RC adapter with keepalive retry and link counters (see turbodrone_glue).
@@ -250,6 +257,10 @@ class Hub:
             await asyncio.sleep(left)
         if self._relay_task:
             self._relay_task.cancel()
+        if self._record_task:
+            self._record_task.cancel()
+        if self.recorder is not None:
+            self.recorder.close()
 
 
     def close(self) -> None:
@@ -383,6 +394,8 @@ class Hub:
             # Logged by the governor's event list like any refused command.
             return {"ok": False, "flight_state": self.gov.state.value, "reason": "not_allowed_over_http"}
         res = self.gov.command(cmd.command, arm_phrase=cmd.arm_phrase, pack_id=cmd.pack_id, source=source)
+        self._record("cmd", {"command": cmd.command, "source": source, "ok": bool(res.ok),
+                             "reason": getattr(res, "reason", None)})
         if res.ok and cmd.command == "estop" and self.find_request is not None:
             # E-stop ends the mission (the governor dropped it): perception lets go, and a
             # perception client that reconnects later gets no stale FindRequest.
@@ -402,6 +415,8 @@ class Hub:
                                             category=i.category, color=i.color)
             self._send_perception(self.find_request)
         res["flight_state"] = self.gov.state.value
+        self._record("mission", {**mission.model_dump(mode="json"), "ok": bool(res.get("ok")),
+                                 "reason": res.get("reason")})
         return res
 
     # ==========================================================================================
@@ -474,7 +489,10 @@ class Hub:
             if t == "agent_event":
                 ev = AgentEvent.model_validate(data)
                 targets = self.agent_uis if role == "agent" else self.agents
-                await self._broadcast(targets, ev.model_dump_json())
+                text = ev.model_dump_json()
+                if ev.kind != "partial":
+                    self._record("agent", text)
+                await self._broadcast(targets, text)
             elif t == "mission" and role == "agent":
                 res = self.apply_mission(Mission.model_validate(data))
                 if ws is not None:
@@ -489,6 +507,7 @@ class Hub:
             self.counters["bad_msgs"] += 1
 
     def _broadcast_agent_roles(self, text: str) -> None:
+        self._record("agent", text)
         self._schedule(self._broadcast(self.agents | self.agent_uis, text))
 
     # ==========================================================================================
@@ -590,7 +609,7 @@ class Hub:
 
     def _status_event(self, text: str, data: dict) -> None:
         msg = AgentEvent(kind="status", text=text, data=data, ts_ms=now_ms())
-        self._schedule(self._broadcast(self.agents | self.agent_uis, msg.model_dump_json()))
+        self._broadcast_agent_roles(msg.model_dump_json())
 
     # ==========================================================================================
     # Telemetry and event relay
@@ -683,7 +702,30 @@ class Hub:
                 else:
                     continue
                 msg = AgentEvent(kind="status", text=text, data=ev, ts_ms=ev.get("ts_ms") or now_ms())
+                self._record("agent", msg.model_dump_json())
                 await self._broadcast(self.agents | self.agent_uis, msg.model_dump_json())
+
+    # ==========================================================================================
+    # Flight recorder (replay in the UI). Files only: nothing here reaches the governor or the drone.
+
+    def _record(self, kind: str, payload) -> None:
+        rec = self.recorder
+        if rec is not None:
+            rec.note(kind, payload)
+
+    async def _record_flights(self) -> None:
+        warned = False
+        while True:
+            await asyncio.sleep(0.1)
+            rec, gov = self.recorder, self.gov
+            if rec is None or gov is None:
+                continue
+            try:
+                rec.sample(self.telemetry_json(), gov.state.value, self.frames.latest())
+            except Exception:  # noqa: BLE001 - recording must never disturb the backend
+                if not warned:
+                    warned = True
+                    logger.exception("[hub] flight recorder sample failed")
 
     # ==========================================================================================
     # Helpers
@@ -750,6 +792,8 @@ async def _accept_if_origin_ok(ws: WebSocket, hub: Hub) -> bool:
 
 
 def install_routes(app: FastAPI, hub: Hub) -> None:
+    install_replay_routes(app)     # GET /flights...: saved flights for the UI's replay (read-only)
+
     @app.post("/command")
     async def post_command(cmd: OperatorCommand, request: Request, role: Optional[str] = None):
         # The UI's HTTP fallback (LAND, E-STOP; also pause and estop_reset): HTTP_COMMANDS only.

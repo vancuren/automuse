@@ -135,3 +135,117 @@ def test_interrupting_line_drops_older_queued_lines():
         assert [h["text"] for h in s.history] == ["Landing now.", "Got them."]
     finally:
         s.close()
+
+
+# ---- ElevenLabs engine (no network: an httpx mock transport stands in for the API) --------------------
+def _eleven(tmp_path, handler, **kw):
+    import httpx
+
+    from mhd_ml.agent.tts import ElevenLabsTts
+
+    return ElevenLabsTts(api_key="test-key", cache_dir=tmp_path / "cache",
+                         client=httpx.Client(transport=httpx.MockTransport(handler)), **kw)
+
+
+def _pcm(n=2400, value=8192):
+    return (np.full(n, value, dtype="<i2")).tobytes()
+
+
+def test_elevenlabs_requests_pcm_and_caches_on_disk(tmp_path):
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, content=_pcm())
+
+    el = _eleven(tmp_path, handler, voice_id="voiceA")
+    wav = el.synthesize("Landing now.")
+    assert wav.dtype == np.float32 and len(wav) == 2400 and abs(float(wav[0]) - 0.25) < 1e-6
+    req = seen[0]
+    assert req.url.path.endswith("/text-to-speech/voiceA/stream")
+    assert req.url.params["output_format"] == "pcm_24000" and req.headers["xi-api-key"] == "test-key"
+    assert b"eleven_flash_v2_5" in req.content and b"Landing now." in req.content
+    el.synthesize("Landing now.")
+    assert el.requests == 1                                    # memory cache
+    el2 = _eleven(tmp_path, handler, voice_id="voiceA")        # a new process: disk cache
+    assert len(el2.synthesize("Landing now.")) == 2400 and el2.requests == 0
+    el3 = _eleven(tmp_path, handler, voice_id="voiceB")        # another voice is another cache entry
+    el3.synthesize("Landing now.")
+    assert el3.requests == 1
+
+
+def test_elevenlabs_needs_a_key(monkeypatch):
+    from mhd_ml.agent.tts import ElevenLabsTts
+
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        ElevenLabsTts()
+    s = Speaker(engine="elevenlabs", play=False)               # no key: the speaker still works (MMS)
+    assert s.eleven is None and s.mms is not None
+
+
+def test_speaker_uses_elevenlabs_then_falls_back_and_backs_off(tmp_path):
+    import httpx
+
+    state = {"fail": False, "calls": 0}
+
+    def handler(request):
+        state["calls"] += 1
+        if state["fail"]:
+            return httpx.Response(401, json={"detail": "bad key"})
+        return httpx.Response(200, content=_pcm())
+
+    s = Speaker(engine="elevenlabs", model_dir=str(tmp_path / "missing"), play=False,
+                elevenlabs={"retry_after_s": 60}, eleven=_eleven(tmp_path, handler))
+    s.start(warm_up=False)
+    try:
+        assert s.wait_ready(60) and s.mms_failed               # no MMS here, so the fallback is `say`
+
+        def say(text):
+            s.speak(text)
+            time.sleep(0.05)
+            assert s.wait_idle(10)
+            return s.history[-1]["engine"]
+
+        assert say("Following the red car.") == "elevenlabs"
+        state["fail"] = True
+        assert say("Following the green car.") == "say"        # the request fails: fall back
+        calls = state["calls"]
+        assert say("Following the blue car.") == "say"         # backed off: no request at all
+        assert state["calls"] == calls
+        assert say("Following the red car.") == "elevenlabs"   # a cached line still plays from the cache
+        assert state["calls"] == calls
+    finally:
+        s.close()
+
+
+def test_line_overtaken_during_synthesis_is_dropped(tmp_path):
+    import threading
+
+    import httpx
+
+    started, release = threading.Event(), threading.Event()
+
+    def handler(request):
+        if b"slow" in request.content:
+            started.set()
+            release.wait(5)
+        return httpx.Response(200, content=_pcm())
+
+    s = Speaker(engine="elevenlabs", model_dir=str(tmp_path / "missing"), play=False,
+                eleven=_eleven(tmp_path, handler))
+    s.start(warm_up=False)
+    try:
+        assert s.wait_ready(60)
+        s.speak("A slow line.")
+        assert started.wait(5)
+        s.speak("Landing now.")                                 # interrupts while "slow" is in flight
+        release.set()
+        time.sleep(0.05)
+        assert s.wait_idle(10)
+        assert [(h["text"], bool(h.get("dropped"))) for h in s.history] == \
+            [("A slow line.", True), ("Landing now.", False)]
+    finally:
+        s.close()

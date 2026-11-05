@@ -27,8 +27,8 @@ def test_mode_banner_has_a_distinct_camera_banner_checked_before_twin():
     i_twin = banner.index('data-mode="twin"')
     assert i_real < i_cam < i_twin
     cam = banner[i_cam:i_twin]
-    assert "REAL CAMERA – NO FLIGHT" in cam
-    assert "amber" in cam and "banner-real" not in cam and "sky-" not in cam   # neither red stripes nor twin blue
+    assert "Camera only · no flight" in cam
+    assert "amber" in cam and "red-" not in cam                # its own colour, never the real drone's red
     assert 'if (mode === "twin" && isCameraOnly(telemetry))' in banner
 
 

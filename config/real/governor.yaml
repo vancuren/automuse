@@ -29,7 +29,7 @@ wire:
 caps:                       # max |offset| in counts, applied after sign and deadband compensation
   autopilot:                # PLAN 4.4 first-flight caps: yaw 38 (0.30), pitch 32 (0.25), roll 0, throttle 0
     throttle: 0
-    yaw: 38
+    yaw: 38                 # [set 2026-11-04 19:50: back to 38 after the 19:33 tumble at up to 53 counts (see autopilot.yaml yaw.loop_gain)]
     pitch: 32
     roll: 0
   human:                    # manual flying from the UI (keyboard, gamepad); 64 counts = 0.5
@@ -39,7 +39,8 @@ caps:                       # max |offset| in counts, applied after sign and dea
     roll: 64
 
 slew:
-  autopilot_per_s: 1.0      # autopilot sticks move at most 1.0 normalized unit per second.
+  autopilot_per_s: 1.0      # autopilot sticks move at most 1.0 normalized unit per second. [set 2026-11-04 19:50: back to 1.0;
+                            # 2.0 let the yaw command reverse +44 -> -30 counts in 0.3 s (19:33)]
                             # Safety neutralization always bypasses the slew limiter.
 
 human:
@@ -111,6 +112,11 @@ wrong_way:                  # PLAN 4.5 step 5, plus pitch and frozen-box checks 
                             # reversed plant: review 2026-11-04, tests/gov/test_reversed_sign_closed_loop.py)
   pitch_check_backward: true   # backing while the box grows (reversed sign: "back" flies toward them):
                             # no autopilot backing for the rest of the mission (no hover latch)
+  yaw_enabled: false        # [set 2026-11-04 19:20: the yaw check is OFF. It latched 1.3 s into the first FOLLOW (17:42)
+                            # when the person moved sideways faster than the drone turned, and stayed latched for
+                            # three flights (no autopilot output). A reversed yaw sign only turns the drone in place
+                            # until the subject is lost: check the direction by hand (RUNBOOK 3.3: the Right arrow
+                            # turns the nose right). The pitch and frozen-box checks stay on.]
   yaw_min_ratio: 0.3        # yaw: observed change at least this fraction of the predicted one
                             # (low until Session B measures K: still latches at 0.7 x K, 6-count deadband)
   pitch_probe_settle_s: 1.0 # pitch probe: before latching, hold pitch at 0 (yaw still tracks) and compare the

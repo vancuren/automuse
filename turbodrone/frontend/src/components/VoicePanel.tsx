@@ -4,19 +4,19 @@ import type { LinkStatus } from "../lib/reconnectingSocket";
 import Panel from "./Panel";
 
 const KIND_STYLE: Record<string, string> = {
-  final: "text-slate-100",
-  reply: "text-emerald-300",
-  error: "text-red-300",
-  safety_word: "font-bold text-orange-300",
-  status: "text-slate-400",
+  final: "text-neutral-100",
+  reply: "text-neutral-400",
+  error: "text-red-400",
+  safety_word: "text-amber-300",
+  status: "text-neutral-500",
 };
 
 const KIND_LABEL: Record<string, string> = {
-  final: "you",
-  reply: "drone",
-  error: "error",
-  safety_word: "safety",
-  status: "agent",
+  final: "You",
+  reply: "Drone",
+  error: "Error",
+  safety_word: "Safety",
+  status: "",
 };
 
 /** The agent re-sends its health every 5 s; silence for this long means it is gone. */
@@ -29,21 +29,22 @@ function HealthCaption({ agentStatus, health }: { agentStatus: LinkStatus; healt
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
-  if (agentStatus !== "open") return <span className="font-semibold text-red-300">voice link {agentStatus}</span>;
-  if (!health) return <span>waiting for the agent…</span>;
-  if (now - health.at > AGENT_SILENT_MS) return <span className="font-semibold text-amber-300">agent silent</span>;
-  if (health.micSilent) return <span className="font-semibold text-red-300">microphone silent: check permission</span>;
-  if (health.safetyListener === false) return <span className="font-semibold text-red-300">LOCAL STOP/LAND LISTENER OFF</span>;
+  if (agentStatus !== "open") return <span className="text-red-400">Voice link {agentStatus}</span>;
+  if (!health) return <span>Starting</span>;
+  if (now - health.at > AGENT_SILENT_MS) return <span className="text-amber-300">Voice agent is silent</span>;
+  if (health.micSilent) return <span className="text-red-400">Microphone silent, check permission</span>;
+  if (health.safetyListener === false) return <span className="text-red-400">Stop/land listener is off</span>;
   return (
-    <span data-testid="agent-health">
-      agent alive · local stop/land listener {health.safetyListener ? "on" : "?"}
-      {health.asr ? ` · ASR ${health.asr}` : ""}
-      {health.intent ? ` · intent ${health.intent}` : ""}
+    <span
+      data-testid="agent-health"
+      title={[health.asr && `speech: ${health.asr}`, health.intent && `intent: ${health.intent}`].filter(Boolean).join(" · ")}
+    >
+      Stop/land listener {health.safetyListener ? "on" : "?"}
     </span>
   );
 }
 
-/** Push-to-talk state and the live transcript (new). */
+/** Push-to-talk state and the conversation with the drone (new). */
 export default function VoicePanel({
   ptt,
   partial,
@@ -62,34 +63,27 @@ export default function VoicePanel({
   const recent = lines.slice(-6);
   return (
     <Panel title="Voice" testId="voice-panel" caption={<HealthCaption agentStatus={agentStatus} health={health} />}>
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-2">
         <div
           data-testid="ptt-indicator"
           data-active={ptt ? "1" : "0"}
-          className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold ${
-            ptt ? "bg-red-600/90 text-white" : "bg-slate-800 text-slate-400"
-          }`}
+          className={`flex items-center gap-2 text-[13px] ${ptt ? "text-white" : "text-neutral-500"}`}
         >
-          <span className={`inline-block h-3 w-3 rounded-full ${ptt ? "animate-pulse bg-white" : "bg-slate-600"}`} />
-          {ptt ? "LISTENING… release Space to send" : "Hold Space (or the talk button) to give a mission"}
+          <span className={`h-2 w-2 rounded-full ${ptt ? "soft-pulse bg-red-500" : "bg-neutral-700"}`} />
+          {ptt ? "Listening. Release Space to send." : "Hold Space and say what to follow."}
         </div>
-        {pttError && <div className="text-xs font-semibold text-red-300">{pttError}</div>}
-        <div data-testid="transcript" className="min-h-[4.5rem] space-y-0.5 text-sm">
+        {pttError && <div className="text-xs text-red-400">{pttError}</div>}
+        <div data-testid="transcript" className="min-h-[3.5rem] space-y-1.5 text-[13px]">
           {recent.map((l) => (
-            <div key={l.id} className={`truncate ${KIND_STYLE[l.kind] ?? "text-slate-300"}`}>
-              <span className="mr-1.5 inline-block w-12 text-right text-[10px] uppercase tracking-wider text-slate-500">
-                {KIND_LABEL[l.kind] ?? l.kind}
-              </span>
-              {l.text}
-              {l.meta && <span className="ml-2 font-mono text-[10px] text-slate-500">{l.meta}</span>}
+            <div key={l.id} className={`flex gap-2.5 ${KIND_STYLE[l.kind] ?? "text-neutral-300"}`} title={l.meta}>
+              <span className="w-10 shrink-0 text-neutral-600">{KIND_LABEL[l.kind] ?? l.kind}</span>
+              <span className="min-w-0 flex-1">{l.text}</span>
             </div>
           ))}
           {partial && (
-            <div data-testid="partial-transcript" className="truncate italic text-sky-200">
-              <span className="mr-1.5 inline-block w-12 text-right text-[10px] uppercase tracking-wider text-slate-500">
-                hearing
-              </span>
-              {partial}…
+            <div data-testid="partial-transcript" className="flex gap-2.5 text-neutral-300">
+              <span className="w-10 shrink-0 text-neutral-600">You</span>
+              <span className="min-w-0 flex-1">{partial}…</span>
             </div>
           )}
         </div>

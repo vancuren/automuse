@@ -1,69 +1,60 @@
 import type { Mission } from "../lib/contracts";
-import { fmtMs, modelBadgeStyle } from "../lib/theme";
+import { fmtMs } from "../lib/theme";
 import Panel from "./Panel";
 
-/** Intent JSON with keys and values colored, one field per line. */
-function IntentJson({ intent }: { intent: Record<string, unknown> }) {
-  const entries = Object.entries(intent);
+function show(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "–";
+  return typeof v === "string" ? v : JSON.stringify(v);
+}
+
+/** The intent the language model returned, one field per row. */
+function IntentFields({ intent }: { intent: Record<string, unknown> }) {
+  const entries = Object.entries(intent).filter(([, v]) => v !== null && v !== undefined && v !== "" && v !== "none");
   return (
-    <pre data-testid="intent-json" className="overflow-x-auto rounded-lg bg-slate-950 px-3 py-2 font-mono text-[13px] leading-5">
-      <span className="text-slate-500">{"{"}</span>
-      {entries.map(([k, v], i) => (
-        <div key={k} className="pl-4">
-          <span className="text-sky-300">"{k}"</span>
-          <span className="text-slate-500">: </span>
-          <span className={k === "action" ? "font-bold text-emerald-300" : "text-amber-200"}>
-            {JSON.stringify(v)}
-          </span>
-          {i < entries.length - 1 && <span className="text-slate-500">,</span>}
+    <dl data-testid="intent-json" className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
+      {entries.map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className="text-neutral-500">{k.replace(/_/g, " ")}</dt>
+          <dd className={`min-w-0 truncate ${k === "action" ? "font-medium text-neutral-100" : "text-neutral-300"}`}>{show(v)}</dd>
         </div>
       ))}
-      <span className="text-slate-500">{"}"}</span>
-    </pre>
+    </dl>
   );
 }
 
 /**
- * Mission card (new): what the language model decided, which model answered, how long it took.
+ * Mission (new): what the language model decided, which model answered, how long it took.
  * Language models only choose missions; the governor and the classical autopilot fly.
  */
 export default function MissionCard({ mission, provisional }: { mission: Mission | null; provisional: boolean }) {
   if (!mission) {
     return (
       <Panel title="Mission" testId="mission-card">
-        <div className="py-3 text-sm text-slate-500">
-          No mission yet. Hold <kbd className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">Space</kbd> and say
-          something like “follow the person in the blue shirt”.
+        <div className="text-[13px] text-neutral-500">
+          None yet. Try “follow the person in the blue shirt”.
         </div>
       </Panel>
     );
   }
-  const badge = modelBadgeStyle(mission.model);
   return (
     <Panel
       title="Mission"
       testId="mission-card"
-      caption={<span className="font-mono">{mission.mission_id}{provisional ? " · from agent" : ""}</span>}
+      caption={<span title={mission.mission_id}>{provisional ? "from the voice agent" : ""}</span>}
     >
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            data-testid="model-badge"
-            className="rounded-md px-2.5 py-1 font-mono text-sm font-bold"
-            style={{ background: badge.bg, color: badge.fg }}
-          >
+      <div className="flex flex-col gap-3">
+        {mission.transcript && <div className="text-[15px] leading-snug text-neutral-100">“{mission.transcript}”</div>}
+        <IntentFields intent={mission.intent as unknown as Record<string, unknown>} />
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500">
+          <span data-testid="model-badge" className="rounded-md bg-white/[0.06] px-1.5 py-0.5 font-mono text-[11px] text-neutral-300">
             {mission.model}
           </span>
-          <span data-testid="mission-latency" className="rounded-md bg-slate-800 px-2 py-1 font-mono text-sm text-slate-200">
+          <span>answered in</span>
+          <span data-testid="mission-latency" className="num text-neutral-300">
             {fmtMs(mission.latency_ms)}
           </span>
-          <span className="text-xs text-slate-500">model that answered · speech end to mission</span>
         </div>
-        {mission.transcript && (
-          <div className="text-[15px] italic text-slate-200">“{mission.transcript}”</div>
-        )}
-        <IntentJson intent={mission.intent as unknown as Record<string, unknown>} />
-        {mission.reply && <div className="text-sm text-emerald-300">🔊 {mission.reply}</div>}
+        {mission.reply && <div className="text-[13px] text-neutral-400">{mission.reply}</div>}
       </div>
     </Panel>
   );

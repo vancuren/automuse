@@ -5,14 +5,40 @@ night of 2026-11-03/04 ET. Each table says what else was running and where the r
 under `logs/` and `media/` are in the main checkout and are not in git (they hold run logs and
 frames). Where a number appears in two places, this page uses the newer one.
 
-**Not measured yet:** anything on the real drone. Session A (props off) and Sessions B and C
-(props on) run on the morning of Nov 4; the camera latency, field of view, yaw rate, deadband and
-link-loss behavior below are twin values or guesses until then.
+**The real drone flew on the afternoon of 2026-11-04** ([section 0](#0-real-drone)). Sections 1-7
+were measured in the twin and on the bench the night before and were not re-measured on the
+aircraft: the camera latency, field of view, yaw rate and deadband in those tables are the twin's
+values.
 
-Contents: [twin end to end](#1-twin-end-to-end) · [perception](#2-perception-gates-g0-g1-g2) ·
+Contents: [real drone](#0-real-drone) · [twin end to end](#1-twin-end-to-end) · [perception](#2-perception-gates-g0-g1-g2) ·
 [intent model](#3-intent-model-training-and-evaluation) · [voice](#4-voice) ·
 [latency budget](#5-latency-budget) · [governor](#6-safety-governor-tests-and-review) ·
 [test suites and spend](#7-test-suites-and-spend)
+
+## 0. Real drone
+
+2026-11-04, our Loiley X69 unit (the Lewei camera board revision), `config/real`, launched with
+`./fly`, SAM 3.1 on the Mac, the local Glimmer LoRA answering. Times are ET and come from the
+flight logs in `logs/flights/` (not in git). The first two flights were rebuilt from their logs
+with `scripts/import_flights.py` and have no camera picture; the flight recorder saved the third
+with its video. All three play back in the UI under **Flights**.
+
+| Flight | Airborne | What happened |
+|---|---|---|
+| 15:53 ET | 10 s | Take off and Land from the UI, then Emergency stop 7 s into the landing. No mission. |
+| 16:45 ET | 102 s | Take off from the UI. "Follow the person with the blue shirt", spoken twice (at 0:48 and 1:31); the Glimmer LoRA answered in 6.0 s and 5.3 s. The autopilot reached FOLLOW after each one, 17 s in total over five spells. The subject was lost for 44 s in total. Land from the UI. |
+| 17:41 ET | 81 s | Take off from the UI. "Can you follow the person with the cellphone in their hands" (heard as "selphone") became the mission `person with phone` in 6.0 s, and the autopilot was in FOLLOW 1.5 s later, for 16 s. A second, badly transcribed command became the mission `person` and was acknowledged with `wrong_way_hold`. FOLLOW for 26 s in total over four spells; Pause pressed three times; Land from the UI. |
+
+What these flights show and do not show:
+
+- The whole chain ran on the aircraft: a spoken command, Muse Voice Transcribe, the Glimmer LoRA
+  on the laptop, SAM 3.1 on the drone's video, the autopilot inside the governor, and Land from
+  the UI.
+- The follow was by turning only. In every flight the forward stick stayed at neutral, so
+  forward follow is still untested on the real drone.
+- The follow was intermittent: 17 s of FOLLOW in 102 s airborne (16:45) and 26 s in 81 s (17:41),
+  against 100% of the time in the twin's S1. The twin numbers below are not a prediction of
+  real-flight performance.
 
 ## 1. Twin end to end
 

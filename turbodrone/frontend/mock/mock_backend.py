@@ -15,6 +15,7 @@ Endpoints, same as drone-backend:
     WS   /ws/telemetry       Telemetry at 10 Hz
     WS   /ws/agent?role=ui   AgentEvent and Candidates out; ptt_down/ptt_up and Select in
     GET  /state              latest Telemetry
+    GET  /flights ...        saved flights for the UI's replay (--flights DIR; --record saves the mock's own)
     GET  /capabilities       upstream shape for x69_lg
     GET  /chase              2D stand-in for the twin chase view (the real one is the twin's :8766/chase)
     GET  /ui/                a production build of the UI, with --static-ui DIR (build it with --base /ui/)
@@ -42,6 +43,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -57,6 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
+from mhd.backend.recorder import FlightRecorder, install_replay_routes  # noqa: E402
 from mhd.contracts import (  # noqa: E402
     FRAME_H,
     FRAME_W,
@@ -548,6 +551,7 @@ class Hub:
         self.frame_event = asyncio.Event()
         self.mjpeg_clients = 0
         self.background_tasks: set[asyncio.Task] = set()
+        self.recorder = None  # --record: mhd.backend.recorder.FlightRecorder, like the real hub
 
     def spawn(self, coro) -> asyncio.Task:
         """create_task, keeping a reference so the task cannot be garbage-collected mid-flight."""
@@ -556,12 +560,18 @@ class Hub:
         task.add_done_callback(self.background_tasks.discard)
         return task
 
+    def record_command(self, command: str, source: str, ok: bool) -> None:
+        if self.recorder is not None:
+            self.recorder.note("cmd", {"command": command, "source": source, "ok": bool(ok), "reason": None})
+
     def next_conn(self) -> int:
         self.conn_seq += 1
         return self.conn_seq
 
     async def send_agent(self, msg: Any) -> None:
         text = msg.model_dump_json() if hasattr(msg, "model_dump_json") else json.dumps(msg)
+        if self.recorder is not None and getattr(msg, "kind", None) != "partial":
+            self.recorder.note("agent", text)
         for ws in list(self.agent_ui):
             try:
                 await ws.send_text(text)
@@ -618,6 +628,8 @@ class Hub:
             "intent": intent.model_dump(), "model": model, "latency_ms": latency_ms, "reason": reason,
             "attempts": [], "transcript": text}))
         mission = self.sim.new_mission(text, intent, model, latency_ms) if intent.action in ("follow", "hover", "land") else None
+        if mission is not None and self.recorder is not None:
+            self.recorder.note("mission", {**json.loads(mission.model_dump_json()), "ok": True})
         await self.send_agent(AgentEvent(kind="reply", text=mission.reply if mission else build_reply(intent)))
 
     async def sim_loop(self) -> None:
@@ -644,6 +656,9 @@ class Hub:
             tm = self.sim.telemetry()
             self.last_telemetry = tm
             text = tm.model_dump_json()
+            if self.recorder is not None:
+                frame = (SimpleNamespace(frame_id=self.frame_id), self.frame) if self.frame else None
+                self.recorder.sample(text, self.sim.flight_state.value, frame)
             for ws in list(self.telemetry):
                 try:
                     await asyncio.wait_for(ws.send_text(text), timeout=0.5)
@@ -655,7 +670,7 @@ class Hub:
         """15 fps test pattern, rendered only while someone watches /mjpeg."""
         background = await asyncio.to_thread(_background)
         while True:
-            if self.mjpeg_clients > 0:
+            if self.mjpeg_clients > 0 or self.recorder is not None:
                 self.frame_id += 1
                 self.frame = await asyncio.to_thread(render_jpeg, background, self.sim.t(), self.frame_id)
                 self.frame_event.set()
@@ -663,8 +678,12 @@ class Hub:
             await asyncio.sleep(1 / MJPEG_FPS)
 
 
-def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> FastAPI:
+def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None, flights: Optional[Path] = None,
+              record: bool = False) -> FastAPI:
     hub = Hub(sim, log)
+    flights = flights or (REPO / "logs" / "flights")
+    if record:
+        hub.recorder = FlightRecorder(flights, flight_mode="mock")
     tasks: list[asyncio.Task] = []
 
     from contextlib import asynccontextmanager
@@ -681,6 +700,7 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
     app.state.hub = hub
     # Same permissive CORS as upstream turbodrone, so POST /command works from :5173/:5273.
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    install_replay_routes(app, flights)  # GET /flights...: the same replay routes as drone-backend
 
     @app.get("/")
     async def index():
@@ -736,6 +756,7 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
                         sim.human_at = time.monotonic()
                     elif kind == "cmd":
                         _ok, note = sim.apply_command(OperatorCommand.model_validate(msg))
+                        hub.record_command(msg["command"], "ui", _ok)
                 log.add("ws", conn, msg, valid, err, note=note)
         except WebSocketDisconnect:
             pass
@@ -752,6 +773,7 @@ def build_app(sim: Sim, log: MessageLog, static_ui: Optional[Path] = None) -> Fa
             log.add("http", 0, raw.decode("utf-8", "replace"), False, str(e)[:200])
             return JSONResponse({"ok": False, "error": "invalid OperatorCommand"}, status_code=422)
         ok, note = sim.apply_command(cmd)
+        hub.record_command(cmd.command, "http", ok)
         log.add("http", 0, msg, True, note=note)
         return {"ok": ok, "flight_state": sim.flight_state.value, "note": note}
 
@@ -952,11 +974,13 @@ def main() -> None:
     ap.add_argument("--log", type=Path, default=None, help="JSONL message log (default logs/mock_backend_<port>.jsonl)")
     ap.add_argument("--pack-start-s", type=float, default=0.0, help="initial flight time on pack 1")
     ap.add_argument("--static-ui", type=Path, default=None, help="serve this production build at /ui/")
+    ap.add_argument("--flights", type=Path, default=None, help="saved flights for replay (default logs/flights)")
+    ap.add_argument("--record", action="store_true", help="save the mock's own flights into --flights")
     args = ap.parse_args()
     log_path = args.log or (REPO / "logs" / f"mock_backend_{args.port}.jsonl")
     sim = Sim(flight_mode=args.mode, scenario=args.scenario)
     sim.pack_time_s["1"] = args.pack_start_s
-    app = build_app(sim, MessageLog(log_path), static_ui=args.static_ui)
+    app = build_app(sim, MessageLog(log_path), static_ui=args.static_ui, flights=args.flights, record=args.record)
     print(f"mock backend on http://{args.host}:{args.port} scenario={args.scenario} mode={args.mode} log={log_path}",
           flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

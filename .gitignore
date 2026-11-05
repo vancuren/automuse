@@ -5,6 +5,7 @@ tools/*
 !tools/README.md
 logs/
 media/
+videos/
 captures/
 .env
 .env.*
@@ -19,3 +20,5 @@ __pycache__/
 dist/
 *.pcap
 .pytest_cache/
+/videos
+/turbodrone

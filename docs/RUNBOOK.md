@@ -471,17 +471,26 @@ scripts/run_stack.sh --mode real --config-dir config/real --glimmer local --agen
 
 ## 5. What the UI tells you
 
-Banners:
+The UI was redesigned on 2026-11-04 (evening): same controls, keys and safety behaviour, quieter look.
+One command starts a flight: `./fly` (real drone, Lewei board, `config/real`, tuned Glimmer; it opens
+the UI in its own Chrome window). `./fly sim` is the twin and `./fly camera` the camera-only mode.
 
-| Banner | Means | Do |
+Header and notices:
+
+| Shown | Means | Do |
 |---|---|---|
-| **REAL DRONE** (red stripes) or **TWIN** (blue) | the backend's `FLIGHT_MODE` | real flights need REAL DRONE |
-| **DISCONNECTED** (red, full width) | the control socket is down; LAND and E-STOP fall back to HTTP | wait for the reconnect; if the backend died, see section 6 |
-| **NO HEARTBEAT** (red, full width) | the UI's heartbeat worker or its socket stopped; the governor holds after 1.5 s and lands after 5 s | reload the page (a reload costs about 0.3 s of heartbeat) |
-| **NO TELEMETRY** (amber) | flight state unknown; takeoff locked | LAND and E-STOP still work; check the backend |
-| Flight badge: ON_GROUND, TAKING_OFF, AIRBORNE, LANDING, ESTOPPED | the governor's state machine | after a landing, press **Landed** |
-| Autopilot badge: IDLE, FIND, CONFIRM, FOLLOW, DOUBT, LOST, SEARCH, GIVE_UP | the autopilot's state | GIVE_UP holds until Resume or a new mission |
+| **Real drone** (red pill) or **Simulator** (grey), **Camera only · no flight** (amber) | the backend's `FLIGHT_MODE` | real flights need Real drone |
+| **Disconnected** (red notice under the header) | the control socket is down; Land and Emergency stop fall back to HTTP | wait for the reconnect; if the backend died, see section 6 |
+| **No heartbeat** (red notice) | the UI's heartbeat worker or its socket stopped; the governor holds after 1.5 s and lands after 5 s | reload the page (a reload costs about 0.3 s of heartbeat) |
+| **No telemetry** (amber notice) | flight state unknown; takeoff locked | Land and Emergency stop still work; check the backend |
+| Flight state: On the ground, Taking off, Airborne, Landing, Stopped | the governor's state machine (ON_GROUND ... ESTOPPED) | after a landing, press **Confirm touchdown** |
+| Autopilot, beside it while airborne: Looking, Confirming, Following, Unsure, Lost, Searching, Gave up | the autopilot's state (FIND ... GIVE_UP) | Gave up holds until Resume or a new mission |
 | Pack timer, amber at 5:00, red at 6:00 | flight time on this pack; auto-land at 6:30 | land and swap packs |
+| Four dots: Control, Heartbeat, Telemetry, Voice | the links; hover for the rates | all four green before takeoff |
+| **Details** | shows the sticks and the latency numbers in the side panel | off by default |
+| **Flights** | replays a saved flight: camera, subject, sticks, and every command on a timeline | on the ground only; taking off closes it |
+
+Buttons: **Take off** (after typing ARM in real mode), **Land** (L), **Hold Space to talk**, **Emergency stop** (Esc).
 
 Safety flags (the Safety panel):
 

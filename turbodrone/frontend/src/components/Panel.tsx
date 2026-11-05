@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-/** Dashboard panel frame: small uppercase title, optional right-side caption. */
+/** A section of the side panel: a quiet title, an optional caption, no box. */
 export default function Panel({
   title,
   caption,
@@ -15,13 +15,10 @@ export default function Panel({
   testId?: string;
 }) {
   return (
-    <section
-      data-testid={testId}
-      className={`flex min-h-0 flex-col rounded-xl border border-slate-800 bg-slate-900/80 px-3 py-2 ${className}`}
-    >
-      <header className="mb-1.5 flex items-baseline justify-between gap-2">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">{title}</h2>
-        {caption && <div className="truncate text-[11px] text-slate-500">{caption}</div>}
+    <section data-testid={testId} className={`flex min-h-0 flex-col border-t border-white/[0.07] py-4 first:border-t-0 first:pt-0 ${className}`}>
+      <header className="mb-2.5 flex items-baseline justify-between gap-3">
+        <h2 className="text-[13px] font-medium text-neutral-200">{title}</h2>
+        {caption && <div className="min-w-0 truncate text-xs text-neutral-500">{caption}</div>}
       </header>
       <div className="min-h-0 flex-1">{children}</div>
     </section>

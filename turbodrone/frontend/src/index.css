@@ -1,16 +1,20 @@
 @import "tailwindcss";
 
 /*
- * Operator UI theme. No web fonts: during real flights the Mac's Wi-Fi is on the drone and
- * internet comes from a phone tether, so the UI must not depend on web fonts from the internet.
+ * Operator UI theme: one neutral dark surface, system type, colour only where it carries meaning
+ * (green = following, amber = caution, red = stop). No web fonts: during real flights the Mac's
+ * Wi-Fi is on the drone, so the UI must not depend on anything from the internet.
  */
 html,
 body {
   margin: 0;
   height: 100%;
-  background-color: #070b14;
-  color: #e2e8f0;
+  background-color: #0a0a0a;
+  color: #ededed;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: -0.003em;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
 }
@@ -29,12 +33,10 @@ body {
   .font-heading {
     font-family: ui-sans-serif, system-ui, sans-serif;
   }
-}
-
-/* REAL mode banner: unmistakable hazard stripes */
-.banner-real {
-  background: repeating-linear-gradient(-45deg, #b91c1c 0 22px, #7f1d1d 22px 44px);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  /* Numbers that change in place must not shift their neighbours. */
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 /* Video area: largest 16:9 box that fits the space left by the panels */
@@ -47,5 +49,28 @@ body {
 }
 
 kbd {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: inherit;
+  opacity: 0.75;
+}
+
+/* Thin, quiet scrollbars in the side panel and the replay lists */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+@keyframes soft-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.soft-pulse {
+  animation: soft-pulse 1.4s ease-in-out infinite;
 }

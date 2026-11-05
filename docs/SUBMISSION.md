@@ -30,13 +30,14 @@ check.
 > person in the blue shirt": Muse Voice Transcribe transcribes it, our Muse Glimmer 30B LoRA (trained
 > on a MacBook with MLX) and Muse Spark 1.3 race to turn it into a mission, SAM 3.1 running on the
 > Mac finds the subject in the drone's video, and a deterministic autopilot inside a safety governor
-> steers. Omnilingual ASR listens on the laptop for "stop" and "land", even offline, and MMS-TTS
-> talks back. The language models choose missions; they never touch the sticks. The governor
+> steers. Omnilingual ASR listens on the laptop for "stop" and "land", even offline. Replies are
+> spoken by ElevenLabs, or by Meta's MMS-TTS on the laptop when it is off. The language models choose missions; they never touch the sticks. The governor
 > latches E-stop, re-asserts land, and goes neutral when video or perception goes stale. A
 > wire-level digital twin speaks the drone's exact protocol (UDP control packets, HEVC over RTSP),
-> so the same build was tested end to end, from a spoken command to the packets, before it flew,
-> and it kept a walking subject in frame the whole time. It follows by appearance only, never
-> identity, and films only people who agreed.
+> so the same build was tested end to end, from a spoken command to the packets, before it flew.
+> On November 4 the real drone took off, heard "follow the person with the blue shirt", and
+> turned to keep them in frame. It follows by appearance only, never identity, and films only
+> people who agreed.
 
 Before pasting: if Session C produced a real follow, add one sentence about it; if not, keep "before
 it flew" only if the drone has flown at all, otherwise write "before its first flight".
@@ -50,7 +51,7 @@ it flew" only if the drone has flown at all, otherwise write "before its first f
 | Muse Spark 1.3 (`muse-spark-1.3`, Meta Model API) | races Glimmer for the mission; reworded training data; evaluation baseline |
 | SAM 3.1 (`sam-3.1` on the Meta Model API, and the open weights on the Mac with MLX) | finds the described subject in the drone's video |
 | Omnilingual ASR CTC-300M (open weights) | always-on local "stop" / "land" listener, offline transcription |
-| MMS-TTS (open weights) | spoken replies |
+| MMS-TTS (open weights) | spoken replies on the laptop (`--tts mms`), and the fallback when ElevenLabs, the default voice and the one non-Meta model, is off or unreachable |
 
 Bonus prize to mention: **Best Build on Open Weight Models**: the fine-tuned Muse Glimmer runs on
 our own hardware (MLX on the MacBook), as do SAM 3.1, Omnilingual ASR and MMS-TTS.
@@ -60,7 +61,7 @@ our own hardware (MLX on the MacBook), as do SAM 3.1, Omnilingual ASR and MMS-TT
 **Video link:** the unlisted YouTube (or Vimeo) link from step 5.
 
 **Contributors:** Russell Van Curen. AI assistance: the code, tests and documents were written with
-Claude Code (Claude Opus 5.5); every commit carries a `Co-Authored-By: Claude` trailer.
+Claude Code (Claude Opus 5.5, and Claude Fable 5.1 for the final pass); every commit carries a `Co-Authored-By: Claude` trailer.
 
 **X post (optional; the Most Viral prize needs it linked on the form).** Post it before submitting.
 Use the first version only if a real flight was recorded:

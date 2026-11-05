@@ -979,7 +979,7 @@ class Governor:
         observed = b2 - b1
         turned, _ = self._integral(self._yaw_hist, a, b)
         predicted = -turned
-        if (abs(observed) > ww.min_change_rad and abs(predicted) > ww.min_change_rad
+        if (ww.yaw_enabled and abs(observed) > ww.min_change_rad and abs(predicted) > ww.min_change_rad
                 and observed * predicted < 0 and abs(observed) >= ww.yaw_min_ratio * abs(predicted)):
             return "yaw"
         if ww.pitch_enabled and pitch:

@@ -181,6 +181,14 @@ class WrongWayCfg:
     # so a subject that briefly outpaces a correct turn does not look like a reversed yaw sign.
     # Kept low until Session B measures K (0.3 still latches at 0.7 x K and a 6-count deadband).
     yaw_min_ratio: float = 0.3
+    # Yaw check on/off. A person walking sideways faster than the drone turns looks exactly like a
+    # reversed yaw sign (the bearing grows while we turn toward them), and the latch then stops all
+    # following until Resume (flight 2026-11-04 17:42: latched 1.3 s into the first FOLLOW and stayed
+    # latched for three flights; tests/gov/test_yaw_walker.py). A truly reversed yaw only turns the
+    # drone in place until the subject leaves the frame (forward needs |bearing| < 0.4 rad), so a
+    # config may switch the yaw check off once the yaw direction was checked by hand (RUNBOOK 3.3).
+    # The pitch and frozen-box checks are not affected.
+    yaw_enabled: bool = True
     # Pitch probe: before latching a pitch hover, hold pitch at 0 (yaw keeps tracking) and compare how
     # fast the box shrinks (or grows) without our own forward (back) motion. Faster: the subject is
     # outpacing a correct drone, so follow again (at most pitch_probe_max_clears times per mission).

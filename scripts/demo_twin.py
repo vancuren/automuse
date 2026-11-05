@@ -56,6 +56,12 @@ TREE = Path(os.environ["MHD_TREE"])
 HOME = Path(os.environ["MHD_HOME"])
 PY, ML_PY = os.environ["MHD_PY"], os.environ["MHD_ML_PY"]
 BACKEND, TWIN, RC, RTSP_DEFAULT, UI_PORT, GLIMMER = 8000, 8766, 23458, 8554, 5173, 8080
+# MHD_DEMO_PORTS="backend,twin,rc,ui" runs the demo beside another stack (say, the real-mode one on the
+# default ports). The UI is then built into its own folder, so the other stack's dist/ is not replaced.
+ALT_PORTS = os.environ.get("MHD_DEMO_PORTS", "").strip()
+if ALT_PORTS:
+    BACKEND, TWIN, RC, UI_PORT = (int(x) for x in ALT_PORTS.split(","))
+UI_DIST = (HOME / ".cache" / "ui-demo-dist") if ALT_PORTS else None
 FRONTEND = TREE / "turbodrone" / "frontend"
 UI_URL = f"http://127.0.0.1:{UI_PORT}/"
 CHROME_ARGS = ["--use-angle=metal", "--ignore-gpu-blocklist", "--disable-background-timer-throttling",
@@ -412,14 +418,15 @@ class Demo:
         self.result["rtsp_port"] = self.rtsp
 
     def build_ui(self) -> None:
-        dist = FRONTEND / "dist" / "index.html"
+        dist = (UI_DIST or FRONTEND / "dist") / "index.html"
         if self.args.no_build and dist.exists():
             return
         log("building the UI (production)")
         env = dict(os.environ, VITE_BACKEND_URL=f"http://localhost:{BACKEND}",
                    VITE_TWIN_CHASE_URL=f"http://localhost:{TWIN}/chase")
-        r = subprocess.run(["npm", "run", "build"], cwd=FRONTEND, env=env, capture_output=True, text=True,
-                           timeout=300)
+        extra = ["--", "--outDir", str(UI_DIST), "--emptyOutDir"] if UI_DIST else []
+        r = subprocess.run(["npm", "run", "build", *extra], cwd=FRONTEND, env=env, capture_output=True,
+                           text=True, timeout=300)
         (self.out / "ui_build.log").write_text(r.stdout + r.stderr)
         if r.returncode != 0:
             raise RuntimeError(f"UI build failed; see {self.out / 'ui_build.log'}")
@@ -479,9 +486,10 @@ class Demo:
                           self.out / "agent.log", stdin=subprocess.PIPE, stdout=self.out / "agent_events.jsonl")
         self.procs.append(self.agent)
         self.vite = Proc("ui", [str(FRONTEND / "node_modules" / ".bin" / "vite"), "preview", "--port", str(UI_PORT),
-                                "--strictPort"], self.out / "ui.log", cwd=FRONTEND)
+                                "--strictPort", *(["--outDir", str(UI_DIST)] if UI_DIST else [])],
+                         self.out / "ui.log", cwd=FRONTEND)
         self.procs.append(self.vite)
-        wait_for(lambda: httpx.get(UI_URL, timeout=2).status_code == 200, 30, "UI on 5173", procs=self.procs)
+        wait_for(lambda: httpx.get(UI_URL, timeout=2).status_code == 200, 30, f"UI on {UI_PORT}", procs=self.procs)
         wait_for(lambda: any(e.get("type") == "ready" for e in self.agent_events()), 120, "agent ready",
                  1.0, self.procs)
         ready = [e for e in self.agent_events() if e.get("type") == "ready"][0]
@@ -530,7 +538,7 @@ class Demo:
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.goto(UI_URL)
             await page.wait_for_selector('[data-testid="takeoff-blocker"] >> text=ready', timeout=60000)
-            await page.wait_for_selector('[data-testid="agent-health"] >> text=agent alive', timeout=30000)
+            await page.wait_for_selector('[data-testid="agent-health"]', timeout=30000)   # shown only when healthy
             webgl = await page.evaluate("""() => { const c = document.createElement('canvas');
                 const gl = c.getContext('webgl2'); const e = gl && gl.getExtension('WEBGL_debug_renderer_info');
                 return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : null; }""")
@@ -711,8 +719,8 @@ class Demo:
         dest.mkdir(parents=True, exist_ok=True)
         for k in ("ui_video", "chase_video"):
             p = self.result.get(k, {}).get("path")
-            if p and Path(p).exists():
-                shutil.copy2(p, dest / Path(p).name)
+            if p and Path(p).exists() and Path(p).resolve() != (dest / Path(p).name).resolve():
+                shutil.copy2(p, dest / Path(p).name)       # only from a worktree: there TREE != HOME
                 self.result[k]["shared_copy"] = str(dest / Path(p).name)
         # stills: full size in the run dir; README-sized copies in docs/img/ with --stills
         readme = PRESETS[self.args.preset].get("readme", {})

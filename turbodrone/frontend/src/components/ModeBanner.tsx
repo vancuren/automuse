@@ -2,83 +2,76 @@ import type { Telemetry } from "../lib/contracts";
 import { isCameraOnly } from "../lib/gates";
 import type { LinkStatus } from "../lib/reconnectingSocket";
 
+const PILL = "flex h-7 items-center gap-2 whitespace-nowrap rounded-full px-3 text-xs font-medium";
+
 /**
- * Full-width banners at the top of the screen (new in this fork):
- *  1. REAL / TWIN, from telemetry.flight_mode. Unknown until telemetry arrives. Twin mode with the
- *     camera_only flag (real camera, no RC packets) gets its own amber REAL CAMERA – NO FLIGHT banner.
- *  2. DISCONNECTED while the control socket is down (auto-reconnect is running).
- *  3. NO TELEMETRY while telemetry is stale.
+ * What this session is flying, as one pill in the header (new in this fork):
+ *  - Real drone, from telemetry.flight_mode. Red, the only pill with a filled dot.
+ *  - Camera only: twin mode with the camera_only flag (real camera, no RC packets). Amber.
+ *  - Simulator: the digital twin.
+ *  - Connecting, until telemetry arrives.
  */
 export function ModeBanner({ telemetry, stale }: { telemetry: Telemetry | null; stale: boolean }) {
   const mode = telemetry?.flight_mode ?? null;
   if (mode === "real") {
     return (
-      <div
+      <span
         data-testid="mode-banner"
         data-mode="real"
-        className="banner-real flex h-10 shrink-0 items-center justify-center gap-4 text-lg font-black uppercase tracking-[0.3em] text-white"
+        title="Loiley X69. Props are live."
+        className={`${PILL} bg-red-500/10 text-red-300 ring-1 ring-inset ring-red-500/30`}
       >
-        <span>REAL DRONE</span>
-        <span className="text-sm font-semibold tracking-[0.2em] text-red-100">
-          Loiley X69 · props live · {telemetry?.armed ? "ARMED" : "takeoff locked until ARM"}
-        </span>
-        {stale && <span className="text-sm text-yellow-200">(last known)</span>}
-      </div>
+        <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+        Real drone
+        {stale && <span className="text-red-300/60">last known</span>}
+      </span>
     );
   }
   if (mode === "twin" && isCameraOnly(telemetry)) {
     return (
-      <div
+      <span
         data-testid="mode-banner"
         data-mode="camera"
-        className="flex h-10 shrink-0 items-center justify-center gap-4 bg-amber-400 text-lg font-black uppercase tracking-[0.3em] text-amber-950"
+        title="Live drone camera. Flight is simulated by the governor; no RC packets are sent."
+        className={`${PILL} bg-amber-500/10 text-amber-300 ring-1 ring-inset ring-amber-500/30`}
       >
-        <span>REAL CAMERA – NO FLIGHT</span>
-        <span className="text-sm font-semibold tracking-[0.2em] text-amber-900">
-          live drone camera · flight simulated by the governor · no RC packets sent
-        </span>
-      </div>
+        Camera only · no flight
+      </span>
     );
   }
   if (mode === "twin") {
     return (
-      <div
+      <span
         data-testid="mode-banner"
         data-mode="twin"
-        className="flex h-10 shrink-0 items-center justify-center gap-4 bg-sky-800 text-lg font-black uppercase tracking-[0.3em] text-sky-50"
+        title="Digital twin on this Mac: a wire-level X69 emulator, no aircraft."
+        className={`${PILL} bg-white/[0.06] text-neutral-300`}
       >
-        <span>TWIN</span>
-        <span className="text-sm font-semibold tracking-[0.2em] text-sky-200">
-          digital twin on 127.0.0.1 · wire-level X69 emulator · no aircraft
-        </span>
-      </div>
+        Simulator
+      </span>
     );
   }
   return (
-    <div
-      data-testid="mode-banner"
-      data-mode="unknown"
-      className="flex h-10 shrink-0 items-center justify-center bg-slate-700 text-lg font-black uppercase tracking-[0.3em] text-slate-100"
-    >
-      MODE UNKNOWN · waiting for telemetry
-    </div>
+    <span data-testid="mode-banner" data-mode="unknown" className={`${PILL} bg-white/[0.06] text-neutral-500`}>
+      Connecting
+    </span>
   );
 }
 
+const NOTICE = "flex h-9 w-full shrink-0 items-center justify-center gap-2 px-4 text-[13px]";
+
 function HeartbeatBanner({ problem }: { problem: string }) {
   return (
-    <div
-      data-testid="heartbeat-banner"
-      className="flex h-11 w-full shrink-0 animate-pulse items-center justify-center gap-4 bg-red-700 text-xl font-black uppercase tracking-[0.25em] text-white"
-    >
-      <span>NO HEARTBEAT</span>
-      <span className="text-sm font-semibold normal-case tracking-normal text-red-100">
-        {problem} · the governor holds after 1.5 s and lands after 5 s · reload this page
+    <div data-testid="heartbeat-banner" className={`${NOTICE} bg-red-500/15 text-red-200`}>
+      <span className="font-semibold text-red-100">No heartbeat</span>
+      <span className="truncate">
+        {problem}. The governor holds after 1.5 s and lands after 5 s. Reload this page.
       </span>
     </div>
   );
 }
 
+/** One slim notice under the header while a link is down. Nothing when all is well. */
 export function LinkBanner({
   controlStatus,
   attempts,
@@ -97,14 +90,11 @@ export function LinkBanner({
   }
   if (controlStatus !== "open") {
     return (
-      <div
-        data-testid="disconnected-banner"
-        className="flex h-11 w-full shrink-0 animate-pulse items-center justify-center gap-4 bg-red-700 text-xl font-black uppercase tracking-[0.25em] text-white"
-      >
-        <span>DISCONNECTED</span>
-        <span className="text-sm font-semibold normal-case tracking-normal text-red-100">
-          control link to {backendUrl} is down · reconnecting{attempts > 0 ? ` (attempt ${attempts})` : ""}
-          {" "}· LAND and E-STOP use the HTTP fallback
+      <div data-testid="disconnected-banner" className={`${NOTICE} bg-red-500/15 text-red-200`}>
+        <span className="font-semibold text-red-100">Disconnected</span>
+        <span className="truncate">
+          Reconnecting to {backendUrl}
+          {attempts > 0 ? ` (attempt ${attempts})` : ""}. Land and Emergency stop still work.
         </span>
       </div>
     );
@@ -112,14 +102,9 @@ export function LinkBanner({
   if (heartbeatProblem) return <HeartbeatBanner problem={heartbeatProblem} />;
   if (telemetryStale) {
     return (
-      <div
-        data-testid="telemetry-banner"
-        className="flex h-9 w-full shrink-0 items-center justify-center gap-4 bg-amber-600 text-base font-black uppercase tracking-[0.25em] text-amber-50"
-      >
-        <span>NO TELEMETRY</span>
-        <span className="text-sm font-semibold normal-case tracking-normal">
-          flight state unknown · takeoff disabled · LAND and E-STOP still work
-        </span>
+      <div data-testid="telemetry-banner" className={`${NOTICE} bg-amber-500/15 text-amber-200`}>
+        <span className="font-semibold text-amber-100">No telemetry</span>
+        <span className="truncate">Flight state unknown, takeoff is off. Land and Emergency stop still work.</span>
       </div>
     );
   }

@@ -1,9 +1,16 @@
-# Status for the morning
+# Status
 
-Last updated: 2026-11-04 05:35 ET. Deadline: 2026-11-04 21:00 ET (submit by 19:00).
-Everything is merged on `integration`, and `main` matches it.
-- Your step-by-step morning guide: **docs/RUNBOOK.md**.
-- The submission checklist: **docs/SUBMISSION.md**.
+Last updated: 2026-11-04 20:40 ET, for submission (deadline 21:00 ET).
+
+**The real drone flew the whole chain.** Three flights on the afternoon of Nov 4 (15:53, 16:45,
+17:41 ET): take off and land from the UI, spoken follow missions through Muse Voice Transcribe and
+the Glimmer LoRA on the laptop, SAM 3.1 on the drone's video, and the autopilot turning the drone
+to keep the subject in frame (yaw only; it never flew forward). The numbers are in the README's
+Results section and in [results.md](results.md) section 0. `./fly` starts everything; **Flights**
+in the UI plays the saved flights back.
+
+The rest of this page is the hand-off written at 05:35 ET, before any flight, kept as the record
+of what was known that morning.
 
 ## Read first: the follow safety rules changed overnight
 Three adversarial reviews tested the follow code against a reversed pitch sign in closed loop (logs/review2/, logs/review3/). That is the failure where "forward" on the stick flies the drone backward. After the fixes, the autopilot:
@@ -24,7 +31,7 @@ The final reviewer's verdict is "safe with conditions" for forward-only follow:
 4. The subject walks away only, at 0.2 m/s or slower, or in walk, stop, wait steps. They never walk back toward the drone, and stop at least 2 m from it.
 5. Launch exactly as the runbook says: `scripts/run_stack.sh --mode real --config-dir config/real`.
 
-## What works now (wire-level twin on this Mac; the real drone is untested)
+## What worked at 05:35 (wire-level twin on this Mac; the real drone had not flown yet)
 | Piece | Result |
 |---|---|
 | Follow "person in blue shirt" (S1), final code | following 100% of the time; lock 95.3%; bearing RMS 0.103 rad; 0 identity switches; mission to FOLLOW 1.6 s |

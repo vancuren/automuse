@@ -23,6 +23,28 @@ Screenshots are in `media/ui_screens/` (copied to `$MHD_HOME/media/shared/ui/`):
 
   Regenerate it with `$MHD_PY turbodrone/frontend/mock/record_demo.py`. It uses Chrome's CDP screencast and the system ffmpeg, because Playwright's own video needs an ffmpeg download I did not make.
 
+## Update, 2026-11-04 evening: redesign, flight replay, `./fly`
+
+- **Look.** One neutral dark surface, system type, sentence case, colour only where it means something
+  (green following, amber caution, red stop). The camera is the page; voice, mission and safety sit in a
+  quiet side column; sticks and latency are behind **Details** (off by default, remembered per browser).
+  Every control, key, test id and safety behaviour described below is unchanged; only the copy and the
+  styling moved (for example the full-width REAL DRONE stripes are now a red **Real drone** pill).
+- **Flight replay.** The backend saves every flight (`src/mhd/backend/recorder.py`, on with
+  `MHD_RECORD=1`, which `scripts/run_stack.sh` sets): the telemetry the UI saw at 10 Hz, the camera at
+  up to 10 fps, voice and governor events, commands and missions, in `logs/flights/<time>-<mode>/`
+  (about 40 MB per minute). **Flights** in the header lists them and plays one back with a scrubber, 1x /
+  2x / 4x, the subject overlay, the sticks at the playhead, and a clickable command list. Replay is
+  read-only (`GET /flights...`), mouse-only (Esc, L and Space stay the live safety keys), covers only the
+  camera area (Land and Emergency stop stay on screen), and closes when the drone takes off.
+  `scripts/import_flights.py` rebuilds earlier flights from their logs, without a camera picture.
+- **Starting.** `./fly` (real), `./fly sim`, `./fly camera`: `scripts/run_stack.sh` with the options
+  that flew, plus `--open`, which opens the UI in its own Chrome window. In real mode the ARM box now
+  sits before Take off, in the order you use them.
+- **Tests.** `tests/ui/test_ui_replay.py` (4, browser) and `tests/gov/test_flight_recorder.py` (4).
+  The mock backend serves the same replay routes (`--flights DIR`) and can record its own flights
+  (`--record`).
+
 ## Run it
 
 All commands assume `cd $MHD_TREE && source env.sh`. Dependencies install into the worktree, with the npm cache inside the project:

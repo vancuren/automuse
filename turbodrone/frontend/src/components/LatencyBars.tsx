@@ -16,8 +16,8 @@ interface BarSpec {
 
 /** Thresholds follow PLAN.md 4.5 (staleness) and 4.9 (G0 latency gates). */
 const BARS: BarSpec[] = [
-  { key: "frame", label: "Frame age", hint: "camera capture → backend; neutral 0.7 s, land 2 s", warn: 700, hard: 2000, get: (t) => t.frame_age_ms },
-  { key: "obs", label: "Observation age", hint: "capture → subject observation; neutral above 0.4 s", warn: 400, hard: 1000, get: (t) => t.obs_age_ms },
+  { key: "frame", label: "Camera frame", hint: "camera capture → backend; neutral 0.7 s, land 2 s", warn: 700, hard: 2000, get: (t) => t.frame_age_ms },
+  { key: "obs", label: "Observation", hint: "capture → subject observation; neutral above 0.4 s", warn: 400, hard: 1000, get: (t) => t.obs_age_ms },
   {
     key: "detector",
     label: "Detector",
@@ -41,15 +41,15 @@ const BARS: BarSpec[] = [
 
 const PRIMARY_KEYS = new Set(["detector", "intent"]);
 
-/** Latency bars (new): the four numbers that decide whether the autopilot may fly. */
+/** Latency (new): the four numbers that decide whether the autopilot may fly. */
 export default function LatencyBars({ telemetry, stale }: { telemetry: Telemetry | null; stale: boolean }) {
   // fc_* are the Lewei flight controller's telemetry (volts, status, counts), not latencies.
   const extras = Object.entries(telemetry?.latency_ms ?? {}).filter(([k]) => !PRIMARY_KEYS.has(k) && !k.startsWith("fc_"));
   const last = useRef<Record<string, { v: number; at: number }>>({});
   const now = performance.now();
   return (
-    <Panel title="Latency" testId="latency-bars" caption={stale ? "stale" : "live"}>
-      <div className="flex flex-col gap-1.5">
+    <Panel title="Latency" testId="latency-bars" caption={stale ? "stale" : undefined}>
+      <div className="flex flex-col gap-2">
         {BARS.map((b) => {
           const raw = telemetry ? b.get(telemetry) : null;
           let v = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
@@ -59,22 +59,19 @@ export default function LatencyBars({ telemetry, stale }: { telemetry: Telemetry
             else if (held && now - held.at <= b.holdMs) v = held.v;
           }
           const pct = v === null ? 0 : Math.min(100, (v / b.hard) * 100);
-          const color = v === null ? "bg-slate-700" : v >= b.hard ? "bg-red-500" : v >= b.warn ? "bg-amber-400" : "bg-emerald-500";
+          const color = v === null ? "bg-neutral-700" : v >= b.hard ? "bg-red-500" : v >= b.warn ? "bg-amber-400" : "bg-neutral-300";
           return (
-            <div key={b.key} data-testid={`latency-${b.key}`} title={b.hint}>
-              <div className="flex items-baseline justify-between text-xs">
-                <span className="text-slate-300">{b.label}</span>
-                <span className="font-mono text-slate-100">{fmtMs(v)}</span>
+            <div key={b.key} data-testid={`latency-${b.key}`} title={b.hint} className="flex items-center gap-3 text-xs">
+              <span className="w-24 shrink-0 text-neutral-500">{b.label}</span>
+              <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-white/[0.08]">
+                <div className={`h-full rounded-full ${color} ${stale ? "opacity-40" : ""}`} style={{ width: `${pct}%` }} />
               </div>
-              <div className="relative h-2 w-full overflow-hidden rounded bg-slate-800">
-                <div className={`h-full ${color} ${stale ? "opacity-40" : ""}`} style={{ width: `${pct}%` }} />
-                <div className="absolute top-0 h-full w-0.5 bg-white/60" style={{ left: `${(b.warn / b.hard) * 100}%` }} />
-              </div>
+              <span className="num w-14 shrink-0 text-right text-neutral-300">{fmtMs(v)}</span>
             </div>
           );
         })}
         {extras.length > 0 && (
-          <div className="truncate font-mono text-[10px] text-slate-500">
+          <div className="num truncate text-[11px] text-neutral-600" title={extras.map(([k, v]) => `${k} ${fmtMs(v)}`).join(" · ")}>
             {extras.map(([k, v]) => `${k} ${fmtMs(v)}`).join(" · ")}
           </div>
         )}

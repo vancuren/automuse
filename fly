@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# One command to fly. Starts everything, opens the UI in its own Chrome window, saves the flight for replay.
+#
+#   ./fly            the real drone, exactly the setup that flew on 2026-11-04:
+#                    Lewei board, config/real, SAM 3.1 on this Mac, the tuned Glimmer for voice
+#   ./fly sim        the digital twin (no aircraft)
+#   ./fly camera     the drone's real camera, no flight (no RC packets are sent)
+#
+# Anything after the mode goes to scripts/run_stack.sh unchanged, e.g. `./fly sim --scenario s3` or
+# `./fly --no-build`. Ctrl-C stops everything; the backend lands the drone first.
+# In the UI: type ARM, press Take off, then hold Space and say what to follow.
+set -o pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
+
+MODE=real
+case "${1:-}" in
+  real|sim|twin|camera) MODE="$1"; shift ;;
+  -h|--help|help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
+esac
+
+case "$MODE" in
+  real)     exec scripts/run_stack.sh --mode real --board lewei --config-dir config/real \
+                 --agent glimmer --glimmer local --open "$@" ;;
+  sim|twin) exec scripts/run_stack.sh --mode twin --open "$@" ;;
+  camera)   exec scripts/run_stack.sh --mode camera --open "$@" ;;
+esac

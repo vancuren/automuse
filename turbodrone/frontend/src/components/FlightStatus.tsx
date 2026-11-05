@@ -1,59 +1,55 @@
 import { PACK_IDS, PACK_LAND_S, PACK_WARN_S } from "../config";
 import type { Telemetry } from "../lib/contracts";
 import type { LinkStatus } from "../lib/reconnectingSocket";
-import { AUTOPILOT_COLORS, FLIGHT_STATE_STYLE, fmtClock } from "../lib/theme";
+import { AUTOPILOT_COLORS, AUTOPILOT_LABEL, FLIGHT_STATE_STYLE, fmtClock } from "../lib/theme";
 import UiButton from "./UiButton";
 
-/** Flight-state badge and autopilot badge (new). Gray "UNKNOWN" when telemetry is stale. */
+/** Flight state and autopilot state, in words. "Waiting" while telemetry is stale. */
 export function FlightStateBadges({ telemetry, stale }: { telemetry: Telemetry | null; stale: boolean }) {
   if (!telemetry || stale) {
     return (
-      <div className="flex items-center gap-2">
-        <span
-          data-testid="flight-state"
-          data-state="UNKNOWN"
-          className="rounded-lg bg-slate-700 px-4 py-1.5 text-xl font-black tracking-[0.18em] text-slate-200"
-        >
-          UNKNOWN
+      <div className="flex items-center gap-2.5 text-[15px] font-medium text-neutral-500">
+        <span className="h-2 w-2 rounded-full bg-neutral-600" />
+        <span data-testid="flight-state" data-state="UNKNOWN">
+          Waiting for the drone
         </span>
       </div>
     );
   }
-  // A state this UI does not know (version skew) must never read as ON GROUND.
+  // A state this UI does not know (version skew) must never read as "On the ground".
   const fs = FLIGHT_STATE_STYLE[telemetry.flight_state] ?? {
-    bg: "#7c2d12",
-    fg: "#fff7ed",
-    label: `? ${String(telemetry.flight_state)}`,
+    dot: "#f59e0b",
+    label: `Unknown state ${String(telemetry.flight_state)}`,
   };
-  const apColor = AUTOPILOT_COLORS[telemetry.autopilot_state] ?? AUTOPILOT_COLORS.IDLE;
+  const ap = telemetry.autopilot_state;
+  const apColor = AUTOPILOT_COLORS[ap] ?? AUTOPILOT_COLORS.IDLE;
+  const flying = telemetry.flight_state === "AIRBORNE";
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2.5 whitespace-nowrap text-[15px] font-medium">
       <span
-        data-testid="flight-state"
-        data-state={telemetry.flight_state}
-        className={`whitespace-nowrap rounded-lg px-4 py-1.5 text-xl font-black tracking-[0.18em] ${
-          telemetry.flight_state === "ESTOPPED" ? "animate-pulse" : ""
-        }`}
-        style={{ background: fs.bg, color: fs.fg }}
-      >
+        className={`h-2 w-2 rounded-full ${telemetry.flight_state === "ESTOPPED" ? "soft-pulse" : ""}`}
+        style={{ background: fs.dot }}
+      />
+      <span data-testid="flight-state" data-state={telemetry.flight_state} className="text-neutral-100">
         {fs.label}
       </span>
       <span
         data-testid="autopilot-state"
-        data-state={telemetry.autopilot_state}
-        className="whitespace-nowrap rounded-lg border-2 px-3 py-1 text-base font-bold tracking-[0.14em]"
-        style={{ borderColor: apColor, color: apColor }}
+        data-state={ap}
+        className={flying && ap !== "IDLE" ? "" : "hidden"}
+        style={{ color: apColor }}
       >
-        AUTOPILOT {telemetry.autopilot_state}
+        <span className="mr-2.5 text-neutral-600">/</span>
+        {AUTOPILOT_LABEL[ap] ?? ap}
       </span>
       {telemetry.flight_mode === "real" && (
         <span
           data-testid="armed-chip"
-          className={`rounded-md px-2 py-1 text-xs font-bold tracking-wider ${
-            telemetry.armed ? "bg-red-600 text-white" : "bg-slate-700 text-slate-300"
+          className={`ml-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+            telemetry.armed ? "bg-red-500/15 text-red-300" : "bg-white/[0.06] text-neutral-400"
           }`}
         >
-          {telemetry.armed ? "ARMED" : "DISARMED"}
+          {telemetry.armed ? "Armed" : "Locked"}
         </span>
       )}
     </div>
@@ -82,13 +78,9 @@ export function PackTimer({
   onPackSwap: (packId: string) => void;
 }) {
   const t = telemetry?.flight_time_s ?? 0;
-  const pack = telemetry?.pack_id ?? "?";
   const level = t >= PACK_LAND_S - 30 ? "red" : t >= PACK_WARN_S ? "amber" : "ok";
-  const colors = {
-    ok: "text-emerald-300 border-slate-700",
-    amber: "text-amber-300 border-amber-500",
-    red: "text-red-300 border-red-500 animate-pulse",
-  }[level];
+  const tone = { ok: "text-neutral-200", amber: "text-amber-300", red: "text-red-400 soft-pulse" }[level];
+  const bar = { ok: "bg-neutral-400", amber: "bg-amber-400", red: "bg-red-500" }[level];
   const pct = Math.min(100, (t / PACK_LAND_S) * 100);
   const onGround = !stale && telemetry?.flight_state === "ON_GROUND";
   // Lewei board only: the flight controller's own battery reading (informational, 0.1 V steps). Once the
@@ -98,84 +90,79 @@ export function PackTimer({
   const fcAge = telemetry?.latency_ms?.fc_telemetry_age;
   const fcOldFor = typeof fcAge === "number" && Number.isFinite(fcAge) && fcAge > FC_STALE_MS ? fmtAge(fcAge) : null;
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-3">
       <div
         data-testid="pack-timer"
         data-level={level}
-        className={`flex min-w-[190px] flex-col rounded-lg border bg-slate-900 px-3 py-1 ${colors}`}
-        title={`warns at ${fmtClock(PACK_WARN_S)}, auto-land at ${fmtClock(PACK_LAND_S)}`}
+        className="flex items-center gap-2.5"
+        title={`Flight time on this battery pack. Warns at ${fmtClock(PACK_WARN_S)}, lands by itself at ${fmtClock(PACK_LAND_S)}.`}
       >
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Pack {pack}</span>
-          {typeof volts === "number" &&
-            Number.isFinite(volts) &&
-            (fcOldFor !== null ? (
-              <span
-                data-testid="fc-battery"
-                data-old="1"
-                className="whitespace-nowrap font-mono text-sm font-bold text-slate-500"
-                title={`no reply from the drone for ${fcOldFor}: last reading ${volts.toFixed(1)} V (Lewei board)`}
-              >
-                — V{" "}
-                <span data-testid="fc-battery-age" className="text-[10px] font-normal">
-                  {fcOldFor} ago
-                </span>
+        {typeof volts === "number" &&
+          Number.isFinite(volts) &&
+          (fcOldFor !== null ? (
+            <span
+              data-testid="fc-battery"
+              data-old="1"
+              className="num whitespace-nowrap text-[13px] text-slate-500"
+              title={`no reply from the drone for ${fcOldFor}: last reading ${volts.toFixed(1)} V (Lewei board)`}
+            >
+              — V{" "}
+              <span data-testid="fc-battery-age" className="text-[11px]">
+                {fcOldFor} ago
               </span>
-            ) : (
-              <span
-                data-testid="fc-battery"
-                data-old="0"
-                className={`font-mono text-sm font-bold ${stale ? "text-slate-500" : volts < 3.5 ? "text-amber-300" : "text-slate-200"}`}
-                title="battery voltage reported by the flight controller (Lewei board)"
-              >
-                {volts.toFixed(1)} V
-              </span>
-            ))}
-          <span className="font-mono text-xl font-bold">{fmtClock(t)}</span>
+            </span>
+          ) : (
+            <span
+              data-testid="fc-battery"
+              data-old="0"
+              className={`num text-[13px] ${stale ? "text-slate-500" : volts < 3.5 ? "text-amber-300" : "text-neutral-400"}`}
+              title="battery voltage reported by the flight controller (Lewei board)"
+            >
+              {volts.toFixed(1)} V
+            </span>
+          ))}
+        <div className="h-1 w-14 overflow-hidden rounded-full bg-white/10">
+          <div className={`h-full rounded-full ${bar}`} style={{ width: `${pct}%` }} />
         </div>
-        <div className="h-1.5 w-full overflow-hidden rounded bg-slate-800">
-          <div
-            className={`h-full ${level === "ok" ? "bg-emerald-500" : level === "amber" ? "bg-amber-500" : "bg-red-500"}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        <div className="text-[10px] text-slate-500">
-          {level === "red" ? "AUTO-LAND SOON" : level === "amber" ? "LAND SOON" : `auto-land at ${fmtClock(PACK_LAND_S)}`}
-        </div>
+        <span className={`num text-[15px] font-medium ${tone}`}>{fmtClock(t)}</span>
+        {level !== "ok" && (
+          <span className={`text-xs ${level === "red" ? "text-red-400" : "text-amber-300"}`}>
+            {level === "red" ? "landing soon" : "land soon"}
+          </span>
+        )}
       </div>
-      <div className="flex flex-col gap-1">
-        {PACK_IDS.map((id) => (
-          <UiButton
-            key={id}
-            data-testid={`pack-${id}`}
-            disabled={!onGround || id === telemetry?.pack_id}
-            onClick={() => onPackSwap(id)}
-            className={`whitespace-nowrap rounded px-2 py-0.5 text-[11px] font-semibold ${
-              id === telemetry?.pack_id
-                ? "bg-slate-600 text-white"
-                : onGround
-                  ? "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                  : "cursor-not-allowed bg-slate-800/60 text-slate-600"
-            }`}
-            title={onGround ? `Swap to pack ${id}` : "Pack swap only on the ground"}
-          >
-            pack {id}
-          </UiButton>
-        ))}
+      <div className="flex rounded-lg bg-white/[0.06] p-0.5" title="Battery pack in the drone">
+        {PACK_IDS.map((id) => {
+          const current = id === telemetry?.pack_id;
+          return (
+            <UiButton
+              key={id}
+              data-testid={`pack-${id}`}
+              disabled={!onGround || current}
+              onClick={() => onPackSwap(id)}
+              className={`whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium ${
+                current
+                  ? "bg-white/10 text-neutral-100"
+                  : onGround
+                    ? "text-neutral-400 hover:text-neutral-100"
+                    : "cursor-not-allowed text-neutral-600"
+              }`}
+              title={onGround ? `Switch to pack ${id}` : "Change packs on the ground"}
+            >
+              Pack {id}
+            </UiButton>
+          );
+        })}
       </div>
     </div>
   );
 }
 
 function Dot({ ok, warn }: { ok: boolean; warn?: boolean }) {
-  return (
-    <span
-      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${ok ? "bg-emerald-400" : warn ? "bg-amber-400" : "bg-red-500"}`}
-    />
-  );
+  return <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ok ? "bg-emerald-400" : warn ? "bg-amber-400" : "bg-red-500"}`} />;
 }
 
-/** Link status chips: control socket, heartbeat worker, telemetry, voice. */
+/** Link status: control socket, heartbeat worker, telemetry, voice. A dot each; rates on hover. */
 export function LinkChips({
   control,
   hbOpen,
@@ -191,22 +178,25 @@ export function LinkChips({
   telemetryRate: number | null;
   agent: LinkStatus;
 }) {
-  const chip =
-    "flex items-center gap-1.5 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 font-mono text-[11px] text-slate-300";
+  const chip = "flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500";
   const hbOk = hbOpen && (hbRate === null || hbRate > 3.5);
   return (
-    <div data-testid="link-chips" className="grid grid-cols-2 gap-1">
-      <span className={chip} data-testid="link-control" data-status={control}>
-        <Dot ok={control === "open"} /> CTRL {control}
+    <div data-testid="link-chips" className="flex items-center gap-3.5">
+      <span className={chip} data-testid="link-control" data-status={control} title={`Control link: ${control}`}>
+        <Dot ok={control === "open"} /> Control
       </span>
-      <span className={chip} data-testid="link-hb">
-        <Dot ok={hbOk} warn={hbOpen} /> HB {hbRate === null ? "–" : hbRate.toFixed(1)} Hz
+      <span className={chip} data-testid="link-hb" title={`Heartbeat: ${hbRate === null ? "–" : hbRate.toFixed(1)} Hz`}>
+        <Dot ok={hbOk} warn={hbOpen} /> Heartbeat
       </span>
-      <span className={chip} data-testid="link-telemetry">
-        <Dot ok={!telemetryStale} /> TLM {telemetryRate === null ? "–" : telemetryRate} Hz
+      <span
+        className={chip}
+        data-testid="link-telemetry"
+        title={`Telemetry: ${telemetryRate === null ? "–" : telemetryRate} Hz`}
+      >
+        <Dot ok={!telemetryStale} /> Telemetry
       </span>
-      <span className={chip} data-testid="link-agent" data-status={agent}>
-        <Dot ok={agent === "open"} warn={agent === "connecting"} /> VOICE {agent}
+      <span className={chip} data-testid="link-agent" data-status={agent} title={`Voice link: ${agent}`}>
+        <Dot ok={agent === "open"} warn={agent === "connecting"} /> Voice
       </span>
     </div>
   );

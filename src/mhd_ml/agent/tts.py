@@ -1,4 +1,5 @@
-"""Spoken replies: MMS-TTS (facebook/mms-tts-eng, a Meta model, CC-BY-NC) with macOS `say` as fallback.
+"""Spoken replies: ElevenLabs (cloud, optional), MMS-TTS (facebook/mms-tts-eng, a Meta model, CC-BY-NC,
+on this Mac), and macOS `say`. Each engine falls back to the next: elevenlabs -> mms -> say.
 
 The reply text always comes from mhd.intent_spec.build_reply(intent), built locally from the mission
 JSON, so models emit fewer tokens.
@@ -9,13 +10,20 @@ JSON, so models emit fewer tokens.
   "Landing now." and 0.39 s for "Following the person in blue shirt." (CPU, 2 threads).
 - Playback uses sounddevice (imported lazily). A newer reply interrupts the one playing.
 - If MMS fails to load or synthesize, the same text goes to `say` instead.
+- engine "elevenlabs" (needs ELEVENLABS_API_KEY) asks ElevenLabs for raw 24 kHz PCM. Every line is
+  cached on disk per voice and model, so a repeated line ("Landing now.") plays at once, offline, and
+  costs nothing. A failed or slow request (no internet on the drone's Wi-Fi) falls back to MMS for
+  that line and ElevenLabs is skipped for the next 30 s, so replies never wait on a dead network twice.
+- A line that an interrupting line overtook while it was being synthesized is dropped, not played.
 
-    $MHD_ML_PY -m mhd_ml.agent.tts "Following the person in blue shirt."          # speak it
+    $MHD_ML_PY -m mhd_ml.agent.tts "Following the person in blue shirt."          # speak it (MMS)
+    $MHD_ML_PY -m mhd_ml.agent.tts --engine elevenlabs "Landing now."             # speak it (ElevenLabs)
     $MHD_ML_PY -m mhd_ml.agent.tts --out media/agent/reply.wav "Landing now."      # write a file
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import queue
@@ -76,16 +84,117 @@ class MmsTts:
         return wav
 
 
+# Fixed lines the agent says often. With engine "elevenlabs" they are fetched once at start-up and
+# cached on disk, so the lines that matter most never wait on the network.
+COMMON_LINES = ("Okay.", "Landing now.", "Got them. Following.", "I lost the subject. Looking around.",
+                "Sorry, I didn't catch that.",
+                "I'm ready, but the autopilot is waiting. Press Resume to start following.")
+
+
+class ElevenLabsTts:
+    """ElevenLabs text to speech as raw PCM (24 kHz, 16-bit mono), cached on disk per voice and model."""
+
+    DEFAULT_VOICE = "EXAVITQu4vr4xnSDxMaL"     # "Sarah", a stock ElevenLabs voice
+    DEFAULT_MODEL = "eleven_flash_v2_5"        # their lowest-latency model
+    sample_rate = 24000
+
+    def __init__(self, api_key: Optional[str] = None, voice_id: Optional[str] = None,
+                 model_id: Optional[str] = None, timeout_s: float = 4.0,
+                 cache_dir: Optional[str | Path] = None, base_url: str = "https://api.elevenlabs.io/v1",
+                 client=None):
+        self.api_key = api_key if api_key is not None else os.environ.get("ELEVENLABS_API_KEY", "")
+        if not self.api_key:
+            raise RuntimeError("ELEVENLABS_API_KEY is not set")
+        self.voice_id = voice_id or os.environ.get("ELEVENLABS_VOICE_ID") or self.DEFAULT_VOICE
+        self.model_id = model_id or self.DEFAULT_MODEL
+        self.timeout_s = float(timeout_s)
+        self.base_url = base_url.rstrip("/")
+        if cache_dir is None and os.environ.get("MHD_HOME"):
+            cache_dir = Path(os.environ["MHD_HOME"]) / ".cache" / "tts" / "elevenlabs"
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self._client = client
+        self._mem: dict[str, np.ndarray] = {}
+        self.requests = 0                       # network requests made (cache hits make none)
+
+    def _key(self, text: str) -> str:
+        return hashlib.sha1(f"{self.model_id}|{self.voice_id}|{text}".encode()).hexdigest()
+
+    def _cache_file(self, key: str) -> Optional[Path]:
+        return self.cache_dir / f"{key}.pcm" if self.cache_dir else None
+
+    def cached(self, text: str) -> Optional[np.ndarray]:
+        key = self._key(text)
+        wav = self._mem.get(key)
+        if wav is None:
+            f = self._cache_file(key)
+            if f is not None and f.is_file() and f.stat().st_size > 0:
+                wav = self._mem[key] = self._to_float(f.read_bytes())
+        return wav
+
+    @staticmethod
+    def _to_float(pcm: bytes) -> np.ndarray:
+        return np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype="<i2").astype(np.float32) / 32768.0
+
+    def synthesize(self, text: str) -> np.ndarray:
+        wav = self.cached(text)
+        if wav is not None:
+            return wav
+        import httpx  # lazy
+
+        if self._client is None:
+            self._client = httpx.Client(timeout=httpx.Timeout(self.timeout_s, connect=min(2.0, self.timeout_s)))
+        t0 = time.monotonic()
+        self.requests += 1
+        buf = bytearray()
+        with self._client.stream(
+                "POST", f"{self.base_url}/text-to-speech/{self.voice_id}/stream",
+                params={"output_format": "pcm_24000"},
+                json={"text": text, "model_id": self.model_id},
+                headers={"xi-api-key": self.api_key, "accept": "audio/pcm"}) as r:
+            if r.status_code != 200:
+                raise RuntimeError(f"ElevenLabs HTTP {r.status_code}: {r.read()[:200]!r}")
+            for chunk in r.iter_bytes():
+                buf.extend(chunk)
+                if time.monotonic() - t0 > self.timeout_s:      # httpx timeouts are per read, not total
+                    raise TimeoutError(f"ElevenLabs took longer than {self.timeout_s:.1f} s")
+        if len(buf) < 2:
+            raise RuntimeError("ElevenLabs returned no audio")
+        key = self._key(text)
+        wav = self._mem[key] = self._to_float(bytes(buf))
+        f = self._cache_file(key)
+        if f is not None:
+            try:
+                f.parent.mkdir(parents=True, exist_ok=True)
+                tmp = f.with_suffix(".tmp")
+                tmp.write_bytes(bytes(buf))
+                tmp.replace(f)
+            except OSError as e:
+                log.warning("could not cache the ElevenLabs line: %s", e)
+        return wav
+
+
 class Speaker:
-    """Speaks replies on a worker thread. engine: "mms" | "say" | "none"."""
+    """Speaks replies on a worker thread. engine: "elevenlabs" | "mms" | "say" | "none".
+
+    "elevenlabs" falls back to MMS and then `say`; `elevenlabs` holds its settings (voice_id, model_id,
+    timeout_s, retry_after_s; all optional)."""
 
     def __init__(self, engine: str = "mms", voice: str = "Samantha", model_dir: Optional[str] = None,
-                 device=None, play: bool = True):
+                 device=None, play: bool = True, elevenlabs: Optional[dict] = None, eleven=None):
         self.engine = engine
         self.voice = voice
         self.device = device
         self.play = play
-        self.mms = MmsTts(model_dir) if engine == "mms" else None
+        self.mms = MmsTts(model_dir) if engine in ("mms", "elevenlabs") else None
+        self.eleven = eleven                      # an ElevenLabsTts (tests pass their own)
+        ecfg = dict(elevenlabs or {})
+        self._eleven_retry_s = float(ecfg.pop("retry_after_s", 30.0))
+        self._eleven_off_until = 0.0              # monotonic; after a failure, skip ElevenLabs until then
+        if engine == "elevenlabs" and self.eleven is None:
+            try:
+                self.eleven = ElevenLabsTts(**ecfg)
+            except Exception as e:
+                log.warning("ElevenLabs unavailable (%s); replies will use MMS-TTS", e)
         self._q: "queue.Queue[tuple[str, float]]" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -161,6 +270,16 @@ class Speaker:
             except Exception as e:
                 self.mms_failed = True
                 log.warning("MMS-TTS unavailable (%s); replies will use `say`", e)
+        if self.eleven is not None and warm_up:
+            t0 = time.monotonic()
+            try:
+                for line in COMMON_LINES:
+                    self.eleven.synthesize(line)
+                log.info("ElevenLabs ready (voice %s, %s): %d common lines in %.0f ms, %d fetched",
+                         self.eleven.voice_id, self.eleven.model_id, len(COMMON_LINES),
+                         (time.monotonic() - t0) * 1000.0, self.eleven.requests)
+            except Exception as e:
+                self._eleven_failed(e)
         self._ready.set()
         while not self._stop.is_set():
             text, queued, gen = self._q.get()
@@ -172,30 +291,57 @@ class Speaker:
                 continue
             self._busy = True
             try:
-                self._say_one(text, queued)
+                self._say_one(text, queued, gen)
             finally:
                 self._busy = False
 
-    def _say_one(self, text: str, queued_ms: float) -> None:
-        rec = {"text": text, "queued_ms": queued_ms, "engine": None, "started_ms": None, "synth_ms": None}
-        self.history.append(rec)
+    def _eleven_failed(self, e: Exception) -> None:
+        self._eleven_off_until = time.monotonic() + self._eleven_retry_s
+        log.warning("ElevenLabs failed (%s: %s); using MMS-TTS, retrying ElevenLabs in %.0f s",
+                    e.__class__.__name__, e, self._eleven_retry_s)
+
+    def _synthesize(self, text: str, rec: dict):
+        """(wav, sample_rate) from the first engine that works, or None when only `say` is left."""
+        el = self.eleven
+        if el is not None and (time.monotonic() >= self._eleven_off_until or el.cached(text) is not None):
+            try:
+                t0 = time.monotonic()
+                wav = el.synthesize(text)
+                rec["synth_ms"] = (time.monotonic() - t0) * 1000.0
+                rec["engine"] = "elevenlabs"
+                return wav, el.sample_rate
+            except Exception as e:
+                self._eleven_failed(e)
         if self.mms is not None and not self.mms_failed:
             try:
                 t0 = time.monotonic()
                 wav = self.mms.synthesize(text)
                 rec["synth_ms"] = (time.monotonic() - t0) * 1000.0
                 rec["engine"] = "mms"
-                rec["started_ms"] = now_ms()
-                if self.play:
-                    t0 = time.monotonic()
-                    self._mark_audible(text, t0, float("inf"))
-                    try:
-                        self._play(wav, self.mms.sample_rate)
-                    finally:
-                        self._mark_audible(text, t0, time.monotonic())
-                return
+                return wav, self.mms.sample_rate
             except Exception as e:
                 log.warning("MMS-TTS failed (%s); falling back to `say`", e)
+        return None
+
+    def _say_one(self, text: str, queued_ms: float, gen: Optional[int] = None) -> None:
+        rec = {"text": text, "queued_ms": queued_ms, "engine": None, "started_ms": None, "synth_ms": None}
+        self.history.append(rec)
+        out = self._synthesize(text, rec)
+        if gen is not None and gen != self._gen:
+            # An interrupting line ("Landing now.") was queued while this one was being synthesized.
+            rec["dropped"] = True
+            return
+        if out is not None:
+            wav, sr = out
+            rec["started_ms"] = now_ms()
+            if self.play:
+                t0 = time.monotonic()
+                self._mark_audible(text, t0, float("inf"))
+                try:
+                    self._play(wav, sr)
+                finally:
+                    self._mark_audible(text, t0, time.monotonic())
+            return
         rec["engine"] = "say"
         rec["started_ms"] = now_ms()
         if self.play:
@@ -223,7 +369,7 @@ class Speaker:
 
     def _interrupt(self) -> None:
         try:
-            if self.play and self.mms is not None and "sounddevice" in __import__("sys").modules:
+            if self.play and "sounddevice" in __import__("sys").modules:
                 import sounddevice as sd
 
                 sd.stop()
@@ -243,16 +389,16 @@ def say_to_file(text: str, path: str | Path, voice: str = "Samantha") -> Path:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Speak a reply with MMS-TTS (fallback: say)")
+    ap = argparse.ArgumentParser(description="Speak a reply with ElevenLabs or MMS-TTS (fallback: say)")
     ap.add_argument("text")
-    ap.add_argument("--engine", choices=["mms", "say"], default="mms")
+    ap.add_argument("--engine", choices=["elevenlabs", "mms", "say"], default="mms")
     ap.add_argument("--out", help="write a WAV instead of playing")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     if args.out:
         from .audio import write_wav
 
-        m = MmsTts()
+        m = ElevenLabsTts() if args.engine == "elevenlabs" else MmsTts()
         wav = m.synthesize(args.text)
         write_wav(args.out, wav, m.sample_rate)
         print(f"wrote {args.out} ({len(wav) / m.sample_rate:.2f} s)")

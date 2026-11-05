@@ -34,7 +34,7 @@ Built overnight 2026-11-03/04. Every number below says what else was running.
             hover / land also POST /command pause / land
             clarify / refuse: spoken and shown only, nothing changes in flight
          -> AgentEvents partial, final, intent, reply (+ error, status every 5 s)
-         -> reply from mhd.intent_spec.build_reply, voiced by MMS-TTS (fallback `say`);
+         -> reply from mhd.intent_spec.build_reply, voiced by ElevenLabs (fallback MMS-TTS, then `say`);
             "Okay." first if the intent takes over 1.2 s
    autopilot announcements relayed by the backend ("Got them. Following.") are spoken too.
 ```
@@ -50,7 +50,7 @@ Intent schema has no takeoff or E-stop action. The gov backend also refuses anyt
 | `asr_meta.py` | Muse Voice Transcribe: `RealtimeSession`, `MetaRealtimeASR` (session per utterance, audio buffered until the ack), `WarmRealtimeASR` (pre-opened session streaming 80 ms silence), `MetaFileASR` (POST /v1/asr/transcribe, multipart `request` JSON + `audio` WAV) |
 | `asr_local.py` | Omnilingual CTC-300M int8 via sherpa-onnx, shared by the listener and `--asr local`; English carrier phrase |
 | `intent.py` | keyword grammar, `ChatIntentClient` (any OpenAI-compatible server, streamed, stops at the first complete valid JSON), `glimmer_client`, `spark_client`, `HedgedRouter` |
-| `tts.py` | MMS-TTS (`transformers.VitsModel`, lazy import, warm-up) played with sounddevice; `say` fallback |
+| `tts.py` | ElevenLabs (`eleven_flash_v2_5`, raw 24 kHz PCM, lines cached in `.cache/tts/elevenlabs`), then MMS-TTS (`transformers.VitsModel`, lazy import, warm-up), then `say`; played with sounddevice |
 | `backend_link.py` | `/ws/agent?role=agent` with reconnect; `deliver()` = POST then WS |
 | `service.py` | the agent process |
 | `mic_check.py` | morning microphone check (permission, levels, live listener) |
@@ -73,7 +73,7 @@ $MHD_ML_PY -m mhd_ml.agent.service --backend ws://127.0.0.1:8000 --intent auto \
 $MHD_ML_PY -m mhd_ml.agent.service --asr local --intent glimmer \
     --glimmer-url http://127.0.0.1:8080/v1 --glimmer-model default_model
 $MHD_ML_PY -m mhd_ml.agent.service --asr local --intent keyword
-#   other flags: --tts mms|say|none, --mute, --no-safety, --no-mic, --mic-rate 16000, --no-warm,
+#   other flags: --tts elevenlabs|mms|say|none, --mute, --no-safety, --no-mic, --mic-rate 16000, --no-warm,
 #   --asr-endpoint file, --config FILE, -v
 
 # Dry run without UI or microphone: fake backend + replayed recordings (TTS muted)

@@ -5,8 +5,8 @@
 ![The operator UI flying the digital twin: the spoken command, the mission from our fine-tuned Muse Glimmer, and the SAM 3.1 mask on the subject in FOLLOW](docs/img/demo_s1_2_voice_mission_follow.png)
 
 *The operator UI flying the digital twin. The command (voiced by macOS `say` into the agent's
-microphone input) went through Muse Voice Transcribe and our fine-tuned Muse Glimmer (badge
-`glimmer-30b+lora`); SAM 3.1 masks the subject, and the autopilot is in FOLLOW.*
+microphone input) went through Muse Voice Transcribe and our fine-tuned Muse Glimmer
+(`glimmer-30b+lora` under the mission); SAM 3.1 outlines the subject, and the autopilot is following.*
 
 Hold Space and say "follow the person in the blue shirt". Muse Voice Transcribe turns your words
 into text, our fine-tuned Muse Glimmer turns the text into a mission, SAM 3.1 finds that person in
@@ -20,11 +20,14 @@ the blue shirt", "the green car"), never by identity. Ask it to "follow John" an
 can't follow someone by identity. Tell me what they're wearing instead." It films only people who
 agreed to be filmed, and it calls the person or thing it follows the *subject*.
 
-> **Status, 2026-11-04 03:40 ET.** The whole chain runs end to end in a wire-level digital twin on
-> one Mac: a spoken command, Muse Voice Transcribe, our fine-tuned Glimmer, SAM 3.1, the autopilot
-> and the safety governor, real X69 control packets out and HEVC video back (pictured above). The
-> real drone flies this morning, after a props-off hardware check (Session A). This line will be
-> updated with the result.
+> **Status, 2026-11-04 evening.** The real drone flew the whole chain. In the 16:45 ET flight it
+> took off from the UI and heard "follow the person with the blue shirt" twice. Each time our
+> fine-tuned Glimmer on the laptop turned the words into a mission, SAM 3.1 found the subject in
+> the drone's video, and the autopilot turned the drone to keep them in frame. It was airborne for
+> 102 s and landed from the Land button. It followed for 17 s of that, by turning only (it never
+> flew forward), and lost the subject for 44 s. A third flight at 17:41 followed for 26 s of its
+> 81 s in the air. The same chain runs end to end in a wire-level digital twin on one Mac
+> (pictured above), which is where the measurements below come from.
 
 **Demo video (3 min):** _link coming: VIDEO_LINK_
 
@@ -51,7 +54,9 @@ agreed to be filmed, and it calls the person or thing it follows the *subject*.
    re-asserted land, watchdogs, caps, and human override.
 5. **The same packets fly the drone or the twin.** turbodrone's X69 driver (its files unchanged; our
    subclasses add capture timing and keepalive retries) sends real 28-byte UDP packets at 25 Hz and
-   reads HEVC video over RTSP, from the X69 or from the twin.
+   reads HEVC video over RTSP, from the X69 or from the twin. Our own X69 turned out to be a
+   different hardware revision with a Lewei camera board: it takes the same 20-byte stick payload
+   raw on UDP 50000, and `scripts/lewei_bridge.py` relays its H.264 video to RTSP on the Mac.
 6. **"Stop" and "land" never wait for the cloud.** An always-on listener (Omnilingual ASR on the
    laptop) sends them straight to the governor.
 
@@ -61,7 +66,7 @@ agreed to be filmed, and it calls the person or thing it follows the *subject*.
  agent (CPU)                                                  safety listener: silero VAD +
    Muse Voice Transcribe (Meta API) -> transcript             Omnilingual ASR CTC-300M -> land / pause
    Glimmer 30B + LoRA (Mac) | Muse Spark 1.3 (Meta API)         |
-     race -> JSON mission (schema-checked); MMS-TTS replies     |
+     race -> JSON mission (schema-checked); spoken replies      |
    | POST /mission                                              | POST /command
    v                                                            v
  drone backend: patched turbodrone FastAPI, :8000  <----  operator UI: patched turbodrone React, :5173
@@ -79,11 +84,11 @@ agreed to be filmed, and it calls the person or thing it follows the *subject*.
 
 | Process | What it does | Ports | Start |
 |---|---|---|---|
-| drone backend | patched turbodrone FastAPI: RC link, video in, safety governor with the autopilot, mission API, hub | 8000 | `scripts/run_backend.sh --mode twin` or `--mode real` |
+| drone backend | patched turbodrone FastAPI: RC link, video in, safety governor with the autopilot, mission API, hub, flight recorder | 8000 | `scripts/run_backend.sh --mode twin` or `--mode real` |
 | perception | newest frame to SAM 3.1, VitTrack and a Kalman filter; one `SubjectObs` per frame | client of 8000 | `$MHD_ML_PY -m mhd_ml.perception.service` |
-| agent | safety listener, push-to-talk, Voice Transcribe, Glimmer/Spark router, MMS-TTS replies | client of 8000 | `$MHD_ML_PY -m mhd_ml.agent.service` |
+| agent | safety listener, push-to-talk, Voice Transcribe, Glimmer/Spark router, spoken replies (ElevenLabs, MMS-TTS fallback) | client of 8000 | `$MHD_ML_PY -m mhd_ml.agent.service` |
 | twin | X69 emulator: RC decoder, 100 Hz dynamics, Three.js renderer, HEVC/RTSP through mediamtx, ground truth | UDP 23458, HTTP/WS 8766, RTSP 8554 | `scripts/run_twin.sh` |
-| operator UI | turbodrone's React UI with safety patches and voice, mission, mask, latency, safety and chase panels | 5173 | `npm run dev` in `turbodrone/frontend` |
+| operator UI | turbodrone's React UI shell with safety patches, redesigned: the camera with the subject outline, voice, mission, safety, the chase view, and flight replay | 5173 | `npm run dev` in `turbodrone/frontend` |
 | Glimmer server (edge mode) | `mlx_lm.server`: Muse Glimmer 30B 4-bit plus our LoRA, OpenAI-compatible | 8080 | `scripts/serve_glimmer.sh` |
 
 ### Meta models
@@ -98,16 +103,30 @@ runs both ways), one of them fine-tuned by us.
 | Muse Spark 1.3 | `muse-spark-1.3` | Meta Model API (strict JSON schema, reasoning effort minimal) | races Glimmer for the mission; reworded training commands (labels are ours); evaluation baseline |
 | SAM 3.1 | `sam-3.1` (Meta API); `mlx-community/sam3.1-bf16` (MLX) | this Mac by default, or the Meta Model API | finds the subject in the video from the words; the mask shown in the UI |
 | Omnilingual ASR CTC-300M | `sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-v2-int8-2026-02-05` | this Mac (sherpa-onnx, CPU) | always-on "stop" / "land" listener; offline transcription fallback; the spoken test set |
-| MMS-TTS | `facebook/mms-tts-eng` | this Mac (transformers VITS, CPU) | spoken replies (CC-BY-NC 4.0; macOS `say` is the fallback) |
+| MMS-TTS | `facebook/mms-tts-eng` | this Mac (transformers VITS, CPU) | spoken replies when ElevenLabs is off or unreachable (CC-BY-NC 4.0; macOS `say` is the last fallback) |
 
 Two small non-Meta models help: the silero VAD finds speech for the safety listener, and OpenCV's
-VitTrack follows SAM's box between detections. Everything else in the loop is ordinary code: a
+VitTrack follows SAM's box between detections. Spoken replies are voiced by ElevenLabs
+(`eleven_flash_v2_5`, cloud, needs `ELEVENLABS_API_KEY`) and fall back to MMS-TTS on the Mac;
+speech to text stays on Muse Voice Transcribe. Everything else in the loop is ordinary code: a
 Kalman filter, a proportional controller, and the governor's rules.
 
 ## Results
 
 All numbers come from runs on one MacBook Pro (M5 Pro, 48 GB). Conditions, source files, and the
-full tables are in [docs/results.md](docs/results.md). The real drone has not flown this stack yet.
+full tables are in [docs/results.md](docs/results.md). The twin numbers were measured the night
+before the flights; the real-drone numbers come from the flight logs.
+
+**The real drone** (2026-11-04, our X69 unit, `config/real`, the local Glimmer LoRA answering).
+All three flights can be played back in the UI (see [Run it](#run-it)). The first two were rebuilt
+from their logs and have no camera picture; the flight recorder saved the third with its video.
+In every flight the forward stick stayed at neutral: the autopilot turned the drone with yaw only.
+
+| Flight | Airborne | What happened |
+|---|---|---|
+| 15:53 ET | 10 s | Take off and Land from the UI, then Emergency stop 7 s into the landing. No mission. |
+| 16:45 ET | 102 s | Take off from the UI. "Follow the person with the blue shirt", spoken twice (at 0:48 and 1:31); the Glimmer LoRA answered in 6.0 s and 5.3 s. The autopilot reached FOLLOW after each one, 17 s in total over five spells. The subject was lost for 44 s in total. Land from the UI. |
+| 17:41 ET | 81 s | Take off from the UI. "Can you follow the person with the cellphone in their hands" (heard as "selphone") became the mission `person with phone` in 6.0 s, and the autopilot was in FOLLOW 1.5 s later, for 16 s. A second, badly transcribed command became the mission `person` and was acknowledged with `wrong_way_hold`. FOLLOW for 26 s in total over four spells; Pause pressed three times; Land from the UI. |
 
 **End to end in the wire-level twin** (`scripts/e2e_twin.py`): a follow mission posted to the
 backend, SAM 3.1 on the Mac, VitTrack and the Kalman filter, the autopilot with feed-forward, the
@@ -180,7 +199,7 @@ sticks on the wire in 0.42-0.44 s.
   within about 6 m (at least 64 px wide), and confirmed by SAM within the last 1.5 s; otherwise
   the autopilot only turns. It never backs up.
 - **Real mode is gated.** `FLIGHT_MODE=twin|real` has no default; twin mode refuses any non-loopback
-  address. Real mode accepts only the drone's address (172.16.11.1), refuses the twin's configs
+  address. Real mode accepts only the drone's address (172.16.11.1, or 192.168.0.1 with `--board lewei`), refuses the twin's configs
   (`twin_only: true`), and the operator types ARM once per session. No props-on flight happens until Session A (props off) has checked the flags, link
   loss, latency and field of view. The real-drone configs (`config/*.yaml`) stay conservative, with
   feed-forward off, until Session B measures the drone; the twin uses its own calibration
@@ -233,11 +252,36 @@ the fine-tuned Glimmer answer, follows, says "land", and records the UI and the 
 $MHD_PY scripts/demo_twin.py                        # S1, "person in blue shirt"
 $MHD_PY scripts/demo_twin.py --demo-scenario s2     # S2: the red-shirt walker crosses
 $MHD_PY scripts/demo_twin.py --stills               # also write the README stills to docs/img/
+MHD_DEMO_PORTS=8010,8767,23459,5183 $MHD_PY scripts/demo_twin.py   # beside another running stack
 ```
 
 **The whole stack with one command.** `scripts/run_stack.sh` (from the ops workstream) starts the
 backend, perception, the agent, the production UI, optionally the local Glimmer, and in twin mode
 the twin; Ctrl-C stops it all, the backend first so the drone lands:
+
+```bash
+./fly                 # the real drone: Lewei board, config/real, tuned Glimmer; opens the UI in its own window
+./fly sim             # the digital twin, no aircraft
+./fly camera          # the drone's real camera, no flight
+```
+
+In the UI: type ARM (real drone only), press **Take off**, then hold Space and say what to follow.
+**Land** (L) and **Emergency stop** (Esc) are always on screen. **Details** in the header shows the
+sticks and the latency of each stage.
+
+Every flight is saved to `logs/flights/` when it lands (about 40 MB per minute in the air;
+`--no-record` turns it off). **Flights** in the header plays one back: the camera, the subject
+outline, the sticks sent to the drone, and every command on a timeline you can scrub or click.
+Replay only shows a saved flight; it never sends its commands to the drone again. It is available
+on the ground, and taking off closes it. `scripts/import_flights.py` rebuilds flights flown before
+the recorder existed from their logs (no camera picture for those).
+
+![Flights: a saved twin flight played back, with its commands on the right](docs/img/ui_replay.png)
+
+*Flights, playing back a twin flight of the same mission as the top of this page. The list on the
+left also holds today's three real flights.*
+
+`./fly` is a short wrapper around `scripts/run_stack.sh`, which takes every option:
 
 ```bash
 scripts/run_stack.sh --mode twin --scenario s1 --glimmer local --agent glimmer
@@ -274,12 +318,15 @@ workstream. In short:
    app): `$MHD_PY scripts/preflight.py` checks the drone Wi-Fi, routes, internet and video.
 2. Props off: `$MHD_PY scripts/session_a.py` walks through Session A (flags, latency, field of view,
    link loss) and ends with GO or NO-GO. No props-on flight without GO.
-3. `scripts/run_backend.sh --mode real`, then the production UI:
-   `cd turbodrone/frontend && VITE_BACKEND_URL=http://localhost:8000 VITE_AXES_RELEASE_MESSAGE=1 npm run build && npx vite preview`.
-   Type ARM in the UI.
-4. Perception (with `--hfov-deg` from Session A) and the agent, as above.
-5. A second person keeps a hand on LAND (L) and E-STOP (Esc). Never fly near people who have not
-   agreed to it.
+3. `scripts/apply_sysid.py ... --write` writes `config/real/` from the session's measurements (the
+   runbook has the exact command).
+4. `./fly` starts the backend, perception, the agent, the local Glimmer and the UI. Type ARM in
+   the UI, then press Take off. `./fly` does not run the preflight for you.
+5. A second person keeps a hand on Land (L) and Emergency stop (Esc). Never fly near people who
+   have not agreed to it.
+
+`./fly` is set up for our unit's Lewei board. For it, add `--board lewei` to the preflight and
+Session A commands. An X69 with the stock board uses `scripts/run_stack.sh --mode real` instead.
 
 **Tests:** `$MHD_PY -m pytest tests/gov tests/twin tests/train tests/ui tests/docs` and
 `$MHD_ML_PY -m pytest tests/percep tests/agent`. Before publishing: `$MHD_PY scripts/secret_scan.py`.
@@ -307,7 +354,7 @@ built Nov 3-4."
 | Path | What |
 |---|---|
 | `src/mhd/governor/`, `src/mhd/autopilot/` | the safety governor (the only path to the sticks) and the pure-function autopilot |
-| `src/mhd/backend/`, `turbodrone/backend/web_server.py` | the backend hub and the patched turbodrone server |
+| `src/mhd/backend/`, `turbodrone/backend/web_server.py` | the backend hub, the flight recorder and the patched turbodrone server |
 | `src/mhd/contracts/`, `docs/interfaces.md`, `docs/conventions.md` | the messages between processes, units and sign conventions |
 | `src/mhd/twin/`, `twin/web/`, `config/twin/` | the wire-level digital twin: RC decoder, dynamics, Three.js renderer, video path, metrics, scenarios |
 | `src/mhd_ml/perception/` | SAM 3.1 (MLX and API), trackers, the Kalman filter, the perception service |
@@ -315,7 +362,7 @@ built Nov 3-4."
 | `training/` | intent data generator, gold sets, Glimmer LoRA training, evaluation |
 | `turbodrone/frontend/` | the operator UI and its mock backend |
 | `config/` | real-drone settings for the governor, autopilot and agent (first-flight values) |
-| `scripts/` | run scripts, the end-to-end twin test, the environment doctor, the secret scan |
+| `fly`, `scripts/` | the one-command launcher, run scripts, the end-to-end twin test, the environment doctor, the secret scan |
 | `tests/` | one suite per component |
 
 ## More documents
@@ -340,6 +387,8 @@ license in `turbodrone/`. The models and libraries have their own licenses, list
   which forbids military, warfare and ITAR uses, among others.
 - Muse Glimmer: Apache-2.0, plus Meta's usage policy linked from its model card.
 - MMS-TTS: CC-BY-NC 4.0, non-commercial only. Use `--tts say` for anything commercial.
+- ElevenLabs voices the replies by default (`tts.engine: elevenlabs` in `config/agent.yaml`); it is a
+  paid cloud service under its own terms. `--tts mms` keeps every reply on the Mac.
 
 No model weights, raw footage of people, or API keys are stored in this repository.
 
@@ -354,5 +403,5 @@ the mediamtx and three.js projects.
 
 - **Russell Van Curen** (owner).
 - **AI assistance, disclosed:** the code, tests and documents were written with Claude Code (Claude
-  Opus 5.5), working as parallel agents from the owner's plan. Every commit carries a
+  Opus 5.5, and Claude Fable 5.1 for the final pass), working as parallel agents from the owner's plan. Every commit carries a
   `Co-Authored-By: Claude` trailer.

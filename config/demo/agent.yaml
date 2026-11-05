@@ -72,7 +72,12 @@ safety:
   ignore_own_voice: true   # skip a safety word that is part of the reply the speaker just played
 
 tts:
-  engine: mms          # mms (MMS-TTS) | say | none
+  engine: elevenlabs   # elevenlabs (cloud; falls back to mms, then say) | mms (MMS-TTS, local) | say | none
+  elevenlabs:          # needs ELEVENLABS_API_KEY in .env; without it (or offline) replies use MMS-TTS
+    voice_id: EXAVITQu4vr4xnSDxMaL   # "Sarah"; any voice id from your ElevenLabs account
+    model_id: eleven_flash_v2_5      # their lowest-latency model
+    timeout_s: 4.0                   # a slower reply falls back to MMS-TTS for that line
+    retry_after_s: 30                # after a failure, skip ElevenLabs this long
   voice: Samantha      # voice for the `say` fallback
   ack_after_s: 1.2     # if the intent takes longer than this, say ack_text first (null = never)
   ack_text: Okay.

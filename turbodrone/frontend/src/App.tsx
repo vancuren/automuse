@@ -13,15 +13,28 @@ import { FlightStateBadges, LinkChips, PackTimer } from "./components/FlightStat
 import LatencyBars from "./components/LatencyBars";
 import MissionCard from "./components/MissionCard";
 import { LinkBanner, ModeBanner } from "./components/ModeBanner";
+import ReplayView from "./components/ReplayView";
 import SafetyFlags from "./components/SafetyFlags";
 import StickBars from "./components/StickBars";
+import UiButton from "./components/UiButton";
 import VideoPanel from "./components/VideoPanel";
 import VoicePanel from "./components/VoicePanel";
 
 /**
- * Operator dashboard: one screen that tells the whole story.
+ * The operator's screen: the camera, what the drone heard and is doing, and three actions
+ * (take off, talk, land) with Emergency stop always in the same corner.
  * The shell (MJPEG feed, keyboard/gamepad input) is turbodrone's; the rest is new.
  */
+const DETAILS_KEY = "mhd.details";
+
+function readDetails(): boolean {
+  try {
+    return window.localStorage.getItem(DETAILS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function App() {
   const tlm = useTelemetry();
   const hb = useHeartbeat();
@@ -93,31 +106,52 @@ function App() {
     else if (governorMissesHb) heartbeatProblem = "the governor reports no UI heartbeat";
   }
 
-  return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#070b14] text-slate-200">
-      <ModeBanner telemetry={tlm.telemetry} stale={tlm.stale} />
-      <LinkBanner
-        controlStatus={controls.linkStatus}
-        attempts={controls.reconnectAttempts}
-        telemetryStale={tlm.stale}
-        backendUrl={BACKEND_URL}
-        heartbeatProblem={heartbeatProblem}
-      />
+  // Sticks and latency are for debugging: off by default, remembered per browser.
+  const [details, setDetails] = useState(readDetails);
+  const toggleDetails = () =>
+    setDetails((on) => {
+      try {
+        window.localStorage.setItem(DETAILS_KEY, on ? "0" : "1");
+      } catch {
+        /* private mode: the choice just is not remembered */
+      }
+      return !on;
+    });
 
-      <header className="flex h-[66px] shrink-0 items-center justify-between gap-4 border-b border-slate-800 px-4">
-        <div className="min-w-0">
-          <div className="truncate text-lg font-black tracking-[0.08em] text-white">VOICE FOLLOW DRONE · OPERATOR</div>
-          <div className="truncate text-xs text-slate-400">
-            voice → mission (Muse Glimmer + LoRA / Muse Spark) → SAM 3.1 subject → autopilot inside a safety governor
+  // Flight replay covers the camera only; the header and the command bar stay live under it.
+  // It is for the ground: taking off closes it, so the live camera is never hidden in the air.
+  const [replayOpen, setReplayOpen] = useState(false);
+  const flying = flightState === "TAKING_OFF" || flightState === "AIRBORNE" || flightState === "LANDING";
+  useEffect(() => {
+    if (flying) setReplayOpen(false);
+  }, [flying]);
+
+  // Over the camera: what the drone is hearing while the operator talks, else the next step.
+  const airborne = flightState === "AIRBORNE";
+  const caption = agent.ptt
+    ? agent.partial
+      ? `${agent.partial}…`
+      : "Listening"
+    : airborne && !mission
+      ? "Hold Space and say what to follow"
+      : null;
+  const headerBtn = "h-8 rounded-lg px-3 text-[13px] font-medium";
+
+  return (
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0a0a0a] text-neutral-200">
+      <header className="flex h-14 shrink-0 items-center justify-between gap-6 border-b border-white/[0.07] px-5">
+        <div className="flex min-w-0 items-center gap-4">
+          <div className="flex items-center gap-2 text-[15px] font-semibold tracking-tight text-white">
+            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <circle cx="9" cy="9" r="8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="9" cy="9" r="2.5" fill="currentColor" />
+            </svg>
+            Follow
           </div>
+          <ModeBanner telemetry={tlm.telemetry} stale={tlm.stale} />
+          <FlightStateBadges telemetry={tlm.telemetry} stale={tlm.stale} />
         </div>
-        <FlightStateBadges telemetry={tlm.telemetry} stale={tlm.stale} />
-        <div className="flex items-center gap-3">
-          <PackTimer
-            telemetry={tlm.telemetry}
-            stale={tlm.stale}
-            onPackSwap={(id) => controls.sendCommand("pack_swap", { pack_id: id })}
-          />
+        <div className="flex items-center gap-5">
           <LinkChips
             control={controls.linkStatus}
             hbOpen={hb.open}
@@ -126,11 +160,49 @@ function App() {
             telemetryRate={tlm.rateHz}
             agent={agent.status}
           />
+          <PackTimer
+            telemetry={tlm.telemetry}
+            stale={tlm.stale}
+            onPackSwap={(id) => controls.sendCommand("pack_swap", { pack_id: id })}
+          />
+          <div className="flex items-center gap-1">
+            <UiButton
+              data-testid="details-toggle"
+              data-on={details ? "1" : "0"}
+              onClick={toggleDetails}
+              title="Show or hide sticks and latency"
+              className={`${headerBtn} ${details ? "bg-white/10 text-neutral-100" : "text-neutral-400 hover:text-neutral-100"}`}
+            >
+              Details
+            </UiButton>
+            <UiButton
+              data-testid="replay-open"
+              disabled={flying}
+              onClick={() => setReplayOpen((open) => !open)}
+              title={flying ? "Replay is available on the ground" : "Watch a saved flight again"}
+              className={`${headerBtn} ${
+                replayOpen
+                  ? "bg-white text-black"
+                  : flying
+                    ? "cursor-not-allowed text-neutral-700"
+                    : "bg-white/[0.06] text-neutral-100 hover:bg-white/10"
+              }`}
+            >
+              Flights
+            </UiButton>
+          </div>
         </div>
       </header>
+      <LinkBanner
+        controlStatus={controls.linkStatus}
+        attempts={controls.reconnectAttempts}
+        telemetryStale={tlm.stale}
+        backendUrl={BACKEND_URL}
+        heartbeatProblem={heartbeatProblem}
+      />
 
-      <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_clamp(400px,29vw,560px)] gap-3 p-3">
-        <div className="flex min-h-0 flex-col gap-3">
+      <main className="relative grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_clamp(320px,24vw,400px)] gap-6 p-5">
+        <div className="flex min-h-0 flex-col">
           <VideoPanel
             mjpegUrl={URLS.mjpeg}
             telemetry={tlm.telemetry}
@@ -139,23 +211,11 @@ function App() {
             selected={agent.selected}
             onSelect={agent.selectCandidate}
             reconnectKey={videoKey}
+            caption={caption}
           />
-          <div className="grid shrink-0 grid-cols-3 gap-3">
-            <StickBars
-              telemetry={tlm.telemetry}
-              stale={tlm.stale}
-              localAxes={controls.axes}
-              sendingAxes={controls.sendingAxes}
-              mode={controls.mode}
-              setMode={controls.setMode}
-              gamepadConnected={controls.gamepadConnected}
-            />
-            <LatencyBars telemetry={tlm.telemetry} stale={tlm.stale} />
-            <SafetyFlags telemetry={tlm.telemetry} stale={tlm.stale} events={agent.events} />
-          </div>
         </div>
 
-        <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto [&>*]:shrink-0">
+        <aside className="flex min-h-0 flex-col overflow-y-auto pr-1 [&>*]:shrink-0">
           <VoicePanel
             ptt={agent.ptt}
             partial={agent.partial}
@@ -166,8 +226,25 @@ function App() {
           />
           <MissionCard mission={mission} provisional={agentIsNewer} />
           <CandidatePicker candidates={candidates} selected={agent.selected} onSelect={agent.selectCandidate} />
+          <SafetyFlags telemetry={tlm.telemetry} stale={tlm.stale} events={agent.events} />
           {twin && <ChaseView url={TWIN_CHASE_URL} />}
+          {details && (
+            <>
+              <StickBars
+                telemetry={tlm.telemetry}
+                stale={tlm.stale}
+                localAxes={controls.axes}
+                sendingAxes={controls.sendingAxes}
+                mode={controls.mode}
+                setMode={controls.setMode}
+                gamepadConnected={controls.gamepadConnected}
+              />
+              <LatencyBars telemetry={tlm.telemetry} stale={tlm.stale} />
+            </>
+          )}
         </aside>
+
+        {replayOpen && <ReplayView onClose={() => setReplayOpen(false)} />}
       </main>
 
       <CommandBar
@@ -189,13 +266,11 @@ function App() {
 
       <footer
         data-testid="footer"
-        className="flex h-6 shrink-0 items-center justify-between border-t border-slate-900 bg-black px-4 text-[11px] text-slate-500"
+        className="flex h-7 shrink-0 items-center justify-between px-5 text-[11px] text-neutral-600"
       >
+        <span>UI shell from turbodrone (Apache-2.0)</span>
         <span>
-          UI shell from turbodrone (Apache-2.0) · new: voice, mission, SAM overlay, safety, latency and twin panels
-        </span>
-        <span className="font-mono">
-          backend {BACKEND_URL} · {controls.droneType}
+          {BACKEND_URL} · {controls.droneType}
         </span>
       </footer>
     </div>

@@ -32,8 +32,8 @@ export default function ChaseView({ url }: { url: string }) {
   }, [url]);
 
   return (
-    <Panel title="Twin chase view" testId="chase-view" caption={url}>
-      <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-slate-800 bg-black">
+    <Panel title="Chase view" testId="chase-view" caption="simulator">
+      <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-neutral-900" title={url}>
         {reachable ? (
           <iframe
             src={url}
@@ -42,8 +42,8 @@ export default function ChaseView({ url }: { url: string }) {
             className="pointer-events-none absolute inset-0 h-full w-full border-0"
           />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
-            twin chase view not reachable yet
+          <div className="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
+            Waiting for the simulator
           </div>
         )}
       </div>

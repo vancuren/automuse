@@ -283,7 +283,7 @@ def test_twin_banner_and_takeoff_without_arm(ui, mock_backend):
 def test_real_banner_and_arm_gate(ui, mock_backend):
     mock_backend.control(flight_mode="real")
     ui.wait_for_selector(f'{sel("mode-banner")}[data-mode="real"]', timeout=2000)
-    assert "REAL DRONE" in ui.inner_text(sel("mode-banner"))
+    assert "Real drone" in ui.inner_text(sel("mode-banner"))
     assert ui.locator(sel("chase-view")).count() == 0, "no twin chase view in real mode"
 
     # Takeoff is locked until the operator types ARM.
@@ -316,7 +316,7 @@ def test_camera_only_banner_keeps_takeoff_and_drops_the_chase_view(ui, mock_back
     # scripts/run_stack.sh --mode camera: twin mode plus the backend's camera_only flag.
     mock_backend.control(extra_flags=["camera_only"])
     ui.wait_for_selector(f'{sel("mode-banner")}[data-mode="camera"]', timeout=3000)
-    assert "REAL CAMERA – NO FLIGHT" in ui.inner_text(sel("mode-banner"))
+    assert "Camera only · no flight" in ui.inner_text(sel("mode-banner"))
     ui.wait_for_selector(sel("chase-view"), state="detached", timeout=3000)
     assert ui.is_enabled(sel("takeoff-btn")), "camera_only must not block the simulated takeoff"
     assert ui.locator(sel("arm-gate")).count() == 0

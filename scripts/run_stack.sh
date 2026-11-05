@@ -32,6 +32,9 @@
 #   --agent-extra "ARGS"       extra agent flags, e.g. "--no-mic --mute --tts none"
 #   --glimmer local|none       local: start scripts/serve_glimmer.sh (Glimmer + LoRA on :8080, ~17 GB) [none]
 #   --no-build                 serve the existing UI build (dist/) instead of rebuilding
+#   --open                     open the UI in its own Chrome window once everything is up (./fly does)
+#   --no-record                do not save flights for the UI's replay (default: every flight is saved
+#                              to logs/flights/, about 40 MB per minute in the air)
 #   --dry-run                  validate, print every command it would run, start nothing
 #   --logs DIR                 [logs/stack-<time>]
 #   twin only:
@@ -58,7 +61,7 @@ die() { echo "run_stack: $*" >&2; exit 2; }
 
 MODE="" CONFIG_DIR="" PORT=8000 UI_PORT=5173 UI=1 PERCEPTION=sam_mlx AGENT=auto AGENT_EXTRA="" GLIMMER=none
 BUILD=1 LOGS="" TWIN_PORTS="" SCENARIO=s1 LATENCY=500 HEADLESS=0 RENDERER=1 CHROME_PROFILE="" TWIN_OPT=0 DRY=0
-RTSP_PORT=8554 BRIDGE_EXTRA="" CAMERA_WAIT=60 CAMERA_OPT=0 BOARD=x69_lg
+RTSP_PORT=8554 BRIDGE_EXTRA="" CAMERA_WAIT=60 CAMERA_OPT=0 BOARD=x69_lg OPEN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode) MODE="$2"; shift 2 ;;
@@ -67,6 +70,8 @@ while [[ $# -gt 0 ]]; do
     --port) PORT="$2"; shift 2 ;;
     --ui-port) UI_PORT="$2"; shift 2 ;;
     --no-ui) UI=0; shift ;;
+    --open) OPEN=1; shift ;;
+    --no-record) export MHD_RECORD=0; shift ;;
     --perception) PERCEPTION="$2"; shift 2 ;;
     --no-perception) PERCEPTION=none; shift ;;
     --agent) AGENT="$2"; shift 2 ;;
@@ -153,6 +158,8 @@ mkdir -p "$RUN"
 RUN="$(cd "$RUN" && pwd)"
 STACK_LOG="$RUN/stack.log"
 log() { echo "[stack $(date +%H:%M:%S)] $*" | tee -a "$STACK_LOG" >&2; }
+# Flight replay: the backend saves every flight here (src/mhd/backend/recorder.py); one place for all modes.
+export MHD_RECORD="${MHD_RECORD:-1}" MHD_FLIGHTS_DIR="${MHD_FLIGHTS_DIR:-$TREE/logs/flights}"
 
 # ------------------------------------------------------------------------------- process table
 # Each component runs in its OWN process group (perl setpgrp, SIGINT/SIGQUIT back to default), so a
@@ -429,6 +436,11 @@ log "UP: backend http://127.0.0.1:$PORT  $([[ "$UI" == 1 ]] && echo "UI http://1
 [[ "$MODE" == camera ]] && log "REAL CAMERA, NO FLIGHT: RTSP $RTSP_URL from scripts/lewei_bridge.py; no RC packets are sent"
 [[ "$BOARD" == lewei ]] && log "REAL DRONE, Lewei board: RC to 192.168.0.1:50000; video $RTSP_URL from scripts/lewei_bridge.py (keep it running)"
 log "Ctrl-C stops everything (the backend lands first). Logs: $RUN"
+if [[ "$OPEN" == 1 && "$UI" == 1 ]]; then
+  # Its own window, so no other tab can take the keyboard from Esc / L / Space.
+  open -na "Google Chrome" --args --new-window "http://127.0.0.1:$UI_PORT/" 2>/dev/null \
+    || open "http://127.0.0.1:$UI_PORT/" 2>/dev/null || log "could not open a browser: open http://127.0.0.1:$UI_PORT/"
+fi
 while true; do
   check_stop
   for i in "${!NAMES[@]}"; do

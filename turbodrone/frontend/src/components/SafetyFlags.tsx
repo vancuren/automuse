@@ -4,7 +4,7 @@ import Panel from "./Panel";
 
 const RED_WORDS = ["estop", "land", "stale", "missing", "lost", "error", "exception", "wrong", "link", "fail", "fault"];
 
-/** Safety flags raised by the governor (new). Red for anything that neutralizes or lands. */
+/** Safety flags raised by the governor, and what it did most recently (new). */
 export default function SafetyFlags({
   telemetry,
   stale,
@@ -16,36 +16,44 @@ export default function SafetyFlags({
 }) {
   const flags = telemetry?.safety_flags ?? [];
   return (
-    <Panel title="Safety" testId="safety-flags" caption="governor flags and recent events">
-      {stale ? (
-        <div className="text-sm text-amber-300">unknown: telemetry stale</div>
-      ) : flags.length === 0 ? (
-        <div data-testid="safety-clear" className="text-sm font-semibold text-emerald-400">
-          ✓ all clear
-        </div>
-      ) : (
-        <div className="flex flex-wrap gap-1">
+    <Panel
+      title="Safety"
+      testId="safety-flags"
+      caption={
+        stale ? (
+          <span className="text-amber-300">unknown, telemetry is stale</span>
+        ) : flags.length === 0 ? (
+          <span data-testid="safety-clear">All clear</span>
+        ) : undefined
+      }
+    >
+      {!stale && flags.length > 0 && (
+        <div className="mb-2.5 flex flex-wrap gap-1.5">
           {flags.map((f) => {
             const red = RED_WORDS.some((w) => f.toLowerCase().includes(w));
             return (
               <span
                 key={f}
                 data-testid="safety-flag"
-                className={`rounded-md px-2 py-0.5 font-mono text-xs font-semibold ${
-                  red ? "bg-red-700 text-red-50" : "bg-amber-600 text-amber-50"
+                className={`rounded-md px-1.5 py-0.5 text-xs ${
+                  red ? "bg-red-500/15 text-red-300" : "bg-amber-500/15 text-amber-300"
                 }`}
               >
-                {f}
+                {f.replace(/_/g, " ")}
               </span>
             );
           })}
         </div>
       )}
-      <div data-testid="system-events" className="mt-2 space-y-0.5 border-t border-slate-800 pt-1.5">
+      <div data-testid="system-events" className="space-y-1">
         {events.slice(-4).map((e) => (
-          <div key={e.id} className="truncate font-mono text-[11px] text-slate-400">
-            <span className="mr-2 text-slate-600">{new Date(e.at).toLocaleTimeString([], { hour12: false })}</span>
-            {e.text}
+          <div key={e.id} className="flex gap-2.5 text-xs text-neutral-500">
+            <span className="num shrink-0 text-neutral-600">
+              {new Date(e.at).toLocaleTimeString([], { hour12: false })}
+            </span>
+            <span className="min-w-0 flex-1 truncate" title={e.text}>
+              {e.text}
+            </span>
           </div>
         ))}
       </div>

@@ -46,4 +46,5 @@ export const URLS = {
   command: `${BACKEND_URL}/command`,               // HTTP fallback for LAND and E-STOP
   capabilities: `${BACKEND_URL}/capabilities`,
   plugins: `${BACKEND_URL}/plugins`,
+  flights: `${BACKEND_URL}/flights`,               // saved flights for the replay (read-only)
 } as const;

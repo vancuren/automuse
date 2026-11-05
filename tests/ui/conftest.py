@@ -15,8 +15,8 @@ import sys
 
 import pytest
 
-from ui_harness import (CHROME_PROFILE, FRONTEND, LOG_DIR, MOCK_LOG, MOCK_PORT, MOCK_SCRIPT, MOCK_URL, SCREENS,
-                        SHARED, UI_URL, VITE_BIN, VITE_PORT, Mock, port_free, stop, wait_http)
+from ui_harness import (CHROME_PROFILE, FLIGHTS_DIR, FRONTEND, LOG_DIR, MOCK_LOG, MOCK_PORT, MOCK_SCRIPT, MOCK_URL, SCREENS,
+                        SHARED, UI_URL, VITE_BIN, VITE_PORT, Mock, port_free, stop, wait_http, write_sample_flight)
 
 
 @pytest.fixture(scope="session")
@@ -24,9 +24,11 @@ def mock_backend():
     if not port_free(MOCK_PORT):
         pytest.fail(f"port {MOCK_PORT} is busy: stop whatever runs there")
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    write_sample_flight(FLIGHTS_DIR)
     out = open(LOG_DIR / "mock_backend.out", "w")
     proc = subprocess.Popen(
-        [sys.executable, str(MOCK_SCRIPT), "--port", str(MOCK_PORT), "--scenario", "manual", "--log", str(MOCK_LOG)],
+        [sys.executable, str(MOCK_SCRIPT), "--port", str(MOCK_PORT), "--scenario", "manual", "--log", str(MOCK_LOG),
+         "--flights", str(FLIGHTS_DIR)],
         stdout=out, stderr=subprocess.STDOUT, start_new_session=True,
     )
     try:
@@ -74,6 +76,8 @@ def browser_ctx(vite_server):
                                  "--disable-renderer-backgrounding",
                                  "--disable-backgrounding-occluded-windows"],
         )
+        # Sticks and latency ("Details") are hidden by default; the tests read them, so turn them on.
+        ctx.add_init_script("try { localStorage.setItem('mhd.details', '1'); } catch (e) {}")
         try:
             yield ctx
         finally:
