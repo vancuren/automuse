@@ -29,7 +29,7 @@ agreed to be filmed, and it calls the person or thing it follows the *subject*.
 > 81 s in the air. The same chain runs end to end in a wire-level digital twin on one Mac
 > (pictured above), which is where the measurements below come from.
 
-**Demo video (3 min):** _link coming: VIDEO_LINK_
+**Demo video (3 min):** linked on the hackathon submission.
 
 | The twin's chase view: the drone (center) turns to keep the walker in blue in frame | S2: a walker in red crosses between the drone and the subject in blue |
 |---|---|
@@ -343,7 +343,7 @@ Session A commands. An X69 with the stock board uses `scripts/run_stack.sh --mod
   intent dataset and the Glimmer LoRA, the operator UI's safety patches and new panels, the tests,
   and these documents. Changed turbodrone files are listed in
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-- **The diff:** [`1aff2b5...main`](https://github.com/OWNER/REPO/compare/1aff2b5...main), or
+- **The diff:** [`1aff2b5...main`](https://github.com/vancuren/automuse/compare/1aff2b5...main), or
   `git diff 1aff2b5 HEAD` locally.
 
 The video captions say the same: "UI shell and X69 driver: turbodrone (Apache-2.0). Everything else

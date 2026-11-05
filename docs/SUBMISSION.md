@@ -56,7 +56,7 @@ it flew" only if the drone has flown at all, otherwise write "before its first f
 Bonus prize to mention: **Best Build on Open Weight Models**: the fine-tuned Muse Glimmer runs on
 our own hardware (MLX on the MacBook), as do SAM 3.1, Omnilingual ASR and MMS-TTS.
 
-**Repo URL:** `https://github.com/OWNER/REPO` (fill in after step 4).
+**Repo URL:** https://github.com/vancuren/automuse
 
 **Video link:** the unlisted YouTube (or Vimeo) link from step 5.
 
@@ -83,7 +83,7 @@ Use the first version only if a real flight was recorded:
 > commit is new work: the safety governor and autopilot, the backend patches, the wire-level
 > digital twin, the SAM 3.1 perception service, the voice agent, the intent dataset and the Muse
 > Glimmer LoRA, the operator UI's safety patches and new panels, and the tests. Diff:
-> https://github.com/OWNER/REPO/compare/1aff2b5...main
+> https://github.com/vancuren/automuse/compare/1aff2b5...main
 
 The video carries the same caption: "UI shell and X69 driver: turbodrone (Apache-2.0). Everything
 else built Nov 3-4."
@@ -92,9 +92,7 @@ else built Nov 3-4."
 
 - [ ] Everything merged to `main` (the integrator's job), tests green.
 - [ ] README: replace the status line with the real-flight result, add the video link
-      (`VIDEO_LINK`), and replace `OWNER/REPO`. Check with
-      `grep -n "OWNER/REPO\|VIDEO_LINK" README.md` (no output when done).
-      The drafts on this page also say `OWNER/REPO`: fill it in when you paste them.
+      and the repo path (`vancuren/automuse`, filled in).
 - [ ] Every image in the README loads: `ls docs/img/demo_s1_2_voice_mission_follow.png
       docs/img/demo_s1_chase_follow.png docs/img/demo_s2_crossing_follow.png` (from the demo
       workstream).
@@ -132,7 +130,7 @@ On the owner's Mac, from the main checkout, with the GitHub CLI logged in:
 source env.sh
 git switch main && git log --oneline -3          # the merged, final main
 $MHD_PY scripts/secret_scan.py                   # RESULT: clean
-gh repo create OWNER/REPO --private --source . --remote origin --description \
+gh repo create vancuren/automuse --private --source . --remote origin --description \
   "A \$34 toy drone that follows a person or a car you describe by voice, on Meta models"
 git push -u origin main                           # main only; the ws/* branches stay local
 ```
@@ -140,12 +138,11 @@ git push -u origin main                           # main only; the ws/* branches
 Then, on github.com, still private:
 - [ ] The README renders, both images load, and every link works (results, notices, docs).
 - [ ] GitHub detects the license as Apache-2.0.
-- [ ] Replace `OWNER/REPO` in README.md and here with the real path, commit, push.
 
 Then flip it and check it logged out:
 
 ```bash
-gh repo edit OWNER/REPO --visibility public --accept-visibility-change-consequences
+gh repo edit vancuren/automuse --visibility public --accept-visibility-change-consequences
 ```
 
 - [ ] Open the repo in a private browser window: README, images, the compare link.
